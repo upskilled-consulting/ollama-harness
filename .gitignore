@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.uv/
+dist/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Runtime data (rebuilt from source)
+data/runs.jsonl
+data/sessions.jsonl
+data/plans.jsonl
+data/artifacts.jsonl
+data/memory.db
+data/search_cache.db
+data/semantic_scholar_cache.db
+data/traces/
+data/chroma_memory/
+data/email_drafts/
+data/screenshots/
+
+# Derived datasets (large, rebuilt from annotated CSVs)
+data/*_annotated.csv
+data/finetune_dataset*.jsonl
+data/finetune_metrics.jsonl
+data/hf_datasets/
+data/knowledge_base/
+
+# Model weights
+models/*.gguf
+finetune_output/
+
+# Frontend
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
