@@ -370,7 +370,7 @@ def web_search_headed(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> 
                 # child out of the parent's Job Object so it survives agent.py exiting.
                 # Unix:    start_new_session=True (setsid) achieves the same.
                 if _plat.system() == "Windows":
-                    _flags = _spb.DETACHED_PROCESS | _spb.CREATE_NEW_PROCESS_GROUP
+                    _flags = _spb.DETACHED_PROCESS | _spb.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
                     _browser_proc = _spb.Popen(
                         [_exe, f"--remote-debugging-port={_PORT}",
                          "--no-first-run", "--no-default-browser-check",

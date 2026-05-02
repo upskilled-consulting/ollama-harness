@@ -74,7 +74,7 @@ def _launch_detached(exe: str, port: int) -> subprocess.Popen:
     if platform.system() == "Windows":
         return subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
         )
     return subprocess.Popen(
         args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
