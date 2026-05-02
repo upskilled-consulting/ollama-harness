@@ -1,0 +1,42 @@
+{# lit_review_gaps.j2 — Gap-focused view: what's missing, what to read next
+   Same context object as lit_review_survey.j2
+#}
+# Research Gaps: {{ meta.query }}
+
+*{{ meta.annotated }} papers annotated · {{ meta.generated_at }}*
+
+---
+
+## What This Corpus Covers
+
+{{ synthesis }}
+
+---
+
+## Open Questions
+
+{% for q in open_questions %}
+{{ loop.index }}. {{ q }}
+{% endfor %}
+
+---
+
+## Gap Candidates — Read Next
+
+Papers cited repeatedly within this corpus but not yet annotated, ranked by frequency:
+
+{% for g in gaps %}
+### {{ loop.index }}. [{{ g.arxiv_id }}]({{ g.arxiv_url }}) — cited {{ g.cited_by_count }}×
+
+{% endfor %}
+
+---
+
+## Cluster Blind Spots
+
+{% for cluster in clusters %}
+**{{ cluster.name }}**: {{ cluster.papers | length }} papers annotated.
+{%- set unresolved = cluster.papers | sum(attribute='unresolved_refs') %}
+{% if unresolved %} {{ unresolved }} references unresolved (no arXiv ID).{% endif %}
+
+{% endfor %}

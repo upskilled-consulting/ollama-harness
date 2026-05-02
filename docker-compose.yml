@@ -1,0 +1,76 @@
+services:
+
+  # FastAPI backend — http://localhost:7860
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - HOST=0.0.0.0
+      - PORT=7860
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  # MCP HTTP server — http://localhost:8766
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python mcp_server.py --http --host 0.0.0.0 --port 8766
+    ports:
+      - "8766:8766"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - MCP_MAX_CONCURRENCY=3
+    restart: unless-stopped
+
+  # Vite dashboard — http://localhost:5173
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:7860
+    restart: unless-stopped
+
+  # Ollama — http://localhost:11434
+  # Runs natively for GPU access; this container is CPU-only fallback.
+  # For GPU: run `ollama serve` on the host and set OLLAMA_HOST in .env.
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    # Uncomment for GPU (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_models:
+
+# NOTE: llama-server (port 8083) is not containerised here — it's a native
+# Windows binary requiring direct GPU access. Run it separately:
+#
+#   llama.cpp\build\bin\llama-server.exe \
+#     --model models\Qwen3.6-35B-A3B-UD-IQ3_S.gguf \
+#     --ctx-size 16384 --parallel 2 --port 8083 -ngl 99
+#
+# Then set in .env:
+#   HARNESS_ENDPOINTS={"qwen3.6-35b": {"url": "http://host.docker.internal:8083/v1", ...}}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""op.py — CLI entry point. Stays at repo root; thin wrapper over harness.cli."""
+"""oh.py — CLI entry point. Stays at repo root; thin wrapper over harness.cli."""
 import sys
 from pathlib import Path
 

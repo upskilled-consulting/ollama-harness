@@ -1,8 +1,7 @@
 [project]
-name = "harness"
+name = "ollama-harness"
 version = "0.1.0"
 description = "Self-improving agentic research swarm with local LLM inference"
-readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
@@ -38,6 +37,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# CUDA torch — installed separately via uv sync --extra gpu
+# CPU torch is pulled automatically as a transitive dep of sentence-transformers
+gpu = [
+    "torch>=2.3",
+]
 finetune = [
     "torch>=2.3",
     "transformers>=4.40",
@@ -50,19 +54,24 @@ finetune = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",       # FastAPI TestClient
+    "httpx>=0.27",
     "ruff>=0.7",
     "mypy>=1.13",
     "types-requests>=2.32",
+    "honcho>=2.0",
 ]
 
 [project.scripts]
-op       = "harness.cli:main"
+oh       = "harness.cli:main"
 harness  = "harness.api.main:serve"
 
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["harness*"]
+
 [build-system]
-requires      = ["hatchling"]
-build-backend = "hatchling.build"
+requires      = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [tool.uv]
 dev-dependencies = [
@@ -70,7 +79,20 @@ dev-dependencies = [
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
     "mypy>=1.13",
+    "honcho>=2.0",
 ]
+
+# Route torch through the PyTorch CUDA 11.8 index so `uv sync --extra gpu`
+# installs the CUDA wheel instead of the CPU wheel from PyPI.
+# CPU-only installs (no --extra gpu) still work — sentence-transformers pulls
+# the CPU wheel automatically.
+[tool.uv.sources]
+torch = { index = "pytorch-cu118" }
+
+[[tool.uv.index]]
+name     = "pytorch-cu118"
+url      = "https://download.pytorch.org/whl/cu118"
+explicit = true
 
 [tool.ruff]
 target-version = "py312"

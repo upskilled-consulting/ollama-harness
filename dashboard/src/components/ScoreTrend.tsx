@@ -3,11 +3,6 @@ import type { ScoreTrendPoint } from "@/types";
 
 interface Props { data: ScoreTrendPoint[] }
 
-const TASK_COLORS: Record<string, string> = {
-  enumerated:     "#60a5fa",
-  best_practices: "#34d399",
-  research:       "#f59e0b",
-};
 
 export function ScoreTrend({ data }: Props) {
   return (

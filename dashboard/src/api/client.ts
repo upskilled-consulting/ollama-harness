@@ -1,4 +1,4 @@
-import type { DashboardData, QueueItem, RunRecord } from "@/types";
+import type { Artifact, CurationEntry, DashboardData, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -19,10 +19,16 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
-  data:    ()                            => get<DashboardData>("/data"),
-  runs:    ()                            => get<{ active: RunRecord[]; recent: RunRecord[] }>("/runs"),
-  queue:   ()                            => get<{ pending: number; items: QueueItem[] }>("/queue"),
-  submit:  (task: string, opts?: { producer_model?: string; no_wiggum?: boolean }) =>
+  data:      ()                             => get<DashboardData>("/data"),
+  runs:      ()                             => get<{ active: RunRecord[]; recent: RunRecord[] }>("/runs"),
+  all_runs:  ()                             => get<RunRecord[]>("/runs/all"),
+  queue:     ()                             => get<{ pending: number; items: QueueItem[] }>("/queue"),
+  mcp_log:   (limit = 200)                 => get<McpLogEntry[]>(`/mcp/log?limit=${limit}`),
+  sessions:  ()                             => get<Session[]>("/sessions"),
+  artifacts: ()                             => get<Artifact[]>("/artifacts"),
+  plans:     ()                             => get<PlanRecord[]>("/plans"),
+  curation:  ()                             => get<CurationEntry[]>("/curation"),
+  submit:    (task: string, opts?: { producer_model?: string; no_wiggum?: boolean }) =>
     post<{ item_id: string }>("/tasks", { task, ...opts }),
 };
 
@@ -32,5 +38,6 @@ export function createRunsSocket(onMessage: (run: RunRecord) => void): WebSocket
   ws.onmessage = (e) => {
     try { onMessage(JSON.parse(e.data) as RunRecord); } catch { /* ignore */ }
   };
+  ws.onerror = () => { /* suppress — onclose fires next and handles reconnect */ };
   return ws;
 }

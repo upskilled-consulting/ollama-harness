@@ -10,7 +10,9 @@ dist/
 .ruff_cache/
 .pytest_cache/
 
-# Runtime data (rebuilt from source)
+# Runtime data — rebuilt at runtime, not source
+data/*.db-shm
+data/*.db-wal
 data/runs.jsonl
 data/sessions.jsonl
 data/plans.jsonl
@@ -18,20 +20,34 @@ data/artifacts.jsonl
 data/memory.db
 data/search_cache.db
 data/semantic_scholar_cache.db
+data/rl_checkpoint.db
+data/rl_stats.md
 data/traces/
 data/chroma_memory/
 data/email_drafts/
 data/screenshots/
+data/output/
+data/rl_dataset/
+data/rl_rollouts/
 
-# Derived datasets (large, rebuilt from annotated CSVs)
+# Lit review cache
+harness/skills/.lit_review_cache/
+harness/skills/screenshots/
+
+# Derived datasets (large, rebuilt from CSVs)
 data/*_annotated.csv
 data/finetune_dataset*.jsonl
 data/finetune_metrics.jsonl
 data/hf_datasets/
 data/knowledge_base/
 
+# Large compiled deps — install separately
+llama.cpp/
+whisper.cpp/
+models/
+
 # Model weights
-models/*.gguf
+*.gguf
 finetune_output/
 
 # Frontend
@@ -39,8 +55,17 @@ dashboard/node_modules/
 dashboard/dist/
 dashboard/.vite/
 
-# Secrets
+# Secrets & local config
 .env
+
+# One-off task outputs / scratch
+op-note-*.md
+*_search.md
+*_flights*.md
+notes/
+tasks/
+agent-workspace/
+_port_scripts.py
 
 # OS
 .DS_Store

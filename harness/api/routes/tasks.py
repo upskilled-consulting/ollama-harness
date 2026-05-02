@@ -22,7 +22,7 @@ async def _run_task(item: QueueItem, request: TaskRequest) -> None:
     async with _queue_lock:
         item.status = "running"
 
-    cmd = [sys.executable, str(ROOT / "op.py"), request.task]
+    cmd = [sys.executable, str(ROOT / "oh.py"), request.task]
     if request.producer_model:
         cmd += ["--producer", request.producer_model]
     if request.no_wiggum:
@@ -44,16 +44,3 @@ async def submit_task(request: TaskRequest, background: BackgroundTasks):
     return {"item_id": item.item_id, "status": "pending"}
 
 
-@router.get("/queue")
-async def get_queue():
-    async with _queue_lock:
-        items = list(_queue[-100:])
-    pending = sum(1 for i in items if i.status == "pending")
-    return {"pending": pending, "items": [i.model_dump() for i in items]}
-
-
-@router.get("/state")
-async def get_state():
-    async with _queue_lock:
-        running = [i for i in _queue if i.status == "running"]
-    return {"running": len(running), "queue_depth": len(_queue)}

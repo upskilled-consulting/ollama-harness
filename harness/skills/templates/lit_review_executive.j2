@@ -1,0 +1,51 @@
+{# lit_review_executive.j2 — Concise executive briefing: 1-page summary for decision-makers
+   Same context object as lit_review_survey.j2
+#}
+# Executive Briefing: {{ meta.query }}
+
+*{{ meta.annotated }} papers · {{ meta.generated_at }}*
+
+---
+
+## Summary
+
+{{ synthesis }}
+
+---
+
+## Key Findings
+
+{% for cluster in clusters %}
+**{{ cluster.name }}** — {{ cluster.summary | truncate(300) }}
+{% if cluster.hub_paper %}*(Lead paper: [{{ cluster.hub_paper.title | truncate(60) }}]({{ cluster.hub_paper.arxiv_url }}))*{% endif %}
+
+{% endfor %}
+
+---
+
+## Top Papers
+
+{% for cluster in clusters %}{% for paper in cluster.papers[:2] %}
+- **[{{ paper.title | truncate(80) }}]({{ paper.arxiv_url }})** ({{ paper.published[:7] }}){% if paper.wiggum_score %} · score {{ "%.1f"|format(paper.wiggum_score) }}{% endif %}
+  {{ paper.annotation.contribution | truncate(200) }}
+{% endfor %}{% endfor %}
+
+---
+
+## Open Questions
+
+{% for q in open_questions[:5] %}
+{{ loop.index }}. {{ q }}
+{% endfor %}
+
+---
+
+## What to Read Next
+
+{% for g in gaps[:5] %}
+- [{{ g.arxiv_id }}]({{ g.arxiv_url }}) — cited {{ g.cited_by_count }}×
+{% endfor %}
+
+---
+
+*Built with [harness-engineering](https://github.com/nickmccarty/ollama-pi-harness) · /lit-review skill*

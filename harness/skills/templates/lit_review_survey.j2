@@ -1,0 +1,92 @@
+{# lit_review_survey.j2 — Full academic-style literature review
+   Context object expected:
+     meta.query          str       — original search query
+     meta.date_range     str       — e.g. "2023-01-01 to 2025-04-14"
+     meta.paper_count    int
+     meta.annotated      int
+     meta.generated_at   str
+     clusters            list of:
+       name              str       — cluster label
+       summary           str       — LLM synthesis paragraph
+       hub_paper         dict      — {title, arxiv_id, arxiv_url, hub_score}
+       papers            list of:
+         title, arxiv_id, arxiv_url, published
+         annotation      dict      — {topic, motivation, contribution,
+                                       detail_nuance, evidence_contribution_2,
+                                       weaker_result, narrow_impact, broad_impact}
+         wiggum_score    float
+         hub_score       int
+     gaps                list of:
+       arxiv_id, arxiv_url, cited_by_count
+     synthesis           str       — cross-cluster synthesis paragraph
+     open_questions      list[str]
+#}
+# Literature Review: {{ meta.query }}
+
+*Generated {{ meta.generated_at }} · {{ meta.paper_count }} fetched · {{ meta.annotated }} annotated*
+{% if meta.date_range %}*Date range: {{ meta.date_range }}*{% endif %}
+
+---
+
+## Overview
+
+{{ synthesis }}
+
+---
+
+{% for cluster in clusters %}
+## {{ loop.index }}. {{ cluster.name }}
+
+{{ cluster.summary }}
+
+{% if cluster.hub_paper %}
+**Hub paper**: [{{ cluster.hub_paper.title }}]({{ cluster.hub_paper.arxiv_url }}) — cited by {{ cluster.hub_paper.hub_score }} paper{{ 's' if cluster.hub_paper.hub_score != 1 else '' }} in this corpus
+{% endif %}
+
+{% for paper in cluster.papers | sort(attribute='wiggum_score', reverse=True) %}
+### {{ paper.title }}
+
+*[{{ paper.arxiv_id }}]({{ paper.arxiv_url }}) · {{ paper.published[:10] }}{% if paper.hub_score %} · cited ×{{ paper.hub_score }}{% endif %}{% if paper.wiggum_score %} · score {{ paper.wiggum_score }}/10{% endif %}*
+
+**Topic**: {{ paper.annotation.topic }}
+
+**Motivation**: {{ paper.annotation.motivation }}
+
+**Contribution**: {{ paper.annotation.contribution }}
+
+**Evidence**: {{ paper.annotation.evidence_contribution_2 }}
+
+**Narrow impact**: {{ paper.annotation.narrow_impact }}
+
+**Broad impact**: {{ paper.annotation.broad_impact }}
+
+{% if paper.annotation.weaker_result %}
+**Limitations**: {{ paper.annotation.weaker_result }}
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+
+---
+
+## Open Questions
+
+{% for q in open_questions %}
+- {{ q }}
+{% endfor %}
+
+---
+
+## Gap Candidates
+
+Papers heavily cited within this corpus but not yet annotated:
+
+| # | arXiv ID | Cited by |
+|---|----------|----------|
+{% for g in gaps[:15] %}
+| {{ loop.index }} | [{{ g.arxiv_id }}]({{ g.arxiv_url }}) | {{ g.cited_by_count }} |
+{% endfor %}
+
+---
+
+*Built with [harness-engineering](https://github.com/nickmccarty/ollama-pi-harness) · /lit-review skill*

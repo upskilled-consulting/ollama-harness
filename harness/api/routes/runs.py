@@ -1,34 +1,40 @@
 """GET /api/runs — active + recent runs; GET /api/data — dashboard payload."""
 
 import json
-from pathlib import Path
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
 
-from harness.config import RUNS_FILE, settings
-from harness.schema import RunRecord
+from harness.config import LEGACY_RUNS_FILE, RUNS_FILE
 
 router = APIRouter(tags=["runs"])
 
-_MAX_RECENT = 50
+_MAX_RECENT = 200
 
 
 def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
-    if not RUNS_FILE.exists():
-        return []
-    lines = RUNS_FILE.read_text(encoding="utf-8").splitlines()
-    records = []
-    for line in reversed(lines):
-        line = line.strip()
-        if line:
+    """Load runs from both current and legacy JSONL, deduped by run_id, newest first."""
+    seen: set[str] = set()
+    all_records: list[dict] = []
+
+    for path in (RUNS_FILE, LEGACY_RUNS_FILE):
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
             try:
-                records.append(json.loads(line))
+                r = json.loads(line)
             except json.JSONDecodeError:
-                pass
-        if len(records) >= n:
-            break
-    return records
+                continue
+            rid = r.get("run_id") or r.get("timestamp", "") + r.get("task", "")[:30]
+            if rid and rid not in seen:
+                seen.add(rid)
+                all_records.append(r)
+
+    all_records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    return all_records[:n]
 
 
 @router.get("/runs")
@@ -38,19 +44,26 @@ async def get_runs():
     return {"active": active, "recent": recent}
 
 
+@router.get("/runs/all")
+async def get_all_runs():
+    """Full run list for Explorer — no cap."""
+    return _load_runs(n=10_000)
+
+
 @router.get("/data")
 async def get_dashboard_data():
     runs = _load_runs()
-    passes   = [r for r in runs if r.get("final") == "PASS"]
-    scores   = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
+    passes    = [r for r in runs if r.get("final") == "PASS"]
+    scores    = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
     durations = [r["run_duration_s"] for r in runs if r.get("run_duration_s")]
 
-    def _mean(vs): return round(sum(vs) / len(vs), 2) if vs else 0.0
+    def _mean(vs: list) -> float:
+        return round(sum(vs) / len(vs), 2) if vs else 0.0
 
     kpi = {
-        "total_runs":   len(runs),
-        "pass_rate":    round(len(passes) / len(runs), 3) if runs else 0.0,
-        "mean_score":   _mean(scores),
+        "total_runs":      len(runs),
+        "pass_rate":       round(len(passes) / len(runs), 3) if runs else 0.0,
+        "mean_score":      _mean(scores),
         "mean_duration_s": _mean(durations),
     }
 
@@ -67,8 +80,8 @@ async def get_dashboard_data():
 
     return {
         "kpi":          kpi,
-        "recent_runs":  runs[:20],
+        "recent_runs":  runs[:50],
         "score_trend":  score_trend,
         "cost":         cost,
-        "claude_stats": {},  # reserved
+        "claude_stats": {},
     }
