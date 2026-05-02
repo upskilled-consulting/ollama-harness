@@ -34,6 +34,9 @@ dependencies = [
     "youtube-transcript-api>=0.6",
     # Semantic Scholar
     "requests>=2.32",
+    # CLI
+    "pyfiglet>=1.0",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
