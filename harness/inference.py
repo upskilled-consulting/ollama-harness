@@ -40,8 +40,9 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path as _Path
-from typing import Any, Callable
+from typing import Any
 
 # Load .env from the repo root before reading any os.environ.get() calls below.
 try:

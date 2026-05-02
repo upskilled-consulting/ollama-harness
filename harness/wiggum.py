@@ -24,8 +24,8 @@ import json
 import os
 import re
 import sys
-from typing import Any
 from contextlib import contextmanager
+from typing import Any
 
 from harness.inference import OllamaLike as _OllamaLike
 from harness.summarizer import summarize_for_eval, summarize_for_revision

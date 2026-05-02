@@ -172,7 +172,7 @@ def _log_event(task_id: str, label: str, event: str, text: str = "") -> None:
             f.write(entry + "\n")
 
 
-def _run_subprocess(script: "str | None", task: str, timeout: int = 600,
+def _run_subprocess(script: str | None, task: str, timeout: int = 600,
                     task_id: str = "", label: str = "") -> dict:
     """Run agent.py or orchestrator.py, stream stdout to mcp_tasks.jsonl."""
     import re as _re
