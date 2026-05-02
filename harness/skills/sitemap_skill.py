@@ -136,8 +136,7 @@ def try_sitemap_xml(start_url: str, max_pages: int = 80) -> list[dict]:
         candidates.append(start_url)
     candidates += [base + "/sitemap.xml", base + "/sitemap_index.xml"]
     # deduplicate preserving order
-    seen: set[str] = set()
-    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+    candidates = list(dict.fromkeys(candidates))
     all_urls: list[str] = []
 
     for sitemap_url in candidates:
@@ -171,12 +170,12 @@ def try_sitemap_xml(start_url: str, max_pages: int = 80) -> list[dict]:
         if all_urls:
             break
 
-    seen: set[str] = set()
+    url_seen: set[str] = set()
     results: list[dict] = []
     for u in all_urls:
         u = _normalize(u)
-        if u not in seen and _domain(u) == _domain(start_url):
-            seen.add(u)
+        if u not in url_seen and _domain(u) == _domain(start_url):
+            url_seen.add(u)
             results.append({"url": u, "title": "", "depth": 0})
         if len(results) >= max_pages:
             break
@@ -229,7 +228,7 @@ def crawl_bfs(start_url: str, max_pages: int = 30, max_depth: int = 2) -> list[d
 
         if depth < max_depth and soup:
             for a in soup.find_all("a", href=True):
-                full = _normalize(urljoin(url, a["href"]))
+                full = _normalize(urljoin(url, str(a["href"])))
                 p = urlparse(full)
                 if (p.netloc == domain and p.scheme in ("http", "https")
                         and full not in visited):

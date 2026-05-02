@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 from harness.config import RUNS_FILE, TRACES_DIR
 from harness.schema import (
@@ -61,7 +62,7 @@ class RunTrace:
         self._run_start  = time.monotonic()
         self._t0_us      = time.monotonic_ns() // 1000
         self._pid        = os.getpid()
-        self._events     = []
+        self._events: list[Any] = []
         self._task       = task
 
         self.run_id      = os.environ.get("HARNESS_RUN_ID") or make_id()
@@ -74,7 +75,7 @@ class RunTrace:
         self._msg_seq    = 0
         self._is_sub     = _is_sub
 
-        self.data = {
+        self.data: dict[str, Any] = {
             "run_id":           self.run_id,
             "session_id":       self.session_id,
             "project_id":       self.project_id,

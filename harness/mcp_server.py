@@ -172,7 +172,7 @@ def _log_event(task_id: str, label: str, event: str, text: str = "") -> None:
             f.write(entry + "\n")
 
 
-def _run_subprocess(script: str, task: str, timeout: int = 600,
+def _run_subprocess(script: "str | None", task: str, timeout: int = 600,
                     task_id: str = "", label: str = "") -> dict:
     """Run agent.py or orchestrator.py, stream stdout to mcp_tasks.jsonl."""
     import re as _re
@@ -198,6 +198,7 @@ def _run_subprocess(script: str, task: str, timeout: int = 600,
     stdout_lines: list[str] = []
     run_id = ""
     try:
+        assert proc.stdout is not None
         for line in proc.stdout:
             line = line.rstrip("\n")
             stdout_lines.append(line)
@@ -213,7 +214,7 @@ def _run_subprocess(script: str, task: str, timeout: int = 600,
         proc.kill()
         _log_event(task_id, label, "fail", "timeout")
 
-    stderr_tail = (proc.stderr.read() or "")[-500:]
+    stderr_tail = (proc.stderr.read() if proc.stderr else "")[-500:]
     elapsed = round(time.time() - t0, 1)
 
     content = ""

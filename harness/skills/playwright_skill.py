@@ -618,7 +618,7 @@ def navigate_and_extract(
             _persistent_browser_proc = None
             _clear_state()
             try:
-                _pw_ctx.stop()
+                _pw_ctx.stop()  # type: ignore[attr-defined]
             except Exception:
                 pass
 

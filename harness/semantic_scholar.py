@@ -315,7 +315,7 @@ def enrich_csv(in_path: Path, out_path: Path, graph: GraphResult) -> None:
             rows.append(row)
 
     new_cols = [c for c in COLUMNS_EXTRA if c not in existing_cols]
-    all_cols = existing_cols + new_cols
+    all_cols = list(existing_cols) + new_cols
 
     for row in rows:
         aid = (row.get("arxiv_id") or "").split("v")[0]

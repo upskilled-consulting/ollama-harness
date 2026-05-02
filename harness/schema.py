@@ -462,10 +462,10 @@ if __name__ == "__main__":
         if not projects:
             print("No projects found.")
         else:
-            for p in projects:
-                status = p.get("status", "?")
-                pid    = p.get("project_id", "?")
-                name   = p.get("name", "?")
+            for proj in projects:
+                status = proj.get("status", "?")
+                pid    = proj.get("project_id", "?")
+                name   = proj.get("name", "?")
                 print(f"  [{status}]  {pid}  {name}")
 
     elif args.cmd == "set-project":

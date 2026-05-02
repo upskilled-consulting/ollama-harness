@@ -399,7 +399,7 @@ def title_from_md(text: str, filename: str) -> str:
 def synopsis_from_md(text: str, max_chars: int = 220) -> str:
     """Extract first non-heading paragraph as synopsis."""
     lines = text.splitlines()
-    para_lines = []
+    para_lines: list[str] = []
     for line in lines:
         if line.startswith("#"):
             if para_lines:

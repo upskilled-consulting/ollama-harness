@@ -324,18 +324,18 @@ def run_email_standalone(
     Returns a list of result dicts:
       {name, affiliation, json_path, subject, body, to_email, generated_at}
     """
-    csv_path = Path(csv_path)
+    csv_file = Path(csv_path)
     out_dir  = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if not csv_path.exists():
-        print(f"  [email] CSV not found: {csv_path}")
+    if not csv_file.exists():
+        print(f"  [email] CSV not found: {csv_file}")
         return []
 
     # --- Load CSV ---
-    with open(csv_path, encoding="utf-8") as f:
+    with open(csv_file, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-    print(f"  [email] loaded {len(rows)} rows from {csv_path.name}")
+    print(f"  [email] loaded {len(rows)} rows from {csv_file.name}")
 
     # Optional keyword filter
     if filter_keyword:
@@ -345,7 +345,7 @@ def run_email_standalone(
 
     print(f"  [email] generating up to {max_emails} email draft(s) -> {out_dir}/")
 
-    results   = []
+    results: list[dict] = []
     total_in  = 0
     total_out = 0
 

@@ -420,7 +420,7 @@ class MemoryStore:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (ts, task, task_type, title, narrative, facts_json, output_path, final_score, final),
             )
-            rowid = cursor.lastrowid
+            rowid = cursor.lastrowid or -1
 
         col = self._get_chroma()
         if col is not None:
@@ -650,7 +650,7 @@ def assess_novelty(new_results: list[dict], knowledge_state: str) -> int:
             n_results=1,
             include=["distances"],
         )
-        min_distances = [r[0] for r in results["distances"] if r]
+        min_distances = [r[0] for r in (results["distances"] or []) if r]
         if not min_distances:
             return 10
 

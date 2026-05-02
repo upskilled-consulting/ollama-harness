@@ -159,7 +159,7 @@ def op_status(args: list[str], model: str) -> str:
     return "\n".join(out)
 
 
-def op_push(args: list[str], model: str) -> str:
+def op_push(args: list[str], model: str) -> "str | tuple[str, int, int]":
     """Stage all, generate commit message via LLM, commit, push."""
     _require_git()
 
@@ -200,7 +200,7 @@ def op_push(args: list[str], model: str) -> str:
     return f"[github] pushed branch '{branch}'\n{out}", in_tok, out_tok
 
 
-def op_pr_create(args: list[str], model: str) -> str:
+def op_pr_create(args: list[str], model: str) -> "str | tuple[str, int, int]":
     _require_gh()
     _require_git()
 
@@ -266,7 +266,7 @@ def op_pr_review(args: list[str], model: str) -> str:
     return out if rc == 0 else f"[github] pr review failed:\n{err}"
 
 
-def op_issue_create(args: list[str], model: str) -> str:
+def op_issue_create(args: list[str], model: str) -> "str | tuple[str, int, int]":
     _require_gh()
     description = " ".join(args).strip()
     if not description:
@@ -355,14 +355,14 @@ def _dispatch(tokens: list[str], model: str) -> tuple[str, int, int]:
     if len(tokens) >= 2:
         two = f"{tokens[0]} {tokens[1]}"
         if two in _OPS and _OPS[two] is not None:
-            result = _OPS[two](tokens[2:], model)
+            result = _OPS[two](tokens[2:], model)  # type: ignore[misc]
             if isinstance(result, tuple):
                 return result
             return result, 0, 0
 
     one = tokens[0] if tokens else ""
     if one in _OPS and _OPS[one] is not None:
-        result = _OPS[one](tokens[1:], model)
+        result = _OPS[one](tokens[1:], model)  # type: ignore[misc]
         if isinstance(result, tuple):
             return result
         return result, 0, 0

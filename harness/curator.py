@@ -235,10 +235,10 @@ def score_paper(
         total_in  += in_tok
         total_out += out_tok
 
-    valid_scores = [s["score"] for s in scores if s["score"] is not None]
+    valid_scores: list[int] = [s["score"] for s in scores if isinstance(s["score"], int)]
     mean = round(sum(valid_scores) / len(valid_scores), 2) if valid_scores else 0.0
 
-    veto_by = [s["persona"] for s in scores if s["score"] is not None and s["score"] < veto_floor]
+    veto_by = [s["persona"] for s in scores if isinstance(s["score"], int) and s["score"] < veto_floor]
     passed  = mean >= mean_threshold and len(veto_by) == 0
 
     return {

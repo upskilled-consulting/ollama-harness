@@ -158,17 +158,17 @@ def _run_one_subtask(sub: dict, parent_env: dict | None = None) -> dict:
 
     for attempt in range(1, SUBTASK_MAX_RETRIES + 2):
         sub["attempts"] = attempt
-        result = subprocess.run(
+        proc = subprocess.run(
             [sys.executable, "-m", "harness.agent", "--no-wiggum", sub["task"]],
             capture_output=True,
             text=True,
             cwd=str(_ORCH_ROOT),
             env=env,
         )
-        sub["output_log"].append(result.stdout + (result.stderr or ""))
+        sub["output_log"].append(proc.stdout + (proc.stderr or ""))
 
         expanded = os.path.expanduser(sub["path"])
-        if result.returncode == 0 and os.path.exists(expanded):
+        if proc.returncode == 0 and os.path.exists(expanded):
             with open(expanded, encoding="utf-8") as f:
                 content = f.read()
             if content.strip():
@@ -200,7 +200,7 @@ def _run_subtasks_parallel(subtask_defs: list[dict], parent_env: dict | None = N
     print(f"\n[orchestrator] running {n} subtask(s) in parallel (max {workers} workers)...")
 
     t_wall_start = time.time()
-    results = [None] * n
+    results: list[dict | None] = [None] * n
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         future_to_idx = {pool.submit(_run_one_subtask, sub, parent_env): i
@@ -217,6 +217,8 @@ def _run_subtasks_parallel(subtask_defs: list[dict], parent_env: dict | None = N
 
     # Print each subtask's captured output in order
     for i, sub in enumerate(results):
+        if sub is None:
+            continue
         status = "OK" if sub.get("content") else "FAILED"
         attempts_str = f", {sub.get('attempts', 1)} attempt(s)" if sub.get('attempts', 1) > 1 else ""
         print(f"\n{'='*50}")
@@ -225,10 +227,10 @@ def _run_subtasks_parallel(subtask_defs: list[dict], parent_env: dict | None = N
         for line in (sub.get("output_log") or []):
             print(line, end="")
 
-    seq_estimate = round(sum(s.get("elapsed", 0) for s in results), 1)
+    seq_estimate = round(sum(s.get("elapsed", 0) for s in results if s is not None), 1)
     print(f"\n[orchestrator] wall time: {wall_time}s  (sequential estimate: {seq_estimate}s)")
 
-    return results
+    return [s for s in results if s is not None]
 
 
 def _cleanup_subtask_files(subtask_defs: list[dict], trace: "RunTrace | None" = None):
@@ -369,9 +371,9 @@ def orchestrate(task: str, use_wiggum: bool = True):
                 task_type=plan.task_type,
                 tool_calls=trace.data.get("tool_calls", []),
                 output_content=content,
-                output_lines=trace.data.get("output_lines"),
-                output_bytes=trace.data.get("output_bytes"),
-                output_path=trace.data.get("output_path"),
+                output_lines=trace.data.get("output_lines", 0),
+                output_bytes=trace.data.get("output_bytes", 0),
+                output_path=trace.data.get("output_path", ""),
                 wiggum_scores=[float(x) for x in (_ws if isinstance(_ws := trace.data.get("wiggum_scores"), list) else [])],
                 final=final_status,
             )

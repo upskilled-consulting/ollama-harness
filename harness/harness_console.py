@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 # Capture the real terminal stdout AT IMPORT TIME — before install() swaps it.
-_ORIG: io.TextIOBase = sys.stdout
+_ORIG: io.TextIOBase = sys.stdout  # type: ignore[assignment]
 _is_tty: bool = getattr(sys.stdout, "isatty", lambda: False)()
 
 # Enable ANSI + UTF-8 on Windows.
@@ -38,8 +38,8 @@ if sys.platform == "win32":
         pass
     # Reconfigure stdout/stderr to UTF-8 so print() doesn't encode through cp1252
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except Exception:
         pass
 

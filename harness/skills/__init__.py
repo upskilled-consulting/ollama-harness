@@ -451,7 +451,7 @@ def parse_skills(task: str) -> tuple[str, list[str]]:
     """
     parts      = task.split()
     skill_names: list[str] = []
-    clean      = []
+    clean: list[str] = []
 
     _drop_next_windows_fragment = False
     for part in parts:
@@ -679,7 +679,7 @@ def _extract_sections(text: str) -> str:
 
     extracted = {}
     for label, start_idx, max_chars in section_starts:
-        chunk_lines = []
+        chunk_lines: list[str] = []
         for line in lines[start_idx:]:
             if chunk_lines and heading_re.match(line):
                 break

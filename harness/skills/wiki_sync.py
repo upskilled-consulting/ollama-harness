@@ -451,7 +451,7 @@ def sync_gaps(issues: list[str]) -> str:
 
     matched: list[dict] = []
     for spec in GAP_EXTRACTIONS:
-        if any(t in issues_lower for t in spec["triggers"]):
+        if any(str(t) in issues_lower for t in spec["triggers"]):
             matched.append(spec)
 
     if not matched:
@@ -470,7 +470,8 @@ def sync_gaps(issues: list[str]) -> str:
     for spec in matched:
         parts.append(f"### {spec['label']}")
         parts.append("")
-        for file, kind, name, max_lines, desc in spec["entries"]:
+        for _e in spec["entries"]:
+            file, kind, name, max_lines, desc = str(_e[0]), str(_e[1]), str(_e[2]), int(_e[3]), str(_e[4])
             excerpt = _run_extraction(file, kind, name, max_lines)
             parts.append(f"**`{name}`** — {desc}")
             parts.append("")
@@ -478,7 +479,7 @@ def sync_gaps(issues: list[str]) -> str:
             parts.append(excerpt)
             parts.append("```")
             parts.append("")
-        added_labels.append(spec["label"])
+        added_labels.append(str(spec["label"]))
 
     parts.append(GAP_MARKER_END)
     gap_section = "\n".join(parts)

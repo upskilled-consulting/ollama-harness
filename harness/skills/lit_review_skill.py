@@ -133,7 +133,7 @@ def step_curate(papers: list[dict], max_annotate: int, query: str = "",
         return papers[:max_annotate]
     from harness.curator import score_paper
     print(f"\n[lit-review] Step 3: curating {len(papers)} papers (target: {max_annotate})...")
-    passed = []
+    passed: list[dict] = []
     _ctx = _trace.span("curate", papers=len(papers), target=max_annotate) if _trace else _nullctx()
     with _ctx:
         for i, p in enumerate(papers):
@@ -411,10 +411,9 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
 
     cluster_summaries = {}
     for cluster in clusters:
-        cluster_papers = [
-            id_to_paper.get(pid.split("v")[0])
-            for pid in cluster.get("paper_ids", [])
-            if id_to_paper.get(pid.split("v")[0])
+        cluster_papers: list[dict] = [
+            p for pid in cluster.get("paper_ids", [])
+            if (p := id_to_paper.get(pid.split("v")[0])) is not None
         ]
         if not cluster_papers:
             cluster_summaries[cluster["name"]] = ""
@@ -422,8 +421,8 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
 
         paper_blurbs = "\n\n".join(
             f"Title: {p.get('title','')}\n"
-            f"Contribution: {p.get('annotation',{}).get('contribution','')}\n"
-            f"Evidence: {p.get('annotation',{}).get('evidence_contribution_2','')}"
+            f"Contribution: {(p.get('annotation') or {}).get('contribution','')}\n"
+            f"Evidence: {(p.get('annotation') or {}).get('evidence_contribution_2','')}"
             for p in cluster_papers
         )
 
@@ -499,12 +498,10 @@ def step_render(papers: list[dict], clusters: list[dict], synthesis_data: dict,
     # Build cluster objects for template
     template_clusters = []
     for cluster in clusters:
-        cluster_papers = [
-            id_to_paper.get(pid.split("v")[0])
-            for pid in cluster.get("paper_ids", [])
-            if id_to_paper.get(pid.split("v")[0])
+        cluster_papers: list[dict] = [
+            p for pid in cluster.get("paper_ids", [])
+            if (p := id_to_paper.get(pid.split("v")[0])) is not None
         ]
-        cluster_papers = [p for p in cluster_papers if p]
 
         hub_paper = None
         if cluster_papers:

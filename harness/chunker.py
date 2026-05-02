@@ -257,7 +257,7 @@ def _chunk_retrieve(
         col.upsert(
             ids       = [f"c{i}" for i in range(len(chunks))],
             documents = [c.text for c in chunks],
-            metadatas = metadatas,
+            metadatas = metadatas,  # type: ignore[arg-type]
         )
 
         n_results = min(TOP_K, len(chunks))
@@ -266,20 +266,21 @@ def _chunk_retrieve(
             n_results   = n_results,
             include     = ["documents", "metadatas"],
         )
-        ret_texts = results["documents"][0]
-        ret_metas = results["metadatas"][0]
+        ret_texts = (results["documents"] or [[]])[0]
+        ret_metas = (results["metadatas"] or [[]])[0]
 
         # Rebuild Chunk objects from retrieval results
         retrieved: list[Chunk] = []
         for doc, meta in zip(ret_texts, ret_metas):
+            md: dict = dict(meta) if meta else {}
             retrieved.append(Chunk(
                 text        = doc,
-                source      = meta.get("source", source),
-                url         = meta.get("url", url),
-                page        = meta.get("page"),
-                paragraph   = meta.get("paragraph", 0),
-                char_offset = meta.get("char_offset", 0),
-                section     = meta.get("section", ""),
+                source      = md.get("source", source),
+                url         = md.get("url", url),
+                page        = md.get("page"),
+                paragraph   = md.get("paragraph", 0),
+                char_offset = md.get("char_offset", 0),
+                section     = md.get("section", ""),
             ))
 
         # Re-sort by original position (preserve reading order)

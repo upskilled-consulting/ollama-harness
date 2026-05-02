@@ -203,7 +203,8 @@ def make_plan(task: str, memory_context: str = "") -> tuple["Plan", object]:
     """
     # Prior knowledge pass — fast single call, informs query targeting
     # Skippable via HARNESS_SKIP_PRIOR_KNOWLEDGE=1 for controlled experiments
-    known_facts, gaps = [], []
+    known_facts: list[str] = []
+    gaps: list[str] = []
     if os.environ.get("HARNESS_SKIP_PRIOR_KNOWLEDGE") != "1":
         known_facts, gaps = prior_knowledge_pass(task, memory_context)
         if known_facts or gaps:

@@ -205,8 +205,8 @@ def fetch(
 
 def load_existing(path: Path) -> tuple[list[dict], set[str]]:
     """Load existing CSV, return (rows, set of arxiv_ids)."""
-    rows = []
-    ids  = set()
+    rows: list[dict] = []
+    ids: set[str]    = set()
     if not path.exists():
         return rows, ids
     with open(path, newline="", encoding="utf-8") as f:

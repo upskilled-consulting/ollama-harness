@@ -249,7 +249,7 @@ def extract_design_system(
         browser.close()
     finally:
         try:
-            _pw_ctx.stop()
+            _pw_ctx.stop()  # type: ignore[attr-defined]
         except Exception:
             pass
 
@@ -264,7 +264,7 @@ def extract_design_system(
     if section_shots and vision_model:
         try:
             from harness.vision import extract_image_context
-            descs = []
+            descs: list[str] = []
             for i, sp in enumerate(section_shots[:2]):
                 label = "hero section" if i == 0 else "mid-page components"
                 goal  = (f"Describe the visual design of this {label}: "
@@ -282,7 +282,7 @@ def extract_design_system(
                     _inf_mod._on_inf_end   = None
                 except Exception:
                     _saved_start = _saved_end = None
-                    _inf_mod = None
+                    _inf_mod = None  # type: ignore[assignment]
 
                 _result  = [None]
                 _evt     = _th.Event()
@@ -520,7 +520,7 @@ def _extract_summary(name: str, content: str, max_chars: int = 400) -> str:
     """Pull title (first H1/H2) + opening paragraph from a markdown file."""
     lines = content.splitlines()
     title = name
-    body_lines = []
+    body_lines: list[str] = []
     for ln in lines:
         stripped = ln.strip()
         if stripped.startswith("#") and title == name:
@@ -699,7 +699,7 @@ def _refine_loop(
             browser.close()
         finally:
             try:
-                _pw_ctx.stop()
+                _pw_ctx.stop()  # type: ignore[attr-defined]
             except Exception:
                 pass
 

@@ -41,6 +41,7 @@ import os
 import re
 import time
 from pathlib import Path as _Path
+from typing import Any, Callable
 
 # Load .env from the repo root before reading any os.environ.get() calls below.
 try:
@@ -210,7 +211,7 @@ class _OllamaResponse:
 # Backend implementations
 # ---------------------------------------------------------------------------
 
-def _chat_ollama(model: str, messages: list, **kwargs) -> object:
+def _chat_ollama(model: str, messages: list, **kwargs) -> Any:
     import ollama as _ollama
     options = kwargs.get("options") or {}
     if "think" in options:
@@ -375,6 +376,7 @@ def _chat_vllm(
                       f"max_tokens={oai_kwargs.get('max_tokens', '?')}, retry {attempt+1}/2")
             else:
                 raise
+    raise RuntimeError("_chat_vllm: all retries exhausted without returning")
 
 
 # ---------------------------------------------------------------------------
@@ -382,12 +384,12 @@ def _chat_vllm(
 # ---------------------------------------------------------------------------
 
 # Optional display hooks — set by op.py via harness_console when running interactively.
-_on_inf_start: "callable | None" = None   # (label: str) -> None
-_on_inf_end:   "callable | None" = None   # () -> None
-_on_cot:       "callable | None" = None   # (thinking: str) -> None
+_on_inf_start: Callable | None = None   # (label: str) -> None
+_on_inf_end:   Callable | None = None   # () -> None
+_on_cot:       Callable | None = None   # (thinking: str) -> None
 
 
-def chat(model: str, messages: list, **kwargs) -> object:
+def chat(model: str, messages: list, **kwargs) -> Any:
     """
     Drop-in replacement for ollama.chat().
 
@@ -442,10 +444,10 @@ class OllamaLike:
     def __init__(self, keep_alive=None):
         self._keep_alive = keep_alive
 
-    def chat(self, model: str = None, *args, **kwargs):
+    def chat(self, model: str | None = None, messages: list | None = None, **kwargs) -> Any:
         if self._keep_alive is not None and _BACKEND == "ollama":
             kwargs.setdefault("keep_alive", self._keep_alive)
-        return chat(*args, model=model, **kwargs)
+        return chat(model=model or "", messages=messages or [], **kwargs)
 
 
 # Module-level shim so `import harness.inference as ollama` works as a drop-in.

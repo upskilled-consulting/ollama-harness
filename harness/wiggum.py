@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+from typing import Any
 from contextlib import contextmanager
 
 from harness.inference import OllamaLike as _OllamaLike
@@ -463,7 +464,7 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
     # Lightweight local trace just for token accumulation — not written to disk
     _local_trace = _RunTrace(task=task, producer_model=producer_model, evaluator_model=evaluator_model)
 
-    trace = {"task": task, "task_type": task_type, "output_path": expanded, "rounds": [], "final": None}
+    trace: dict[str, Any] = {"task": task, "task_type": task_type, "output_path": expanded, "rounds": [], "final": None}
 
     print("\n[wiggum] starting verification loop")
     print(f"  file:  {expanded}")
@@ -726,7 +727,7 @@ def loop_annotate(
             pass
 
     _local_trace = _RunTrace(task=task, producer_model=producer_model, evaluator_model=evaluator_model)
-    trace = {"task": task, "task_type": "annotate", "output_path": expanded, "rounds": [], "final": None}
+    trace: dict[str, Any] = {"task": task, "task_type": "annotate", "output_path": expanded, "rounds": [], "final": None}
 
     # Clean garbled PDF text (single-char-per-line runs from MarkItDown pdfminer)
     try:

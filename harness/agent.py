@@ -458,7 +458,7 @@ def web_search_headed(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> 
                 _browser_proc.terminate()
             _headed_browser_proc = None
             _clear_browser_state()
-            _pw_ctx.stop()
+            _pw_ctx.stop()  # type: ignore[attr-defined]
 
         if results:
             print(f"  [headed] extracted {len(results)} result(s) from browser")
@@ -474,7 +474,7 @@ def web_search_headed(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> 
                 pass
         _headed_browser_proc = None
         try:
-            _pw_ctx.stop()
+            _pw_ctx.stop()  # type: ignore[attr-defined]
         except Exception:
             pass
 
@@ -1234,9 +1234,9 @@ def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: di
             task_type=task_type,
             tool_calls=trace_data.get("tool_calls", []),
             output_content=content,
-            output_lines=trace_data.get("output_lines"),
-            output_bytes=trace_data.get("output_bytes"),
-            output_path=trace_data.get("output_path"),
+            output_lines=trace_data.get("output_lines", 0),
+            output_bytes=trace_data.get("output_bytes", 0),
+            output_path=trace_data.get("output_path", ""),
             wiggum_scores=trace_data.get("wiggum_scores", []),
             final=trace_data.get("final", "PASS"),
             wiggum_issues=wiggum_issues or [],
@@ -1288,7 +1288,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
         _pl.load_all()
     except Exception as _pl_err:
         print(f"[warn] plugin_loader: {_pl_err}")
-        _pl = None
+        _pl = None  # type: ignore[assignment]
 
     try:
         # Skill parsing — extract /skill tokens before anything else touches the task
@@ -1310,7 +1310,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
 # Set dynamic keep_alive unless overridden by OLLAMA_KEEP_ALIVE env var
         if _KEEP_ALIVE_OVERRIDE is None:
             _KEEP_ALIVE = _estimate_keep_alive(
-                task_type=None,           # task_type not known yet; refined below after planning
+                task_type="",             # task_type not known yet; refined below after planning
                 explicit_skills=set(explicit_skills),
                 use_wiggum=use_wiggum,
             )
@@ -2856,7 +2856,7 @@ Rules:
 
         def _handle_plugin_command(skill_key: str):
             """Dispatch a non-forge plugin command through the synthesis pipeline."""
-            nonlocal _plugin_cmd_context
+            nonlocal _plugin_cmd_context  # type: ignore[misc]
             if not _pl:
                 print("[plugin] plugin_loader not available")
                 trace.finish("ERROR")
@@ -3234,7 +3234,7 @@ Rules:
         # Post-synthesis skill handlers (e.g. /knowledge-graph)
         if skills_at_hook(active_skills, "post_synthesis"):
             with trace.span("post_synthesis_skills"):
-                run_post_synthesis(active_skills, content, task, path, producer_model)
+                run_post_synthesis(active_skills, content, task, path or "", producer_model)
 
         if use_wiggum:
             # /panel skill activates the 3-persona panel inside wiggum
@@ -3242,7 +3242,7 @@ Rules:
                 os.environ["WIGGUM_PANEL"] = "1"
                 print("  [skill:panel] panel evaluation enabled")
             with trace.span("wiggum"):
-                wiggum_trace = wiggum_loop(task, path, producer_model=producer_model, parent_trace=trace)
+                wiggum_trace = wiggum_loop(task, path or "", producer_model=producer_model, parent_trace=trace)
             trace.log_wiggum(wiggum_trace)
             print(f"\n[wiggum] {wiggum_trace['final']} after {len(wiggum_trace['rounds'])} round(s)")
             for r in wiggum_trace["rounds"]:
@@ -3271,7 +3271,7 @@ Rules:
             if tac is not None:
                 trace.data["tac_hours"] = tac
             trace.finish()
-            _store_memory(memory, task, wiggum_trace.get("task_type"), trace.data, content, wiggum_issues=all_wiggum_issues)
+            _store_memory(memory, task, wiggum_trace.get("task_type") or "", trace.data, content, wiggum_issues=all_wiggum_issues)
 
             # Post-run skill extraction — non-blocking
             try:
