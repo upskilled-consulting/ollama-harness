@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra dev
+          uv pip install -e .
+
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium --with-deps
+
+      - name: Lint (ruff)
+        run: uv run ruff check harness/ scripts/ tests/
+
+      - name: Type check (mypy)
+        run: uv run mypy harness/ --ignore-missing-imports --no-error-summary
+        continue-on-error: true   # advisory only — tighten gradually
+
+      - name: Test
+        run: |
+          uv run pytest tests/ \
+            -v \
+            --tb=short \
+            -m "not requires_ollama" \
+            --ignore=tests/tests/
+        env:
+          # Point harness at a temp data dir so no writes to repo root
+          DATA_DIR: /tmp/harness-ci-data

@@ -111,3 +111,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths    = ["tests"]
+markers = [
+    "requires_ollama: test needs a live Ollama server (skip in CI with -m 'not requires_ollama')",
+    "requires_browser: test needs a real Chromium session",
+    "slow: test takes more than 10 seconds",
+]
