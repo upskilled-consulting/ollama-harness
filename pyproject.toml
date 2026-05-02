@@ -83,6 +83,8 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "honcho>=2.0",
+    "types-requests>=2.32",
+    "types-Markdown>=3.6",
 ]
 
 [tool.uv]
@@ -128,9 +130,10 @@ ignore = [
 "scripts/supervisor.py"                = ["I001"]
 
 [tool.mypy]
-python_version        = "3.12"
-strict                = false
+python_version         = "3.12"
+strict                 = false
 ignore_missing_imports = true
+implicit_optional      = true   # PEP 484 no_implicit_optional tightened in mypy 1.0; restore lenient behaviour while we type gradually
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
