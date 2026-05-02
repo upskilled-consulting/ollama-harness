@@ -14,11 +14,11 @@ Environment:
     conda activate ollama-pi
 """
 
-import sys
-import re
 import os
 import random
+import re
 import subprocess
+import sys
 import textwrap
 import warnings
 from pathlib import Path
@@ -122,13 +122,13 @@ def _estimate_keep_alive(task_type: str, explicit_skills: set, use_wiggum: bool)
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)
 
 from ddgs import DDGS
-from harness.wiggum import loop as wiggum_loop
 from harness.logger import RunTrace
-from harness.vision import extract_image_context, detect_image_paths
-from harness.security import check_python_code, check_file_path, check_output_path, scan_for_injection, strip_injection_candidates
 from harness.memory import MemoryStore, assess_novelty
-from harness.planner import make_plan, Plan
-from harness.skills import parse_skills, auto_activate, merge_skills, get_prompt_injections, skills_at_hook, run_post_synthesis, run_annotate_standalone
+from harness.planner import Plan, make_plan
+from harness.security import check_file_path, check_output_path, check_python_code, scan_for_injection, strip_injection_candidates
+from harness.skills import auto_activate, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, skills_at_hook
+from harness.vision import detect_image_paths, extract_image_context
+from harness.wiggum import loop as wiggum_loop
 
 try:
     from markitdown import MarkItDown

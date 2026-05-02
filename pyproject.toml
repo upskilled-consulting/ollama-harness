@@ -97,11 +97,14 @@ explicit = true
 [tool.ruff]
 target-version = "py312"
 line-length    = 100
-select         = ["E", "F", "I", "UP", "B"]
-ignore         = ["E501", "B008"]
 
-[tool.ruff.per-file-ignores]
-"harness/api/*" = ["B"]
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"harness/api/*"   = ["B"]
+"harness/agent.py" = ["E402"]
 
 [tool.mypy]
 python_version        = "3.12"
