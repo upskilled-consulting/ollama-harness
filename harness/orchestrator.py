@@ -372,7 +372,7 @@ def orchestrate(task: str, use_wiggum: bool = True):
                 output_lines=trace.data.get("output_lines"),
                 output_bytes=trace.data.get("output_bytes"),
                 output_path=trace.data.get("output_path"),
-                wiggum_scores=[float(x) for x in trace.data.get("wiggum_scores") or [] if isinstance(x, (int, float))],
+                wiggum_scores=[float(x) for x in (_ws if isinstance(_ws := trace.data.get("wiggum_scores"), list) else [])],
                 final=final_status,
             )
             print(f"  [memory] stored: {obs['title']!r}")
