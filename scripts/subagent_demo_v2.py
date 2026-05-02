@@ -16,16 +16,16 @@ MCP parallel mode requires mcp_server.py running:
 """
 
 import argparse
-import asyncio
 import json
+import os as _os
+import sys as _sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 from render_html import render_dir
@@ -299,7 +299,7 @@ def finish():
         for f in md_files:
             print(f"  {f.name} ({f.stat().st_size:,} bytes)")
 
-    print(f"\n[render] converting markdown → HTML...")
+    print("\n[render] converting markdown → HTML...")
     landing = render_dir(
         OUT,
         title="Harness Self-Analysis",

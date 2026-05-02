@@ -348,7 +348,7 @@ def main():
     conn.close()
 
     print(f"\n{'═'*70}")
-    print(f"[collect] done")
+    print("[collect] done")
     print(f"  DPO pairs : {n_dpo}  → {dpo_path}")
     print(f"  GRPO recs : {n_grpo}  → {grpo_path}")
 

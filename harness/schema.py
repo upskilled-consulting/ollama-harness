@@ -21,17 +21,21 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Optional
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel
+from pydantic import Field as PydanticField
 
 from harness.config import (
-    RUNS_FILE, SESSIONS_FILE, PLANS_FILE, ARTIFACTS_FILE,
-    DATA_DIR, ROOT,
+    ARTIFACTS_FILE,
+    DATA_DIR,
+    PLANS_FILE,
+    ROOT,
+    RUNS_FILE,
+    SESSIONS_FILE,
 )
-
 
 # ---------------------------------------------------------------------------
 # Path constants — kept for backward-compat with logger.py and lifecycle fns
@@ -51,12 +55,12 @@ DOTFILE        = str(ROOT / ".harness-project")
 
 def make_id() -> str:
     """Date-prefixed UUID: 20260418T100000Z-a1b2c3d4e5f6"""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{ts}-{uuid.uuid4().hex[:12]}"
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _append_jsonl(path: str, record: dict) -> None:
@@ -108,12 +112,12 @@ class Session:
     project_id:          str            = ""
     triggered_by:        str            = "cli"  # cli | server | orchestrator | schedule
     started_at:          str            = field(default_factory=_now_iso)
-    ended_at:            Optional[str]  = None
+    ended_at:            str | None  = None
     runs:                int            = 0
     total_input_tokens:  int            = 0
     total_output_tokens: int            = 0
     artifacts:           int            = 0
-    duration_s:          Optional[float] = None
+    duration_s:          float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -128,8 +132,8 @@ class Artifact:
     type:          str           = "output"  # output | trace | kg | annotation | dataset | lit_review
     path:          str           = ""
     bytes:         int           = 0
-    lines:         Optional[int] = None
-    content_hash:  Optional[str] = None
+    lines:         int | None = None
+    content_hash:  str | None = None
     created_at:    str           = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict:
@@ -143,11 +147,11 @@ class Message:
     project_id:  str           = ""
     seq:         int           = 0
     role:        str           = ""        # system | user | assistant | tool
-    content:     Optional[str] = None
-    cot:         Optional[str] = None      # chain-of-thought / thinking text
-    tool_calls:  Optional[list] = None
-    tool_name:   Optional[str] = None
-    chars:       Optional[int] = None
+    content:     str | None = None
+    cot:         str | None = None      # chain-of-thought / thinking text
+    tool_calls:  list | None = None
+    tool_name:   str | None = None
+    chars:       int | None = None
     timestamp:   str           = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict:
@@ -318,7 +322,7 @@ def project_stats(project_id: str) -> dict:
 # Pydantic v2 models — API layer and dashboard
 # ---------------------------------------------------------------------------
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     enumerated     = "enumerated"
     best_practices = "best_practices"
     research       = "research"
@@ -327,7 +331,7 @@ class TaskType(str, Enum):
     unknown        = "unknown"
 
 
-class RunFinal(str, Enum):
+class RunFinal(StrEnum):
     PASS  = "PASS"
     FAIL  = "FAIL"
     ERROR = "ERROR"
@@ -427,7 +431,8 @@ class QueueItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import argparse, sys
+    import argparse
+    import sys
 
     parser = argparse.ArgumentParser(description="Harness project management")
     sub = parser.add_subparsers(dest="cmd")

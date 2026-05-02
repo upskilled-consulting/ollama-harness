@@ -18,16 +18,16 @@ Environment:
 
 import argparse
 import json
-import os
 import re
 import sys
 import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from harness import inference as ollama
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
+
+from harness import inference as ollama
 
 MODEL = "pi-qwen-32b"
 DEFAULT_NODES = 10

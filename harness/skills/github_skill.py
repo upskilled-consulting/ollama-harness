@@ -28,9 +28,8 @@ Usage (via agent.py):
 
 import os
 import re
-import sys
-import json
 import subprocess
+import sys
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat

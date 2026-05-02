@@ -15,8 +15,8 @@ Usage:
 """
 
 import os
-import sys
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -149,7 +149,7 @@ def main():
     for tid in requested:
         results[tid] = mine_task(tid)
 
-    print(f"\n[mine_knowledge] summary:")
+    print("\n[mine_knowledge] summary:")
     for tid, ok in results.items():
         status = "OK" if ok else "FAILED"
         print(f"  {tid}: {status}")

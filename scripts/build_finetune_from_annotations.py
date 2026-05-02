@@ -17,10 +17,10 @@ Usage:
     python build_finetune_from_annotations.py --out finetune_dataset_v2.jsonl --min-sections 6
 """
 
-import re
+import argparse
 import csv
 import json
-import argparse
+import re
 from pathlib import Path
 
 HERE = Path(__file__).parent.parent  # repo root
@@ -256,7 +256,7 @@ def main():
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
     print(f"\nDone. {len(examples)} training examples saved to {out_path}")
-    print(f"\nTo train:")
+    print("\nTo train:")
     print(f"  python finetune_annotate.py --skip-fetch --dataset {out_path.name}")
 
 

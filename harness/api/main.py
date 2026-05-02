@@ -14,9 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from harness.config import EVAL_OUTPUT, ROOT, ensure_dirs, settings
 from harness.api.routes import data, history, mcp, queue, runs, tasks, voice
 from harness.api.ws import router as ws_router
+from harness.config import ROOT, ensure_dirs, settings
 
 
 @asynccontextmanager

@@ -146,7 +146,8 @@ try:
     from harness import inference as _inf_boot
     _active = _inf_boot.get_active_vllm_model()
     if _active:
-        import urllib.request as _ur, json as _jb
+        import json as _jb
+        import urllib.request as _ur
         _vb = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1").rstrip("/")
         _ids = {m["id"] for m in _jb.loads(_ur.urlopen(f"{_vb}/models", timeout=2).read())["data"]}
         if MODEL not in _ids and _active:
@@ -532,7 +533,7 @@ def fetch_task_url_context(urls: list[str]) -> str:
             blocks.append(f"--- Source: {url} ---\n{content}")
             print(f"  [fetch_url] {len(content)} chars")
         else:
-            print(f"  [fetch_url] failed or empty — skipping")
+            print("  [fetch_url] failed or empty — skipping")
     return "\n\n".join(blocks)
 
 
@@ -605,7 +606,7 @@ def read_file_context(paths: list[str], task: str = "") -> str:
                     print(f"  [ocr] fallback failed (non-fatal): {e}")
         else:
             try:
-                with open(p, "r", encoding="utf-8", errors="replace") as f:
+                with open(p, encoding="utf-8", errors="replace") as f:
                     content = f.read()
                 print(f"  [read_file] {p} ({len(content)} chars)")
             except Exception as e:
@@ -756,7 +757,7 @@ def enrich_with_page_content(results: list[dict], count: int, knowledge_state: s
             fetched += 1
             print(f"    -> {len(content)} chars")
         else:
-            print(f"    -> failed or empty")
+            print("    -> failed or empty")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -898,9 +899,9 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             print(f"  [novelty] round {round_num}: {novelty}/10{gate_label}")
             if novelty < novelty_gate:
                 if random.random() < NOVELTY_EPSILON:
-                    print(f"  [novelty] saturation but eps-greedy pass-through -- continuing")
+                    print("  [novelty] saturation but eps-greedy pass-through -- continuing")
                 else:
-                    print(f"  [novelty] saturation — stopping search")
+                    print("  [novelty] saturation — stopping search")
                     break
         elif round_num > 1:
             # Log novelty for rounds inside the minimum window (informational only)
@@ -1408,7 +1409,6 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
             _store_memory(memory, task, "annotate", trace.data, content)
 
         def _handle_email():
-            import re as _re
             from harness.skills.email_skill import run_email_standalone, generate_single_email
 
             print("\n[skill:email] parsing task...")
@@ -1492,7 +1492,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                 if email_token:
                     print(f"  [email] found address via web search: {email_token}")
                 else:
-                    print(f"  [email] no email found online — draft will use placeholder")
+                    print("  [email] no email found online — draft will use placeholder")
                 # Use search results excerpt as source context
                 source = _combined[:1200] if _combined else context
 
@@ -1885,7 +1885,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
             from harness.skills.sitemap_skill import _domain, format_as_markdown
             content = format_as_markdown(pages, _domain(site_url))
             if goal_hint:
-                from harness.skills.sitemap_skill import rank_by_goal, format_for_navigator
+                from harness.skills.sitemap_skill import rank_by_goal
                 top, n_matched = rank_by_goal(pages, goal_hint, top_n=20)
                 section_note = f" ({n_matched} matched)" if n_matched else " (best-effort — no direct matches)"
                 content += f"\n\n## Most Relevant for: {goal_hint}{section_note}\n\n"
@@ -1993,7 +1993,6 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
             import shutil as _sh
             import tempfile as _tmp
             import concurrent.futures as _cf
-            from pathlib import Path as _Path
 
             print("\n[skill:re-orient] gathering orientation + GitHub state...")
             trace.data["task_type"] = "re-orient"
@@ -2846,8 +2845,8 @@ Rules:
             try:
                 _pl.create_plugin(name, manifest, skills, commands)
                 print(f"  [forge] plugin '{name}' installed at plugins/{name}/")
-                print(f"  [forge] commands: " + ", ".join(f"/{name}:{c}" for c in commands))
-                print(f"  [forge] skills:   " + ", ".join(skills.keys()))
+                print("  [forge] commands: " + ", ".join(f"/{name}:{c}" for c in commands))
+                print("  [forge] skills:   " + ", ".join(skills.keys()))
             except Exception as create_err:
                 print(f"[forge:plugin] create error: {create_err}")
                 trace.finish("ERROR")
@@ -2859,7 +2858,7 @@ Rules:
             """Dispatch a non-forge plugin command through the synthesis pipeline."""
             nonlocal _plugin_cmd_context
             if not _pl:
-                print(f"[plugin] plugin_loader not available")
+                print("[plugin] plugin_loader not available")
                 trace.finish("ERROR")
                 return
             cmd_info = _pl.get_commands().get(skill_key)
@@ -2913,7 +2912,8 @@ Rules:
                 _shot_m = _re.search(r"<!-- screenshots: (\[.*?\]) -->", design_system_text)
                 if _shot_m:
                     try:
-                        _original_shots = json.loads(_shot_m.group(1))
+                        import json as _json_s
+                        _original_shots = _json_s.loads(_shot_m.group(1))
                     except Exception:
                         pass
 
@@ -2941,7 +2941,8 @@ Rules:
                     _shot_m = _re.search(r"<!-- screenshots: (\[.*?\]) -->", design_system_text)
                     if _shot_m:
                         try:
-                            _original_shots = json.loads(_shot_m.group(1))
+                            import json as _json_s
+                            _original_shots = _json_s.loads(_shot_m.group(1))
                         except Exception:
                             pass
 

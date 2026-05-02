@@ -12,14 +12,19 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from harness.schema import (
-    Artifact, Message, OrchestratorPlan,
-    ARTIFACTS_PATH, MESSAGES_PATH, PLANS_PATH,
-    _append_jsonl, make_id,
-)
 from harness.config import RUNS_FILE, TRACES_DIR
+from harness.schema import (
+    ARTIFACTS_PATH,
+    MESSAGES_PATH,
+    PLANS_PATH,
+    Artifact,
+    Message,
+    OrchestratorPlan,
+    _append_jsonl,
+    make_id,
+)
 
 LOG_PATH  = str(RUNS_FILE)
 TRACE_DIR = str(TRACES_DIR)
@@ -77,7 +82,7 @@ class RunTrace:
             "experiment_id":    self.experiment_id,
             "treatment_level":  self.treatment_level,
             "task_id":          self.task_id,
-            "timestamp":        datetime.now(timezone.utc).isoformat(),
+            "timestamp":        datetime.now(UTC).isoformat(),
             "task":             task,
             "producer_model":   producer_model,
             "evaluator_model":  evaluator_model,
@@ -177,7 +182,9 @@ class RunTrace:
         url = os.environ.get("CLAUDE_WEBHOOK_URL", "").strip()
         if not url:
             return
-        import threading, urllib.request, urllib.error
+        import threading
+        import urllib.error
+        import urllib.request
         payload = json.dumps({
             "run_id":       self.run_id,
             "task":         self._task[:200],

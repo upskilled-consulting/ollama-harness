@@ -49,7 +49,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat
@@ -57,6 +57,7 @@ from harness.inference import chat as _llm_chat
 HERE             = Path(__file__).parent
 
 from contextlib import contextmanager
+
 
 @contextmanager
 def _nullctx():
@@ -81,7 +82,7 @@ ANNOTATE_MODEL = "nanda-annotator-v2-q4km:latest"
 
 def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None,
                field: str = "abs", _trace=None) -> list[dict]:
-    from harness.skills.arxiv_fetch import fetch, _parse_date
+    from harness.skills.arxiv_fetch import _parse_date, fetch
     print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
     after_dt  = _parse_date(after)  if after  else None
     before_dt = _parse_date(before) if before else None
@@ -183,8 +184,8 @@ def step_annotate(papers: list[dict], producer_model: str, evaluator_model: str,
     Annotate each paper. Checkpoints per paper so crashes are recoverable.
     Returns list of paper dicts with 'annotation' and 'wiggum_score' added.
     """
-    from harness.skills import run_annotate_standalone
     from harness.logger import RunTrace
+    from harness.skills import run_annotate_standalone
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     annotated = []
@@ -364,7 +365,7 @@ def step_cluster(papers: list[dict], model: str = DEFAULT_CLUSTER_MODEL, _trace=
         data = json.loads(raw)
         clusters = data.get("clusters", [])
     except json.JSONDecodeError:
-        print(f"  [warn] cluster LLM returned invalid JSON — putting all papers in one cluster")
+        print("  [warn] cluster LLM returned invalid JSON — putting all papers in one cluster")
         clusters = [{"name": "All Papers", "paper_ids": [p.get("arxiv_id","") for p in papers]}]
 
     print(f"[lit-review] {len(clusters)} clusters")
@@ -405,7 +406,7 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
     Write cluster summaries and cross-cluster synthesis.
     Returns {cluster_summaries: {cluster_name: str}, synthesis: str, open_questions: [str]}.
     """
-    print(f"\n[lit-review] Step 6: synthesizing...")
+    print("\n[lit-review] Step 6: synthesizing...")
     id_to_paper = {p.get("arxiv_id", "").split("v")[0]: p for p in papers}
 
     cluster_summaries = {}

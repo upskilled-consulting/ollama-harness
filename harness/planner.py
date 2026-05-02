@@ -15,7 +15,7 @@ Usage:
 import json
 import os
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 
 from harness import inference as ollama
 
@@ -183,7 +183,7 @@ def prior_knowledge_pass(task: str, memory_context: str = "") -> tuple[list[str]
             known = _extract_string_list(raw, "known_facts")
             gaps  = _extract_string_list(raw, "gaps")
             if known or gaps:
-                print(f"  [planner:prior] JSON malformed — recovered via regex")
+                print("  [planner:prior] JSON malformed — recovered via regex")
         return known, gaps
     except Exception as e:
         print(f"  [planner:prior] failed ({e}) — skipping")
@@ -300,6 +300,7 @@ def _parse_plan(text: str) -> Plan:
 
 if __name__ == "__main__":
     import sys
+
     from harness.memory import MemoryStore
 
     task = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else (
@@ -316,11 +317,11 @@ if __name__ == "__main__":
 
     plan, _ = make_plan(task, memory_ctx)
 
-    print(f"\nPlan:")
+    print("\nPlan:")
     print(f"  task_type:         {plan.task_type}")
     print(f"  complexity:        {plan.complexity}")
     print(f"  expected_sections: {plan.expected_sections}")
-    print(f"  search_queries:")
+    print("  search_queries:")
     for q in plan.search_queries:
         print(f"    - {q}")
     print(f"  prior_work_summary: {plan.prior_work_summary!r}")

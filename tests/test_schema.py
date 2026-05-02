@@ -2,14 +2,23 @@
 Verify schema helpers: ID generation, JSONL I/O, dataclasses, project lifecycle.
 """
 
-import json
 import re
-import pytest
+
 from harness.schema import (
-    make_id, _now_iso, _append_jsonl, _read_jsonl,
-    Project, Session, Artifact, Message, OrchestratorPlan,
-    create_project, list_projects, resolve_project_id,
-    start_session, end_session,
+    Artifact,
+    Message,
+    OrchestratorPlan,
+    Project,
+    Session,
+    _append_jsonl,
+    _now_iso,
+    _read_jsonl,
+    create_project,
+    end_session,
+    list_projects,
+    make_id,
+    resolve_project_id,
+    start_session,
 )
 
 

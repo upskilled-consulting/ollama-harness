@@ -16,7 +16,6 @@ Also callable as a batch pass over runs.jsonl:
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -103,8 +102,8 @@ def _extract_browser_skill(task: str, start_url: str, final_url: str,
 
 def _store_browser_skill(skill: dict, task: str, run_id: str) -> bool:
     try:
-        from harness.memory import MemoryStore
         from harness.config import DATA_DIR
+        from harness.memory import MemoryStore
     except ImportError:
         return False
 
@@ -160,7 +159,6 @@ def extract_browser_skill_and_store(
     if not history:
         return False
 
-    from urllib.parse import urlparse as _up
     start_url = history[0].get("url", "") if history else ""
     final_url = history[-1].get("url", "") if history else ""
 
@@ -266,8 +264,8 @@ def _extract_skill(task: str, trajectory: list[dict],
 
 def _store_skill(skill: dict, task: str, score: float, run_id: str) -> bool:
     try:
-        from harness.memory import MemoryStore
         from harness.config import DATA_DIR
+        from harness.memory import MemoryStore
     except ImportError:
         return False
 

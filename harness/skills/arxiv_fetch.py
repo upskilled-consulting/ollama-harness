@@ -34,7 +34,7 @@ import re
 import sys
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
@@ -62,7 +62,7 @@ def _slugify(text: str) -> str:
 
 def _parse_date(s: str) -> datetime:
     """Parse YYYY-MM-DD into a UTC-aware datetime."""
-    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC)
 
 
 def _entry_date(entry) -> datetime | None:
@@ -74,7 +74,7 @@ def _entry_date(entry) -> datetime | None:
         try:
             dt = datetime.strptime(published, fmt)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
             return dt
         except ValueError:
             pass
@@ -243,7 +243,7 @@ def print_stats(path: Path) -> None:
     print(f"\n{path}")
     print(f"  Papers:     {len(rows)}")
     print(f"  Date range: {dates[0] if dates else '?'} to {dates[-1] if dates else '?'}")
-    print(f"  Top categories:")
+    print("  Top categories:")
     for cat, n in top_cats:
         print(f"    {cat:<20} {n}")
 

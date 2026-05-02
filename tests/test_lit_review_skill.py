@@ -5,12 +5,14 @@ No real LLM calls or network requests.
 """
 
 import json
+
 import pytest
-from pathlib import Path
 
 from harness.skills.lit_review_skill import (
-    _checkpoint_path, _parse_annotation_sections,
-    TEMPLATES_DIR, DEFAULT_TEMPLATE,
+    DEFAULT_TEMPLATE,
+    TEMPLATES_DIR,
+    _checkpoint_path,
+    _parse_annotation_sections,
 )
 
 

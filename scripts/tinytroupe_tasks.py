@@ -20,15 +20,16 @@ The generated tasks extend the autoresearch eval surface beyond the 5 fixed task
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import argparse
 import json
 import os
+import os as _os
 import re
-import sys
+import sys as _sys
 
-import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 from harness import inference as ollama
@@ -38,9 +39,9 @@ from harness import inference as ollama
 # ---------------------------------------------------------------------------
 
 try:
-    import tinytroupe
-    from tinytroupe.agent import TinyPerson
+    import tinytroupe  # noqa: F401
     from tinytroupe import config_manager
+    from tinytroupe.agent import TinyPerson
     TINYTROUPE_AVAILABLE = True
 except ImportError:
     TINYTROUPE_AVAILABLE = False
@@ -389,7 +390,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"\n{'='*50}")
-    print(f" TinyTroupe Task Generator")
+    print(" TinyTroupe Task Generator")
     print(f" Backend: {'tinytroupe' if TINYTROUPE_AVAILABLE else 'ollama (fallback)'}")
     print(f" Model:   {MODEL}")
     print(f" Personas: {len(PERSONAS)}  |  Tasks per persona: {args.count}")

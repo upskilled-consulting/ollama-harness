@@ -22,20 +22,22 @@ Environment:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import argparse
 import os
+import os as _os
 import re
-import sys
+import sys as _sys
 import time
 
-import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import pandas as pd
-from harness.logger import RunTrace
+
 from harness.inference import OllamaLike as _OllamaLike
+from harness.logger import RunTrace
 
 # ---------------------------------------------------------------------------
 # Ollama shim — keeps model hot between calls

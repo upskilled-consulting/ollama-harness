@@ -563,9 +563,10 @@ def run_post_synthesis(
 def _handle_kg(content: str, task: str, output_path: str, producer_model: str) -> str | None:
     """Generate a D3.js knowledge graph from synthesized content."""
     try:
-        from harness.skills.kg_gen import generate_kg, render_html
-        from pathlib import Path
         from datetime import datetime
+        from pathlib import Path
+
+        from harness.skills.kg_gen import generate_kg, render_html
 
         article = content[:4000]
         graph_data = generate_kg(article, producer_model, num_nodes=12, max_edge_density=3)
@@ -755,7 +756,6 @@ def run_annotate_standalone(
     Bypasses the normal research → synthesize → wiggum pipeline entirely.
     """
     from harness.inference import chat as _llm_chat
-    import os
 
     keep_alive = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 

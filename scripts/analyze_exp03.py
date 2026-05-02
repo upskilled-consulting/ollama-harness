@@ -14,7 +14,6 @@ import json
 import math
 import sys
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -290,4 +289,4 @@ if task_gap is not None:
           f"T_C mean={mean(t_c_scores):.2f}  gap={task_gap:.2f}  "
           f"→ {'CONFIRMED' if task_gap > 0.5 else 'FALSIFIED'}")
 else:
-    print(f"H5 (task-type differentiation):  insufficient data — PENDING")
+    print("H5 (task-type differentiation):  insufficient data — PENDING")

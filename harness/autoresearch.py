@@ -35,6 +35,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from harness.inference import OllamaLike as _OllamaLike
 
@@ -336,7 +337,8 @@ def _fetch_page(url: str, max_chars: int = 2000) -> str:
     if not MARKITDOWN_AVAILABLE or not url.startswith("http"):
         return ""
     try:
-        import os, sys
+        import os
+        import sys
         with open(os.devnull, "w") as devnull:
             old_stderr = sys.stderr
             sys.stderr = devnull

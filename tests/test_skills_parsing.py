@@ -2,10 +2,13 @@
 Verify skill parsing, auto-activation, merge, and hook helpers.
 """
 
-import pytest
 from harness.skills import (
-    parse_skills, auto_activate, merge_skills,
-    get_prompt_injections, skills_at_hook, REGISTRY,
+    REGISTRY,
+    auto_activate,
+    get_prompt_injections,
+    merge_skills,
+    parse_skills,
+    skills_at_hook,
 )
 
 

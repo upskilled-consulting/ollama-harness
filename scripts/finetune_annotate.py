@@ -17,15 +17,15 @@ Usage:
     python finetune_annotate.py --model Qwen2.5-7B-Instruct --epochs 3
 """
 
-import os
+import argparse
+import json
 import re
 import sys
 import time
-import json
-import argparse
-import requests
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+import requests
 
 HERE         = Path(__file__).parent.parent  # repo root
 ANN_CSV      = HERE / "data" / "annotated-abstracts.csv"
@@ -262,10 +262,10 @@ class DashboardCallback:
 def finetune(examples: list[dict], base_model: str, epochs: int, output_dir: Path, resume: bool = False, save_steps: int = 100):
     try:
         import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        from peft import LoraConfig, get_peft_model
-        from trl import SFTTrainer, SFTConfig
         from datasets import Dataset
+        from peft import LoraConfig, get_peft_model
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from trl import SFTConfig, SFTTrainer
     except ImportError as e:
         sys.exit(f"[error] missing dependency: {e}\n  pip install transformers peft trl datasets accelerate")
 

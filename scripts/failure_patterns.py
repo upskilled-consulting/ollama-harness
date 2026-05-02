@@ -13,15 +13,17 @@ Usage:
     python failure_patterns.py --min-count 3  # only show clusters seen 3+ times
 """
 
-import sys
-import re
 import argparse
+import re
+import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from harness.utils import load_issues, keywords as _keywords, jaccard  # noqa: E402
+from harness.config import RUNS_FILE as RUNS_PATH  # noqa: E402
+from harness.utils import jaccard, load_issues  # noqa: E402
+from harness.utils import keywords as _keywords
 
 HERE     = Path(__file__).parent
 WIKI_OUT = HERE / "wiki" / "failure-patterns.md"

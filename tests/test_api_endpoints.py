@@ -3,9 +3,8 @@ Verify all FastAPI endpoints return correct status codes and response shapes.
 Uses fastapi.testclient.TestClient — no subprocess spawned, no LLM calls.
 """
 
-import json
-import pytest
 from fastapi.testclient import TestClient
+
 from harness.api.main import app
 
 client = TestClient(app)

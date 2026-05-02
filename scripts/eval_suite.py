@@ -20,13 +20,14 @@ Environment:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import json
 import os
 import re
-import sys
 import subprocess
+import sys
 
 KB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_base")
 
@@ -120,7 +121,7 @@ def has_nanda_sections():
             return False, f"missing sections: {missing}"
         if not has_evidence:
             return False, "missing evidence/impact section"
-        return True, f"all core sections present"
+        return True, "all core sections present"
     check.__name__ = "has_nanda_sections"
     return check
 
@@ -444,7 +445,7 @@ def check_task(task_def: dict) -> list[dict]:
     if not os.path.exists(output_path):
         return [{"criterion": "file_exists", "passed": False, "detail": f"not found: {output_path}"}]
 
-    with open(output_path, "r", encoding="utf-8") as f:
+    with open(output_path, encoding="utf-8") as f:
         content = f.read()
 
     if not content.strip():
@@ -628,10 +629,10 @@ if __name__ == "__main__":
         passed_tasks += 1
     total_tasks += 1
 
-    print(f"\n======================================")
+    print("\n======================================")
     print(f" Tasks:    {passed_tasks}/{total_tasks} passed")
     print(f" Criteria: {passed_criteria}/{total_criteria} passed")
     print(f" Overall:  {'PASS' if passed_tasks == total_tasks else 'FAIL'}")
-    print(f"======================================\n")
+    print("======================================\n")
 
     sys.exit(0 if passed_tasks == total_tasks else 1)

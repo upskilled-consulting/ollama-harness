@@ -51,7 +51,7 @@ def _load_endpoints() -> dict[str, str]:
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
-        print(f"  [mcp_dispatch] warn: HARNESS_MCP_ENDPOINTS is not valid JSON — ignoring")
+        print("  [mcp_dispatch] warn: HARNESS_MCP_ENDPOINTS is not valid JSON — ignoring")
         return {}
 
 

@@ -287,14 +287,14 @@ def discover_pages(start_url: str, max_pages: int = 60,
     if sitemap_url:
         print(f"  [sitemap] found via robots.txt: {sitemap_url[:60]}")
     else:
-        print(f"  [sitemap] no Sitemap: in robots.txt — trying /sitemap.xml")
+        print("  [sitemap] no Sitemap: in robots.txt — trying /sitemap.xml")
 
     # 2. Parse sitemap.xml (from robots.txt hint or default path)
     pages = try_sitemap_xml(sitemap_url or start_url, max_pages=max_pages)
     if pages:
         print(f"  [sitemap] {len(pages)} URL(s) from sitemap.xml")
         if enrich_titles and not quick:
-            print(f"  [sitemap] enriching titles (up to 20)...")
+            print("  [sitemap] enriching titles (up to 20)...")
             _enrich_titles(pages, max_fetch=20)
         return pages
 
@@ -307,7 +307,7 @@ def discover_pages(start_url: str, max_pages: int = 60,
 
     # 4. BFS crawl (slow — skipped in quick mode)
     if quick:
-        print(f"  [sitemap] DDGS returned nothing — skipping BFS (quick mode)")
+        print("  [sitemap] DDGS returned nothing — skipping BFS (quick mode)")
         return []
 
     print(f"  [sitemap] DDGS empty — BFS crawl (max {max_pages})...")

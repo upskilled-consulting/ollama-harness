@@ -25,9 +25,13 @@ import os
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from experiment_panel import ExperimentSpec, run_experiment_panel, experiment_panel_decision, experiment_panel_issues
+from experiment_panel import (
+    ExperimentSpec,
+    experiment_panel_decision,
+    run_experiment_panel,
+)
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNS_PATH = os.path.join(_BASE_DIR, "runs.jsonl")
@@ -224,36 +228,36 @@ def render_report(
     panel_reviews: list[dict] | None,
     panel_decision: dict | None,
 ) -> str:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     levels = spec.factor["levels"]
     tasks  = spec.tasks
 
     lines = [
         f"# Experiment Report: {spec.title}",
-        f"",
+        "",
         f"**Date:** {now}  ",
         f"**Factor:** `{spec.factor['name']}`  levels: {levels}  ",
         f"**Tasks:** {tasks}  **Replications:** {spec.replications}  ",
         f"**Hypothesis:** {spec.hypothesis}  ",
         f"**Falsified if:** {spec.falsified_if}",
-        f"",
-        f"---",
-        f"",
-        f"## Hypothesis Verdict",
-        f"",
+        "",
+        "---",
+        "",
+        "## Hypothesis Verdict",
+        "",
         f"**{hypothesis_result['verdict']}**  ",
         f"Observed: {hypothesis_result['observed']}  ",
         f"Threshold: {hypothesis_result['threshold']}",
-        f"",
-        f"---",
-        f"",
-        f"## Results Table",
-        f"",
+        "",
+        "---",
+        "",
+        "## Results Table",
+        "",
     ]
 
     # Per-task, per-treatment stats
-    header = f"| Task | Treatment | n | score_r1 (mean±sd) | score_final (mean±sd) | rounds (mean) | PASS rate |"
-    sep    = f"|------|-----------|---|-------------------|----------------------|---------------|-----------|"
+    header = "| Task | Treatment | n | score_r1 (mean±sd) | score_final (mean±sd) | rounds (mean) | PASS rate |"
+    sep    = "|------|-----------|---|-------------------|----------------------|---------------|-----------|"
     lines += [header, sep]
 
     for task_id in tasks:
@@ -422,7 +426,7 @@ def analyze(spec_path: str, run_panel: bool = True) -> None:
     panel_reviews = None
     panel_decision = None
     if run_panel:
-        print(f"\n[analyze] running experiment panel...")
+        print("\n[analyze] running experiment panel...")
         wiggum_traces = build_wiggum_traces(runs, spec)
         try:
             panel_reviews = run_experiment_panel(spec, wiggum_traces)

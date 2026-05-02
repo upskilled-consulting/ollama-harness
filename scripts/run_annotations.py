@@ -10,13 +10,13 @@ Usage:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
-import re
-import sys
-import csv
-import time
 import argparse
+import csv
+import re
+import time
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -161,6 +161,7 @@ def annotate_papers(
     sleep_s:      float,
 ):
     from skills import run_annotate_standalone
+
     from harness.logger import RunTrace
 
     # Load existing arxiv_ids if skip_existing

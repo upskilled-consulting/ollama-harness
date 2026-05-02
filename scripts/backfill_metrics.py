@@ -2,7 +2,8 @@
 backfill_metrics.py — reconstruct finetune_metrics.jsonl from training log output.
 Parses the step dicts printed by trl and writes typed event records.
 """
-import json, time
+import json
+import time
 from pathlib import Path
 
 OUT = Path(__file__).parent.parent / "data" / "finetune_metrics.jsonl"

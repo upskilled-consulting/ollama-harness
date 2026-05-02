@@ -8,12 +8,14 @@ Usage:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
-from harness.utils import load_runs, print_summary as _print_summary, summary_table  # noqa: E402
+from harness.utils import load_runs  # noqa: E402
+from harness.utils import print_summary as _print_summary
 
 
 def fmt(val, width=10):

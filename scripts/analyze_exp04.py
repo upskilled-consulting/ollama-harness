@@ -14,7 +14,6 @@ import json
 import math
 import sys
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -304,4 +303,4 @@ if ta_depth_mean is not None:
     print(f"H5 (T_A depth_r1 > 6):  depth_mean={ta_depth_mean:.1f}  spc_mean={ta_spc_mean:.1f}  "
           f"-> {'CONFIRMED' if ta_depth_mean > 6 and ta_spc_mean > 6 else ('FALSIFIED' if len(ta_rows4) == 3 else 'PENDING')}")
 else:
-    print(f"H5 (T_A dimension improvement):  no T_A data yet — PENDING")
+    print("H5 (T_A dimension improvement):  no T_A data yet — PENDING")

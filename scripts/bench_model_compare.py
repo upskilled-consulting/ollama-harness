@@ -25,6 +25,7 @@ Output: bench_compare_results.jsonl (one row per task × model)
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import argparse
@@ -34,7 +35,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 try:
     from dotenv import load_dotenv
@@ -312,7 +313,7 @@ def main():
     print_report(rows, use_color=use_color)
 
     # Save
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     with open(OUT_FILE, "a", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps({**r, "bench_timestamp": ts}) + "\n")

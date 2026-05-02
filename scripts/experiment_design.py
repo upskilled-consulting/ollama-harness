@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import json
@@ -37,8 +38,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from harness.inference import OllamaLike as _OllamaLike
 from experiment_panel import ExperimentSpec
+
+from harness.inference import OllamaLike as _OllamaLike
 
 _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 _chat = _OllamaLike(keep_alive=_KEEP_ALIVE).chat
@@ -292,7 +294,7 @@ if __name__ == "__main__":
     print(f"\n[design] spec written to: {out_path}")
 
     if args.run:
-        print(f"\n[design] launching experiment runner...")
+        print("\n[design] launching experiment runner...")
         from experiment_runner import run_experiment
         run_experiment(out_path, resume=False, dry_run=args.dry_run)
     else:

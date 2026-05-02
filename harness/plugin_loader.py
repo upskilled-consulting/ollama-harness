@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 
 from harness.config import ROOT as _ROOT
+
 PLUGINS_DIR  = _ROOT / "plugins"
 
 # ── Internal state ────────────────────────────────────────────────────────────

@@ -26,22 +26,25 @@ Architecture:
 """
 
 import os
-import sys
 import re
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from harness import inference as ollama
-
 from harness.agent import (
-    extract_path, write_output, count_output_items,
-    extract_count_constraint, synthesize_with_count,
+    count_output_items,
+    extract_count_constraint,
+    extract_path,
+    synthesize_with_count,
+    write_output,
 )
+from harness.logger import RunTrace
 from harness.memory import MemoryStore
 from harness.planner import make_plan
-from harness.logger import RunTrace
-from harness.wiggum import loop as wiggum_loop, EVALUATOR_MODEL
+from harness.wiggum import EVALUATOR_MODEL
+from harness.wiggum import loop as wiggum_loop
 
 ASSEMBLY_MODEL = "pi-qwen"
 SUBTASK_MAX_RETRIES = 1    # retry a failed subtask this many times before skipping
@@ -166,7 +169,7 @@ def _run_one_subtask(sub: dict, parent_env: dict | None = None) -> dict:
 
         expanded = os.path.expanduser(sub["path"])
         if result.returncode == 0 and os.path.exists(expanded):
-            with open(expanded, "r", encoding="utf-8") as f:
+            with open(expanded, encoding="utf-8") as f:
                 content = f.read()
             if content.strip():
                 sub["content"] = content
@@ -253,8 +256,9 @@ def orchestrate(task: str, use_wiggum: bool = True):
     # Determine output path
     output_path = extract_path(task)
     if not output_path:
-        from harness.config import ROOT as _ROOT
         from datetime import datetime as _dt
+
+        from harness.config import ROOT as _ROOT
         _slug = re.sub(r"[^\w]+", "-", task.strip().lower())[:40].strip("-")
         _ts   = _dt.now().strftime("%Y%m%dT%H%M%S")
         _out  = _ROOT / "data" / "output"

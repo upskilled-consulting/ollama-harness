@@ -12,10 +12,10 @@ import json
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -75,7 +75,9 @@ def _transcribe_blob(blob_path: str) -> tuple[list[dict], str]:
       segments  — list of {"start", "end", "text"} dicts
       wav_path  — caller owns this file and must delete or keep it
     """
-    import subprocess, tempfile
+    import subprocess
+    import tempfile
+
     from harness.config import WHISPER_CPP_CLI, WHISPER_CPP_MODEL
 
     ffmpeg = _get_ffmpeg()
@@ -229,7 +231,7 @@ async def api_voice(audio: UploadFile = File(...)):
     note_match = re.match(r"^note[s]?\s*[:,-]?\s*", transcript, re.IGNORECASE)
     if note_match:
         note_text  = transcript[note_match.end():].strip() or transcript
-        ts         = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        ts         = datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S")
         date_fmt   = ts[:10]
         wav_dest   = NOTES_DIR / f"op-note-{ts}.wav"
         md_dest    = NOTES_DIR / f"op-note-{ts}.md"
@@ -325,7 +327,7 @@ async def api_notes_save(body: NoteSaveRequest):
     if not note_text:
         raise HTTPException(status_code=400, detail="note_text is empty")
 
-    ts       = body.timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+    ts       = body.timestamp or datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S")
     filename = body.filename.strip() or f"op-note-{ts}.md"
     if not filename.endswith(".md"):
         filename += ".md"

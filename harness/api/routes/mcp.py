@@ -1,7 +1,9 @@
 """GET /api/mcp/log — MCP task log."""
 
 import json
+
 from fastapi import APIRouter
+
 from harness.config import LEGACY_MCP_LOG, MCP_LOG
 
 router = APIRouter(tags=["mcp"])

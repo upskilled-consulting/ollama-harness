@@ -2,9 +2,8 @@
 
 import asyncio
 import uuid
-from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks
 
 from harness.schema import QueueItem, TaskRequest
 
@@ -16,7 +15,8 @@ _queue_lock = asyncio.Lock()
 
 
 async def _run_task(item: QueueItem, request: TaskRequest) -> None:
-    import subprocess, sys
+    import sys
+
     from harness.config import ROOT
 
     async with _queue_lock:

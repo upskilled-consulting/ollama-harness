@@ -246,7 +246,7 @@ def ocr_pdf(pdf_path: str, task: str = "", markitdown_content: str = "") -> str:
         except Exception as e:
             print(f"  [ocr:pymupdf] {basename} failed: {e} — trying next backend")
     else:
-        print(f"  [ocr] PyMuPDF not available — skipping to model-based OCR")
+        print("  [ocr] PyMuPDF not available — skipping to model-based OCR")
 
     if LLAMA_OCR_BASE_URL:
         print(f"  [ocr:llama] {basename} → {LLAMA_OCR_BASE_URL} ({MAX_OCR_PAGES} page(s) max)...")
@@ -258,11 +258,11 @@ def ocr_pdf(pdf_path: str, task: str = "", markitdown_content: str = "") -> str:
             if llama_text and len(llama_text) > len(markitdown_content):
                 print(f"  [ocr:llama] {basename} → {len(llama_text)} chars (partial improvement)")
                 return llama_text
-            print(f"  [ocr:llama] still sparse — falling back to vision")
+            print("  [ocr:llama] still sparse — falling back to vision")
         except Exception as e:
             print(f"  [ocr:llama] failed: {e} — falling back to vision")
     else:
-        print(f"  [ocr] LLAMA_OCR_BASE_URL not set — skipping llama-server backend")
+        print("  [ocr] LLAMA_OCR_BASE_URL not set — skipping llama-server backend")
 
     print(f"  [ocr:vision] {_estimate_page_count(expanded)} page(s) → {VISION_MODEL}...")
     try:
@@ -280,10 +280,10 @@ def ocr_pdf(pdf_path: str, task: str = "", markitdown_content: str = "") -> str:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("usage: python -m harness.ocr <path/to/paper.pdf> [task description]")
-        print(f"\nBackends available:")
+        print("\nBackends available:")
         print(f"  PyMuPDF:      {'yes' if PYMUPDF_AVAILABLE else 'no (pip install pymupdf)'}")
         print(f"  llama-server: {'yes — ' + LLAMA_OCR_BASE_URL if LLAMA_OCR_BASE_URL else 'no (set LLAMA_OCR_BASE_URL)'}")
-        print(f"  Ollama vision: yes (llama3.2-vision)")
+        print("  Ollama vision: yes (llama3.2-vision)")
         sys.exit(1)
 
     path = sys.argv[1]

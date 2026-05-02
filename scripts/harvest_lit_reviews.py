@@ -8,8 +8,8 @@ Usage:
     python harvest_lit_reviews.py --dry-run          # show what would be harvested
 """
 
-import sys
 import argparse
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

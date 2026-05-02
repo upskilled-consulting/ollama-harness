@@ -24,7 +24,6 @@ Design system:
 
 import argparse
 import html as _html
-import os
 import re
 import sys
 from datetime import datetime
@@ -38,7 +37,7 @@ except ImportError:
     print("[warn] 'markdown' package not found — pip install markdown. Falling back to basic converter.")
 
 try:
-    from jinja2 import Environment, BaseLoader
+    from jinja2 import BaseLoader, Environment
     JINJA2_AVAILABLE = True
 except ImportError:
     JINJA2_AVAILABLE = False

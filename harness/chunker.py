@@ -29,7 +29,7 @@ Used by read_file_context() in agent.py for any file > LARGE_FILE_THRESHOLD char
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -230,6 +230,7 @@ def _chunk_retrieve(
 
     try:
         import chromadb
+
         from harness.memory import _get_chroma_ef
 
         ef     = _get_chroma_ef()

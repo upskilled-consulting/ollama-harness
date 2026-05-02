@@ -20,8 +20,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _BASE = Path(__file__).parent
@@ -55,7 +54,7 @@ def _tree() -> str:
             fpath = Path(root) / fname
             try:
                 stat = fpath.stat()
-                mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+                mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC).strftime("%Y-%m-%d")
                 size_kb = stat.st_size // 1024
                 lines.append(f"{'  '*(depth+1)}{fname}  ({size_kb}KB, {mtime})")
             except OSError:

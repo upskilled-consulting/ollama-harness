@@ -2,10 +2,10 @@
 Shared fixtures for harness-refactor post-refactor tests.
 """
 
-import json
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 # Repo root on path
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -15,8 +15,8 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """Point all harness.schema JSONL paths to an isolated temp dir."""
-    import harness.schema as schema
     import harness.config as config
+    import harness.schema as schema
 
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(schema, "PROJECTS_PATH",  str(tmp_path / "projects.jsonl"))
@@ -32,6 +32,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
 def api_client():
     """FastAPI TestClient with isolated state."""
     from fastapi.testclient import TestClient
+
     from harness.api.main import app
     with TestClient(app) as client:
         yield client

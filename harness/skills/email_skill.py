@@ -13,12 +13,12 @@ Usage (via agent.py):
     python agent.py "/email geo-week-talks.csv reach out about our geospatial AI platform save to outreach/"
 """
 
-import os
-import re
 import csv
 import json
+import os
+import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat
@@ -140,7 +140,7 @@ def _log_draft_trace(
     """Append one runs.jsonl entry per email draft so each gets its own dashboard row."""
     from harness.logger import LOG_PATH
     record = {
-        "timestamp":      datetime.now(timezone.utc).isoformat(),
+        "timestamp":      datetime.now(UTC).isoformat(),
         "task":           f"Email draft: {name} <{to_email}>",
         "producer_model": producer_model,
         "evaluator_model": None,
@@ -283,7 +283,7 @@ def generate_single_email(
         "sender_email":  sender_email,
         "subject":       subject,
         "body":          body,
-        "generated_at":  datetime.now(timezone.utc).isoformat(),
+        "generated_at":  datetime.now(UTC).isoformat(),
     }
     json_path = out_dir / f"{_safe_filename(name)}.json"
     json_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -451,7 +451,7 @@ def run_email_standalone(
             "sender_email":  sender_email,
             "subject":       subject,
             "body":          body,
-            "generated_at":  datetime.now(timezone.utc).isoformat(),
+            "generated_at":  datetime.now(UTC).isoformat(),
         }
         json_filename = f"{_safe_filename(name)}.json"
         json_path     = out_dir / json_filename

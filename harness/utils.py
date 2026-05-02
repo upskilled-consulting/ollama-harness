@@ -13,12 +13,11 @@ import math
 import re
 import statistics
 from collections import Counter
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from harness.config import RUNS_FILE
-
 
 # ---------------------------------------------------------------------------
 # Run loading
@@ -82,7 +81,7 @@ def parse_ts(ts: str) -> datetime | None:
         return None
     for fmt in _TS_FORMATS:
         try:
-            return datetime.strptime(ts[: len(fmt) + 2], fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(ts[: len(fmt) + 2], fmt).replace(tzinfo=UTC)
         except ValueError:
             pass
     return None
@@ -351,5 +350,5 @@ def extract_searches(runs: list[dict]) -> list[dict]:
                 "wiggum_rounds": r.get("wiggum_rounds", 0),
                 "final":        r.get("final", ""),
             })
-    rows.sort(key=lambda x: x["ts"] or datetime.min.replace(tzinfo=timezone.utc))
+    rows.sort(key=lambda x: x["ts"] or datetime.min.replace(tzinfo=UTC))
     return rows

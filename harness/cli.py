@@ -15,12 +15,11 @@ import sys
 import time
 from pathlib import Path
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.rule import Rule
-from rich import box
 import pyfiglet
+from rich import box
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.text import Text
 
 from harness import harness_console as _hc
 
@@ -97,8 +96,8 @@ def _show_splash():
         pass
 
     console.print(
-        f"  [dim]type[/dim] [cyan]-h[/cyan] [dim]for help,[/dim] "
-        f"[cyan]exit[/cyan] [dim]to quit[/dim]\n"
+        "  [dim]type[/dim] [cyan]-h[/cyan] [dim]for help,[/dim] "
+        "[cyan]exit[/cyan] [dim]to quit[/dim]\n"
     )
 
 
@@ -185,8 +184,8 @@ def _chat(text: str) -> None:
 
 
 def _run(task: str, extra_args: list[str] | None = None):
-    from harness.agent import run as _agent_run
     from harness import inference as _inf
+    from harness.agent import run as _agent_run
 
     no_wiggum = bool(extra_args and "--no-wiggum" in extra_args)
     if extra_args:
@@ -266,8 +265,9 @@ def _repl(extra_args: list[str]):
 
 
 def _serve(port: int | None = None):
-    from harness.config import settings
     import uvicorn
+
+    from harness.config import settings
     uvicorn.run(
         "harness.api.main:app",
         host=settings.host,

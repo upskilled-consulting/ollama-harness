@@ -15,11 +15,11 @@ Usage:
     python bench_vllm_parallel.py --vllm-only    # just the vllm run
 """
 
+import json
 import os
 import subprocess
 import sys
 import time
-import json
 
 # Load .env so VLLM_BASE_URL etc. are available in the parent env and inherited by subprocesses
 try:
@@ -124,7 +124,7 @@ def main():
 
     # Results
     print(f"\n{'='*60}")
-    print(f" Benchmark Results")
+    print(" Benchmark Results")
     print(f"{'='*60}")
     for r in runs:
         status = "OK" if r["returncode"] == 0 else f"FAIL(rc={r['returncode']})"
@@ -136,11 +136,11 @@ def main():
         speedup  = round(ollama_t / vllm_t, 2) if vllm_t > 0 else 0
         print(f"\n  Speedup: {speedup}×  (vLLM {vllm_t}s vs Ollama {ollama_t}s)")
         if speedup >= 1.5:
-            print(f"  → vLLM continuous batching delivers meaningful parallelism gain.")
+            print("  → vLLM continuous batching delivers meaningful parallelism gain.")
         elif speedup >= 1.1:
-            print(f"  → Modest gain — overhead (startup, tokenization) eating into batching benefit.")
+            print("  → Modest gain — overhead (startup, tokenization) eating into batching benefit.")
         else:
-            print(f"  → Negligible gain — consider whether subtask count or model size is the bottleneck.")
+            print("  → Negligible gain — consider whether subtask count or model size is the bottleneck.")
 
     # Save results
     out = os.path.join(BASE, "data", "bench_vllm_results.jsonl")
@@ -148,7 +148,7 @@ def main():
         for r in runs:
             f.write(json.dumps({**r, "n_subtasks": n_subtasks,
                                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
-    print(f"\n  Results appended to bench_vllm_results.jsonl")
+    print("\n  Results appended to bench_vllm_results.jsonl")
 
 
 if __name__ == "__main__":

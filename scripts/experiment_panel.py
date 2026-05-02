@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 import json
@@ -46,8 +47,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
-from typing import Optional
+from dataclasses import asdict, dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -90,7 +90,7 @@ class ExperimentSpec:
         return json.dumps(asdict(self), indent=2)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ExperimentSpec":
+    def from_dict(cls, d: dict) -> ExperimentSpec:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -532,7 +532,7 @@ if __name__ == "__main__":
     with open(sys.argv[2], encoding="utf-8") as _f:
         _traces = json.load(_f)
 
-    print(f"\n[exp_panel] running 3-persona experiment panel")
+    print("\n[exp_panel] running 3-persona experiment panel")
     print(f"  experiment: {_spec.title}")
     print(f"  tasks: {_spec.tasks}  replications: {_spec.replications}\n")
 

@@ -1,4 +1,5 @@
-import json, math
+import json
+import math
 
 runs = []
 with open("runs.jsonl", encoding="utf-8") as f:

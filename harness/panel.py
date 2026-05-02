@@ -215,7 +215,7 @@ if __name__ == "__main__":
     _path    = sys.argv[2]
     _model   = sys.argv[3] if len(sys.argv) > 3 else "Qwen3-Coder:30b"
 
-    with open(_path, "r", encoding="utf-8") as _f:
+    with open(_path, encoding="utf-8") as _f:
         _content = _f.read()
 
     print(f"\n[panel] running 3-persona evaluation panel (model={_model})\n")
@@ -228,6 +228,6 @@ if __name__ == "__main__":
         for s in r.get("strengths", []):
             print(f"  strength: {s}")
 
-    print(f"\n[panel] merged issues:")
+    print("\n[panel] merged issues:")
     for i in panel_issues(_reviews):
         print(f"  - {i}")

@@ -19,10 +19,10 @@ Environment:
     Requires: llama3.2-vision pulled via `ollama pull llama3.2-vision`
 """
 
-import sys
-import os
 import base64
+import os
 import re
+import sys
 
 from harness import inference as ollama
 

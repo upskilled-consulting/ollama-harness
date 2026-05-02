@@ -28,12 +28,12 @@ Output:
     curation_log.jsonl      — per-paper decisions with per-persona scores and reasons
 """
 
+import argparse
 import csv
 import json
 import os
 import re
 import sys
-import argparse
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat
@@ -319,7 +319,7 @@ def main():
         print("No annotated CSV files found.")
         sys.exit(1)
 
-    print(f"Loading abstracts from arxiv markdown files...")
+    print("Loading abstracts from arxiv markdown files...")
     abstracts = _load_abstracts()
     print(f"  {len(abstracts) // 2} abstracts loaded")
 
@@ -395,7 +395,7 @@ def main():
             print(f"  Written -> {out_path.name}")
 
     print(f"\nDone. Full log: {LOG_PATH.name}")
-    print(f"Next step: python build_finetune_from_annotations.py  (uses *_curated.csv instead of *_annotated.csv)")
+    print("Next step: python build_finetune_from_annotations.py  (uses *_curated.csv instead of *_annotated.csv)")
 
 
 if __name__ == "__main__":

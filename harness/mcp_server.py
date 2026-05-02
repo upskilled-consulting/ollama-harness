@@ -46,6 +46,7 @@ Environment:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -53,12 +54,12 @@ import sys
 import tempfile
 import threading
 import time
-import argparse
 
 from mcp.server.fastmcp import FastMCP
-from harness.security import check_output_path, scan_for_injection
 
 from harness.config import ROOT as _cfg_ROOT
+from harness.security import check_output_path, scan_for_injection
+
 
 def _build_agent_cmd(script, task: str) -> list:
     """Build subprocess command: -m harness.agent or -m harness.orchestrator."""
@@ -71,8 +72,10 @@ _BASE_DIR = str(_cfg_ROOT)
 _AGENT_SCRIPT = None  # use -m harness.agent
 _ORCH_SCRIPT  = None  # use -m harness.orchestrator
 from harness.config import RUNS_FILE as _RUNS_FILE
+
 _RUNS_PATH    = str(_RUNS_FILE)
 from harness.config import DATA_DIR as _DATA_DIR
+
 _MCP_LOG_PATH = str(_DATA_DIR / "mcp_tasks.jsonl")
 _RECENT_N     = int(os.environ.get("MCP_RECENT_RUNS", 10))
 _log_lock     = threading.Lock()
@@ -216,7 +219,7 @@ def _run_subprocess(script: str, task: str, timeout: int = 600,
     content = ""
     expanded = os.path.expanduser(output_path)
     if os.path.exists(expanded):
-        with open(expanded, "r", encoding="utf-8") as f:
+        with open(expanded, encoding="utf-8") as f:
             content = f.read()
 
     ok = proc.returncode == 0 and bool(content.strip())

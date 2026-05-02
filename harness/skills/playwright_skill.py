@@ -31,7 +31,7 @@ import time
 from urllib.parse import urlparse
 
 # Module-level handle prevents GC when keeping the browser alive between tasks.
-_persistent_browser_proc: "subprocess.Popen | None" = None
+_persistent_browser_proc: subprocess.Popen | None = None
 
 _CDP_PORT        = int(os.environ.get("HARNESS_CDP_PORT", "9222"))
 _STATE_FILE      = os.path.join(tempfile.gettempdir(), "harness_browser_state.json")
@@ -66,7 +66,7 @@ def _clear_state():
         pass
 
 
-def _launch_detached(exe: str, port: int) -> "subprocess.Popen":
+def _launch_detached(exe: str, port: int) -> subprocess.Popen:
     """Launch Chromium as a detached OS process so it outlives the agent subprocess."""
     args = [exe, f"--remote-debugging-port={port}",
             "--no-first-run", "--no-default-browser-check",
@@ -539,7 +539,7 @@ def _url_slug(url: str) -> str:
     return re.sub(r"_+", "_", slug)[:50]
 
 
-def _take_screenshot(page, run_id: str, step: int, action: str, full_page: bool = False) -> "str | None":
+def _take_screenshot(page, run_id: str, step: int, action: str, full_page: bool = False) -> str | None:
     """Capture a screenshot; returns the absolute file path or None on failure."""
     if not run_id:
         return None
@@ -682,7 +682,7 @@ def navigate_and_extract(
         sitemap_context = ""
         _sitemap_pages: list[dict] = []
         try:
-            from skills.sitemap_skill import discover_pages, rank_by_goal, format_for_navigator
+            from skills.sitemap_skill import discover_pages, format_for_navigator, rank_by_goal
             _sitemap_pages = discover_pages(start_url, max_pages=80, quick=True)
             if _sitemap_pages:
                 _top, _ = rank_by_goal(_sitemap_pages, goal, top_n=15)

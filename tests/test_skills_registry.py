@@ -3,8 +3,8 @@ Verify the skill REGISTRY is structurally valid and auto-triggers fire correctly
 """
 
 import pytest
-from harness.skills import REGISTRY, _ALIASES
 
+from harness.skills import _ALIASES, REGISTRY
 
 EXPECTED_SKILLS = {
     "annotate", "annotated-abstract", "knowledge-graph", "panel", "deep",

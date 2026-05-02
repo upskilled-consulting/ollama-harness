@@ -8,7 +8,7 @@ newline-delimited JSON events as they're emitted by running agents.
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 

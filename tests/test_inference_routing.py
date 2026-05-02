@@ -3,10 +3,17 @@ Verify inference.py model map, response adapter shapes, and routing state.
 No live LLM calls.
 """
 
-import pytest
 from harness.inference import (
-    _resolve_model, _MODEL_MAP, _OllamaResponse, _OllamaMessage,
-    OllamaLike, _BACKEND, _ENDPOINTS, list_endpoints, embed, get_embedding_function,
+    _BACKEND,
+    _ENDPOINTS,
+    _MODEL_MAP,
+    OllamaLike,
+    _OllamaMessage,
+    _OllamaResponse,
+    _resolve_model,
+    embed,
+    get_embedding_function,
+    list_endpoints,
 )
 
 

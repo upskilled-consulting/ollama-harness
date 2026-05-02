@@ -3,8 +3,12 @@ Verify security checks: Python code AST scan, file path sandbox, injection detec
 """
 
 import pytest
+
 from harness.security import (
-    check_python_code, check_file_path, check_output_path, scan_for_injection,
+    check_file_path,
+    check_output_path,
+    check_python_code,
+    scan_for_injection,
 )
 
 

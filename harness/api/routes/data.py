@@ -1,8 +1,9 @@
 """GET /api/finetune/metrics — fine-tune training metrics stream."""
 
 import json
+
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+
 from harness.config import DATA_DIR
 
 router = APIRouter(tags=["data"])

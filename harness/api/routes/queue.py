@@ -1,6 +1,5 @@
 """GET /api/queue, GET /api/state — queue inspection endpoints."""
 
-import asyncio
 
 from fastapi import APIRouter
 

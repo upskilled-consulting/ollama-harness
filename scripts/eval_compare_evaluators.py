@@ -12,10 +12,11 @@ Usage:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
-import sys
 import os
+import sys
 
 # Default evaluators and files
 DEFAULT_EVALUATORS = ["Qwen3-Coder:30b", "gemma4:26b"]
@@ -34,8 +35,8 @@ DEFAULT_FILES = [
 
 def score_one(task: str, path: str, evaluator: str) -> dict:
     """Run a single wiggum evaluate() call and return the result dict."""
-    from harness.wiggum import evaluate, normalize, detect_task_type
     from harness import wiggum as _w
+    from harness.wiggum import evaluate, normalize
     _w.EVALUATOR_MODEL = evaluator
 
     expanded = os.path.expanduser(path)
@@ -71,7 +72,7 @@ def main():
             i += 1
 
     print(f"\n{'='*70}")
-    print(f" Evaluator Diversity Comparison")
+    print(" Evaluator Diversity Comparison")
     print(f" Evaluators: {' vs '.join(evaluators)}")
     print(f" Files: {len(files)}")
     print(f"{'='*70}\n")
@@ -116,16 +117,16 @@ def main():
 
     # Summary
     print(f"{'─'*70}")
-    print(f"\nSummary:")
+    print("\nSummary:")
     if divergences:
-        print(f"  Significant divergences (|Δ| ≥ 1.0):")
+        print("  Significant divergences (|Δ| ≥ 1.0):")
         for label, s0, s1, delta in divergences:
             print(f"    {label}: {evaluators[0]}={s0:.1f}  {evaluators[1]}={s1:.1f}  Δ={delta:+.1f}")
         print(f"\n  → Evaluator bias detected: models disagree on {len(divergences)}/{len(results)} task(s).")
-        print(f"    Consider rotating evaluators in autoresearch or adding as panel member.")
+        print("    Consider rotating evaluators in autoresearch or adding as panel member.")
     else:
-        print(f"  No significant divergences (all |Δ| < 1.0).")
-        print(f"  → Evaluators agree: current rubric is robust to evaluator choice.")
+        print("  No significant divergences (all |Δ| < 1.0).")
+        print("  → Evaluators agree: current rubric is robust to evaluator choice.")
 
 
 if __name__ == "__main__":

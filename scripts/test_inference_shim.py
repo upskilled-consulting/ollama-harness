@@ -12,15 +12,18 @@ Checks:
 
 import sys as _sys
 from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
-import os, sys, json
+import os
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load .env so INFERENCE_BACKEND / VLLM_BASE_URL are present
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
 backend = os.environ.get("INFERENCE_BACKEND", "ollama")
@@ -34,6 +37,7 @@ print(f"VLLM_BASE_URL     = {base_url}")
 
 # --- 1. Model map coverage ---
 from harness import inference
+
 print("\n[1] Model map resolution:")
 for tag in ["pi-qwen-32b", "pi-qwen", "Qwen3-Coder:30b"]:
     resolved = inference._resolve_model(tag)

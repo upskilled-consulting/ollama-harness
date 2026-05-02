@@ -108,7 +108,8 @@ def _resolve_model(name: str) -> str:
 def get_active_vllm_model(base_url: str | None = None) -> str | None:
     """Return the first model ID loaded at base_url (defaults to VLLM_BASE_URL), or None."""
     try:
-        import urllib.request, json as _json
+        import json as _json
+        import urllib.request
         root = (base_url or _VLLM_BASE).rstrip("/")
         if not root.endswith("/v1"):
             root += "/v1"
@@ -444,7 +445,7 @@ class OllamaLike:
     def chat(self, model: str = None, *args, **kwargs):
         if self._keep_alive is not None and _BACKEND == "ollama":
             kwargs.setdefault("keep_alive", self._keep_alive)
-        return chat(model=model, *args, **kwargs)
+        return chat(*args, model=model, **kwargs)
 
 
 # Module-level shim so `import harness.inference as ollama` works as a drop-in.

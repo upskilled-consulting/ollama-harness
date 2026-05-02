@@ -4,8 +4,9 @@ Verify CLI entry points are importable and accept --help without crashing.
 
 import subprocess
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 

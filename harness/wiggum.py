@@ -20,12 +20,12 @@ Environment:
     conda activate ollama-pi
 """
 
-import sys
-import os
 import json
-import subprocess
+import os
 import re
+import sys
 from contextlib import contextmanager
+
 from harness.inference import OllamaLike as _OllamaLike
 from harness.summarizer import summarize_for_eval, summarize_for_revision
 
@@ -130,7 +130,7 @@ def normalize(path: str) -> str:
         return result.text_content
 
     # Markdown or plain text: read directly
-    with open(expanded, "r", encoding="utf-8") as f:
+    with open(expanded, encoding="utf-8") as f:
         return f.read()
 
 
@@ -442,7 +442,6 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
     Returns a trace dict with round-by-round results, final status, and token stats.
     Respects WIGGUM_MAX_ROUNDS env var to cap rounds (e.g. set to 1 for autoresearch eval).
     """
-    import time as _time
     from harness.logger import RunTrace as _RunTrace
 
     global PRODUCER_MODEL, EVALUATOR_MODEL
@@ -466,7 +465,7 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
 
     trace = {"task": task, "task_type": task_type, "output_path": expanded, "rounds": [], "final": None}
 
-    print(f"\n[wiggum] starting verification loop")
+    print("\n[wiggum] starting verification loop")
     print(f"  file:  {expanded}")
     print(f"  task_type: {task_type}")
     print(f"  model: evaluator={evaluator_model} producer={producer_model}")
@@ -500,8 +499,8 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
         # 2b. Optional panel — augments issues with multi-persona perspectives
         panel_reviews = []
         if _PANEL_ENABLED:
-            from harness.panel import run_panel, panel_issues
-            print(f"\n  [panel] running 3-persona evaluation panel...")
+            from harness.panel import panel_issues, run_panel
+            print("\n  [panel] running 3-persona evaluation panel...")
             with (parent_trace.span("panel") if parent_trace else _nullspan()):
                 panel_reviews = run_panel(task, content, evaluator_model, trace=parent_trace)
             panel_issue_list = panel_issues(panel_reviews)
@@ -566,7 +565,7 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
                 print(f"\n[wiggum] restoring round {best_round} output (score {best_score:.1f} {cmp} round {round_num} score {score:.1f})")
                 with open(expanded, "w", encoding="utf-8") as f:
                     f.write(best_content)
-            print(f"\n[wiggum] FAIL — max rounds reached without passing")
+            print("\n[wiggum] FAIL — max rounds reached without passing")
             trace["final"] = "FAIL"
             _attach_token_stats(trace, _local_trace)
             return trace
@@ -710,7 +709,6 @@ def loop_annotate(
 
     Returns a trace dict with round-by-round results and final status.
     """
-    import time as _time
     from harness.logger import RunTrace as _RunTrace
 
     global PRODUCER_MODEL, EVALUATOR_MODEL
@@ -737,7 +735,7 @@ def loop_annotate(
     except Exception:
         pass
 
-    print(f"\n[wiggum:annotate] starting annotation evaluation loop")
+    print("\n[wiggum:annotate] starting annotation evaluation loop")
     print(f"  file:  {expanded}")
     print(f"  model: evaluator={evaluator_model}  producer={producer_model}")
     print(f"  max rounds: {max_rounds}\n")
@@ -754,7 +752,7 @@ def loop_annotate(
             content = normalize(expanded)
 
         # 2. Evaluate against paper content
-        print(f"  [evaluate] task_type=annotate  scoring annotation...")
+        print("  [evaluate] task_type=annotate  scoring annotation...")
         eval_prompt = EVAL_PROMPT_ANNOTATE.format(
             paper_context=paper_context[:4000],
             content=summarize_for_eval(content, task),
@@ -843,7 +841,7 @@ def loop_annotate(
                 print(f"\n[wiggum:annotate] restoring round {best_round} output (score {best_score:.1f} > round {round_num} score {score:.1f})")
                 with open(expanded, "w", encoding="utf-8") as f:
                     f.write(best_content)
-            print(f"\n[wiggum:annotate] FAIL — max rounds reached without passing")
+            print("\n[wiggum:annotate] FAIL — max rounds reached without passing")
             trace["final"] = "FAIL"
             _attach_token_stats(trace, _local_trace)
             return trace

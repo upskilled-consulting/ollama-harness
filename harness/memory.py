@@ -21,14 +21,13 @@ Usage:
 """
 
 import json
-import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from harness import inference as ollama
+from harness.config import CHROMA_DIR, MEMORY_DB
 from harness.security import scan_for_injection
-from harness.config import MEMORY_DB, CHROMA_DIR
 
 
 def _scan_obs(title: str, narrative: str, facts: list[str] | None) -> bool:
@@ -298,7 +297,7 @@ class MemoryStore:
                 metadatas=[{"task_type": "unknown", "final_score": 0.0,
                             "timestamp": ""} for r in batch],
             )
-        print(f"  [memory] migration done")
+        print("  [memory] migration done")
 
     # ------------------------------------------------------------------
     # Write path
@@ -349,7 +348,7 @@ class MemoryStore:
                    (timestamp, task, task_type, title, narrative, facts, output_path, final_score, final)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                     task,
                     task_type,
                     obs["title"],
@@ -376,7 +375,7 @@ class MemoryStore:
                     metadatas=[{
                         "task_type": task_type or "unknown",
                         "final_score": score or 0.0,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                     }],
                 )
             except Exception as e:
@@ -409,7 +408,7 @@ class MemoryStore:
                 return -1
 
         facts_json = json.dumps(facts) if facts else None
-        ts = timestamp or datetime.now(timezone.utc).isoformat()
+        ts = timestamp or datetime.now(UTC).isoformat()
 
         if not _scan_obs(title, narrative, facts):
             return -1

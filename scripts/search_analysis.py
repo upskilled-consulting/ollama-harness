@@ -22,7 +22,7 @@ import math
 import re
 import statistics
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _BASE = Path(__file__).parent
@@ -61,7 +61,7 @@ def parse_ts(ts: str) -> datetime | None:
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f+00:00", "%Y-%m-%dT%H:%M:%S+00:00",
                 "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
         try:
-            return datetime.strptime(ts[:26], fmt[:len(ts[:26])]).replace(tzinfo=timezone.utc)
+            return datetime.strptime(ts[:26], fmt[:len(ts[:26])]).replace(tzinfo=UTC)
         except ValueError:
             pass
     return None
@@ -96,7 +96,7 @@ def extract_searches(runs: list[dict]) -> list[dict]:
                 "wiggum_rounds": r.get("wiggum_rounds", 0),
                 "final":       r.get("final", ""),
             })
-    rows.sort(key=lambda x: x["ts"] or datetime.min.replace(tzinfo=timezone.utc))
+    rows.sort(key=lambda x: x["ts"] or datetime.min.replace(tzinfo=UTC))
     return rows
 
 
@@ -345,7 +345,7 @@ def section_zero_yield(searches: list[dict]) -> str:
         return "## 7. Zero-Yield Queries\nNone — all queries returned results."
 
     by_model: Counter = Counter(s["model"] for s in zero)
-    lines = [f"## 7. Zero-Yield Queries (≤100 chars returned)\n",
+    lines = ["## 7. Zero-Yield Queries (≤100 chars returned)\n",
              f"**{len(zero)} / {len(searches)}** queries ({100*len(zero)/len(searches):.1f}%) returned ≤100 chars\n",
              f"By model: {dict(by_model.most_common())}\n",
              "\nSample zero-yield queries:"]
@@ -368,13 +368,14 @@ def main():
     runs = load_runs()
     searches = extract_searches(runs)
 
-    import sys, io
+    import io
+    import sys
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     print(f"[search_analysis] {len(runs)} runs loaded, {len(searches)} web_search calls\n")
 
     sections = [
         f"# Agentic Search Activity Analysis\n\n"
-        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  \n"
+        f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}  \n"
         f"Runs: {len(runs)}  |  Web searches: {len(searches)}  |  "
         f"Runs with search: {len({s['run_id'] for s in searches})}\n",
 

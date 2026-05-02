@@ -39,11 +39,10 @@ import os
 import sqlite3
 import sys
 import time
-import urllib.request
 import urllib.error
-from collections import Counter, defaultdict
+import urllib.request
+from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from harness.config import SEMANTIC_SCHOLAR_CACHE_DB
@@ -450,7 +449,7 @@ def main() -> None:
     graph = build_citation_graph(papers, sleep_s=args.sleep, verbose=True, top_gaps=args.gaps * 2)
 
     s = graph.stats
-    print(f"\n[s2] done")
+    print("\n[s2] done")
     print(f"  corpus:       {s['corpus_size']} papers")
     print(f"  api calls:    {s['api_calls']}")
     print(f"  cache hits:   {s['cache_hits']}")

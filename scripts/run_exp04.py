@@ -84,13 +84,13 @@ def main():
     failed = [r for r in completed if not r.get("ok")]
 
     print(f"\n{'='*60}")
-    print(f" Experiment-04 complete")
+    print(" Experiment-04 complete")
     print(f" {len(completed)} run(s) executed, {len(failed)} failed, wall time: {wall}s")
     if failed:
         for r in failed:
             print(f"  FAILED: run {r['run']} ({r['task']})")
     print(f"{'='*60}")
-    print(f"\nNext: python analyze_exp04.py")
+    print("\nNext: python analyze_exp04.py")
 
 
 if __name__ == "__main__":

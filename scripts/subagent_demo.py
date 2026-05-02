@@ -6,10 +6,10 @@ Submits all tasks to the server queue so they appear in the dashboard and are
 processed sequentially by the server's runner. Requires server running on SERVER_URL.
 """
 
-import time
 import json
-import urllib.request
+import time
 import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -141,7 +141,7 @@ def main():
     try:
         active = get_json("/api/runs")
         if active.get("runs"):
-            print(f"  Active run detected — tasks will queue behind it.")
+            print("  Active run detected — tasks will queue behind it.")
     except Exception:
         pass
 

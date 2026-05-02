@@ -30,7 +30,6 @@ import re
 import time
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # CSS / DOM extraction (runs inside the browser via Playwright evaluate)
 # ---------------------------------------------------------------------------
@@ -105,7 +104,7 @@ def _rgb_to_hex(rgb: str) -> str:
     """Convert rgb(r, g, b) → #rrggbb. Returns original string if not parseable."""
     m = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", rgb)
     if m:
-        return "#{:02x}{:02x}{:02x}".format(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return f"#{int(m.group(1)):02x}{int(m.group(2)):02x}{int(m.group(3)):02x}"
     return rgb
 
 
@@ -263,7 +262,6 @@ def extract_design_system(
     _VISION_TIMEOUT = int(os.environ.get("HARNESS_VISION_TIMEOUT", "300"))
     screenshot_desc = ""
     if section_shots and vision_model:
-        import concurrent.futures as _cf
         try:
             from harness.vision import extract_image_context
             descs = []
@@ -289,9 +287,9 @@ def extract_design_system(
                 _result  = [None]
                 _evt     = _th.Event()
 
-                def _run():
+                def _run():  # noqa: B023
                     try:
-                        _result[0] = extract_image_context(sp, goal)
+                        _result[0] = extract_image_context(sp, goal)  # noqa: B023
                     except Exception:
                         pass
                     finally:
@@ -664,9 +662,10 @@ def _refine_loop(
     """Open the HTML in a browser, screenshot it, compare with original, refine."""
     try:
         from playwright.sync_api import sync_playwright
+
+        from harness.inference import chat as _chat
         from harness.skills.playwright_skill import _take_screenshot
         from harness.vision import extract_image_context
-        from harness.inference import chat as _chat
     except ImportError as e:
         print(f"  [build-page] refinement unavailable: {e}")
         return html

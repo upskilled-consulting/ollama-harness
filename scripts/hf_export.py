@@ -30,7 +30,6 @@ import json
 import os
 import sys
 from collections import defaultdict
-from pathlib import Path
 
 RUNS_PATH   = os.path.join(os.path.dirname(__file__), "runs.jsonl")
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "hf_datasets")
@@ -391,7 +390,7 @@ def main():
     print("Next steps:")
     print(f"  SFT:        trl sft --model <base> --dataset {out_dir}/sft.jsonl")
     print(f"  Preference: trl dpo --model <sft-model> --dataset {out_dir}/preference.jsonl")
-    print(f"  Hub push:   python hf_export.py --push <your-hf-username>/ollama-pi-datasets")
+    print("  Hub push:   python hf_export.py --push <your-hf-username>/ollama-pi-datasets")
 
 
 if __name__ == "__main__":

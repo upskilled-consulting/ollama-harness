@@ -24,13 +24,15 @@ Usage:
     python supervisor.py --task-type research   # filter to one task type
 """
 
-import sys
-import math
 import argparse
+import math
+import sys
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from datetime import datetime, timezone
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+import json  # noqa: E402
+from harness.config import RUNS_FILE  # noqa: E402
 from harness.utils import load_runs, safe_mean, safe_stddev  # noqa: E402
 
 MAX_SEARCH_ROUNDS = 5   # must match agent.py
@@ -234,7 +236,7 @@ def report(runs: list[dict], use_color: bool = True, as_json: bool = False) -> d
     bold  = _ANSI["bold"]  if use_color else ""
     reset = _ANSI["reset"] if use_color else ""
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n{bold}=== Supervisor Report  {now}  ({len(runs)} runs analyzed) ==={reset}\n")
 
     any_warn = False

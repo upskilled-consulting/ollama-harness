@@ -12,15 +12,14 @@ Provides:
 from __future__ import annotations
 
 import io
-import os
 import re
 import sys
 import threading
 import time
 
+from rich import box as _box
 from rich.console import Console
 from rich.panel import Panel
-from rich import box as _box
 
 # Capture the real terminal stdout AT IMPORT TIME — before install() swaps it.
 _ORIG: io.TextIOBase = sys.stdout
@@ -94,7 +93,7 @@ _DIM    = "\033[2m"
 _RST    = "\033[0m"
 _CLR    = "\r\033[K"
 
-_active_spinner: "_Spinner | None" = None
+_active_spinner: _Spinner | None = None
 _spin_lock = threading.Lock()
 
 
