@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { clsx } from "clsx";
 import { ChevronRight } from "lucide-react";
-import { useRuns } from "@/hooks/useRuns";
+import { useAllRuns } from "@/hooks/useRuns";
 import type { RunRecord, WiggumDim } from "@/types";
 
 function Score({ scores }: { scores: number[] }) {
@@ -87,13 +87,11 @@ function RunDetail({ run }: { run: RunRecord }) {
 }
 
 export function Runs() {
-  const { data, isLoading, error } = useRuns();
+  const { data: runs = [], isLoading, error } = useAllRuns();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (isLoading) return <div className="loading">Loading…</div>;
   if (error)     return <div className="error">Failed to load runs.</div>;
-
-  const runs = data?.recent ?? [];
 
   return (
     <div>
