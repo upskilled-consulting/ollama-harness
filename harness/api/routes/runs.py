@@ -88,7 +88,7 @@ async def get_run_content(run_id: str):
 
 @router.get("/data")
 async def get_dashboard_data():
-    runs = _load_runs()
+    runs = _load_runs(n=10_000)
     passes    = [r for r in runs if r.get("final") == "PASS"]
     scores    = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
     durations = [r["run_duration_s"] for r in runs if r.get("run_duration_s")]
