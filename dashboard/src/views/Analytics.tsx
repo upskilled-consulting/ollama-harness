@@ -10,7 +10,7 @@ export function Analytics() {
   const { data: curation } = useCuration();
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Failed to load analytics.</div>;
+  if (error)     return <div className="page-error">Failed to load analytics.</div>;
   if (!data)     return null;
 
   const tokenData = data.recent_runs.slice(0, 20).map((r, i) => ({

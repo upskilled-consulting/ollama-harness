@@ -6,7 +6,7 @@ export function Home() {
   const { data, isLoading, error } = useDashboardData();
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Failed to load dashboard data.</div>;
+  if (error)     return <div className="page-error">Failed to load dashboard data.</div>;
   if (!data)     return null;
 
   return (

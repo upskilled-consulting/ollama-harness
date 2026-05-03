@@ -805,7 +805,7 @@ export function Explorer() {
   };
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Failed to load runs.</div>;
+  if (error)     return <div className="page-error">Failed to load runs.</div>;
 
   return (
     <div style={{ margin: "-28px", height: "100vh", display: "flex", overflow: "hidden" }}>

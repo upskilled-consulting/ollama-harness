@@ -76,7 +76,7 @@ body {
 .kpi-label { color: var(--dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
 
 /* ── Table ── */
-.runs-table                 { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+.runs-table                 { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); table-layout: fixed; }
 .runs-table th              { padding: 10px 12px; text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dim); border-bottom: 1px solid var(--border); }
 .runs-table td              { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .runs-table tr:last-child td { border-bottom: none; }
@@ -187,5 +187,5 @@ input.voice-filename:focus { border-color: var(--accent); }
 @media (max-width: 800px) { .chart-grid-2 { grid-template-columns: 1fr; } }
 
 /* ── Misc ── */
-.loading, .error { padding: 48px; text-align: center; color: var(--dim); }
+.loading, .page-error { padding: 48px; text-align: center; color: var(--dim); }
 .empty-state     { padding: 28px; text-align: center; color: var(--dim); font-size: 13px; }

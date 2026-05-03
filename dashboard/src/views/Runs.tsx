@@ -128,8 +128,8 @@ function RunDetail({ run }: { run: RunRecord }) {
           <StatLine label="model"     value={run.producer_model} />
           <StatLine label="evaluator" value={run.evaluator_model} />
           <StatLine label="duration"  value={run.run_duration_s != null ? `${run.run_duration_s.toFixed(1)}s` : null} />
-          <StatLine label="tokens in" value={run.input_tokens != null ? run.input_tokens.toLocaleString() : null} />
-          <StatLine label="tokens out" value={run.output_tokens != null ? run.output_tokens.toLocaleString() : null} />
+          <StatLine label="tokens in" value={run.input_tokens ? run.input_tokens.toLocaleString() : null} />
+          <StatLine label="tokens out" value={run.output_tokens ? run.output_tokens.toLocaleString() : null} />
           <StatLine label="output"    value={run.output_bytes != null ? `${(run.output_bytes / 1024).toFixed(1)} KB · ${run.output_lines ?? "?"} lines` : null} />
           <StatLine label="memory"    value={run.memory_hits != null && run.memory_hits > 0 ? `${run.memory_hits} hits` : null} />
           <StatLine label="leverage"  value={run.leverage != null ? `${run.leverage.toFixed(1)}×` : null} />
@@ -249,7 +249,7 @@ export function Runs() {
   }, [runs, search, status]);
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Failed to load runs.</div>;
+  if (error)     return <div className="page-error">Failed to load runs.</div>;
 
   return (
     <div>
@@ -266,13 +266,13 @@ export function Runs() {
       <table className="runs-table">
         <thead>
           <tr>
-            <th style={{ width: 28 }} />
-            <th style={{ width: 116 }}>Time</th>
+            <th style={{ width: 30 }} />
+            <th style={{ width: 108 }}>Time</th>
             <th>Task</th>
-            <th>Model</th>
-            <th style={{ width: 64, textAlign: "right" }}>Score</th>
+            <th style={{ width: 112 }}>Model</th>
+            <th style={{ width: 58, textAlign: "right" }}>Score</th>
             <th style={{ width: 72, textAlign: "right" }}>Duration</th>
-            <th style={{ width: 80 }}>Status</th>
+            <th style={{ width: 78 }}>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -317,7 +317,7 @@ function RunRows({ run, score, isOpen, onToggle }: {
         <td className="task-cell" title={run.task}>
           {run.task.slice(0, 72)}{run.task.length > 72 ? "…" : ""}
         </td>
-        <td className="mono" style={{ fontSize: 11 }}>{run.producer_model}</td>
+        <td className="mono" style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.producer_model}</td>
         <td style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12 }}>
           {score != null
             ? <span style={{ color: scoreColor(score) }}>{score.toFixed(1)}</span>

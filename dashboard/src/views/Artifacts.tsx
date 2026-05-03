@@ -72,7 +72,7 @@ export function Artifacts() {
   const [filter, setFilter] = useState("");
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Could not load artifacts.</div>;
+  if (error)     return <div className="page-error">Could not load artifacts.</div>;
 
   const artifacts = (data ?? []).filter((a) => {
     if (!filter) return true;

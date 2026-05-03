@@ -23,7 +23,7 @@ export function Mcp() {
   const { data, isLoading, error } = useMcpLog();
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Could not load MCP log. Is the server running?</div>;
+  if (error)     return <div className="page-error">Could not load MCP log. Is the server running?</div>;
 
   const entries = data ?? [];
 

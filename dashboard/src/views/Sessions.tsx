@@ -43,7 +43,7 @@ export function Sessions() {
   const { data, isLoading, error } = useSessions();
 
   if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="error">Could not load sessions.</div>;
+  if (error)     return <div className="page-error">Could not load sessions.</div>;
 
   const sessions = data ?? [];
   const totalRuns = sessions.reduce((acc, s) => acc + (s.runs ?? 0), 0);
