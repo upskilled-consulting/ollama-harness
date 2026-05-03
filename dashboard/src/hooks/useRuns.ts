@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, createRunsSocket } from "@/api/client";
-import type { RunRecord } from "@/types";
+import type { FeedbackRecord, RunRecord } from "@/types";
 
 export function useSessions() {
   return useQuery({ queryKey: ["sessions"], queryFn: api.sessions, staleTime: 30_000 });
@@ -47,6 +47,26 @@ export function useSubmitTask() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+export function useFeedback(runId: string | null) {
+  return useQuery({
+    queryKey: ["feedback", runId],
+    queryFn:  () => (runId ? api.feedback(runId) : Promise.resolve([])),
+    enabled:  !!runId,
+    staleTime: 10_000,
+  });
+}
+
+export function useSubmitFeedback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { run_id: string; node_id: string; rating: number; comment: string }) =>
+      api.submit_feedback(body),
+    onSuccess: (_data: FeedbackRecord, vars) => {
+      void qc.invalidateQueries({ queryKey: ["feedback", vars.run_id] });
     },
   });
 }

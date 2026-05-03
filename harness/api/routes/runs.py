@@ -1,8 +1,9 @@
 """GET /api/runs — active + recent runs; GET /api/data — dashboard payload."""
 
 import json
+import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from harness.config import LEGACY_RUNS_FILE, RUNS_FILE
 
@@ -11,8 +12,14 @@ router = APIRouter(tags=["runs"])
 _MAX_RECENT = 200
 
 
-def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
-    """Load runs from both current and legacy JSONL, deduped by run_id, newest first."""
+_STRIP_FROM_LIST = {"final_content"}
+
+
+def _load_runs(n: int = _MAX_RECENT, *, full: bool = False) -> list[dict]:
+    """Load runs from both current and legacy JSONL, deduped by run_id, newest first.
+
+    Set full=True to include heavy inline fields (final_content) for single-run lookups.
+    """
     seen: set[str] = set()
     all_records: list[dict] = []
 
@@ -31,6 +38,8 @@ def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
             rid = r.get("run_id") or r.get("timestamp", "") + r.get("task", "")[:30]
             if rid and rid not in seen:
                 seen.add(rid)
+                if not full:
+                    r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
                 all_records.append(r)
 
     all_records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
@@ -48,6 +57,33 @@ async def get_runs():
 async def get_all_runs():
     """Full run list for Explorer — no cap."""
     return _load_runs(n=10_000)
+
+
+@router.get("/runs/{run_id}/content")
+async def get_run_content(run_id: str):
+    """Return the markdown output file content for a run.
+
+    Falls back to inline final_content stored in the run record when the output
+    file is absent (common for legacy runs whose paths no longer exist on disk).
+    """
+    runs = _load_runs(n=10_000, full=True)
+    run = next((r for r in runs if r.get("run_id") == run_id), None)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    inline = run.get("final_content") or ""
+
+    path = run.get("output_path")
+    if path:
+        expanded = os.path.expanduser(path)
+        if os.path.exists(expanded):
+            content = open(expanded, encoding="utf-8", errors="replace").read()
+            return {"content": content, "path": path, "bytes": len(content.encode())}
+
+    if inline:
+        return {"content": inline, "path": path, "bytes": len(inline.encode())}
+
+    raise HTTPException(status_code=404, detail="No output available for this run")
 
 
 @router.get("/data")

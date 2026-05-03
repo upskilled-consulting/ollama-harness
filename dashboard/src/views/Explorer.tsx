@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, type ReactNode, type CSSProperties } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useAllRuns } from "@/hooks/useRuns";
-import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens } from "@/types";
+import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord } from "@/types";
 
 // ── DAG constants ─────────────────────────────────────────────────────────────
 const NW   = 162;
@@ -46,7 +47,6 @@ const trunc = (s: string | null | undefined, n: number) =>
 function buildColumns(run: RunRecord): DagNode[][] {
   const cols: DagNode[][] = [];
 
-  // TASK
   cols.push([{
     id: "task", type: "task", col: 0, row: 0, x: 0, y: 0,
     title: trunc(run.task, 22),
@@ -55,7 +55,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
     data:  run,
   }]);
 
-  // MEMORY
   cols.push([{
     id: "memory", type: "memory", col: 0, row: 0, x: 0, y: 0,
     title: `${run.memory_hits ?? 0} memory hit${run.memory_hits === 1 ? "" : "s"}`,
@@ -64,7 +63,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
     data:  { hits: run.memory_hits, titles: run.memory_context_titles ?? [] },
   }]);
 
-  // PLAN (if present)
   if (run.plan) {
     const queries = run.plan.search_queries ?? run.plan.queries ?? [];
     cols.push([{
@@ -76,17 +74,13 @@ function buildColumns(run: RunRecord): DagNode[][] {
     }]);
   }
 
-  // SEARCH — executed tool_calls (minus pure execution tools), with fallback to
-  // plan.search_queries for older runs that logged a plan but not tool_calls.
   const EXEC_TOOLS = new Set(["run_python", "run_code", "execute_python", "execute_code"]);
   const tcSearches = (run.tool_calls ?? []).filter((tc) => !EXEC_TOOLS.has(tc.name));
-
   const planQueries: string[] = run.plan
     ? (run.plan.search_queries ?? run.plan.queries ?? [])
     : [];
 
   if (tcSearches.length > 0) {
-    // Executed searches — show tool name + result chars
     cols.push(tcSearches.map((tc, i) => ({
       id:    `search-${i}`,
       type:  "search" as NodeType,
@@ -97,7 +91,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
       data:  tc,
     })));
   } else if (planQueries.length > 0) {
-    // Fallback: plan had queries but tool_calls weren't logged (older runs)
     cols.push(planQueries.map((q, i) => ({
       id:    `search-${i}`,
       type:  "search" as NodeType,
@@ -109,7 +102,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
     })));
   }
 
-  // SYNTHESIS
   const synth = run.tokens_by_stage?.synth;
   cols.push([{
     id: "synthesis", type: "synthesis", col: 0, row: 0, x: 0, y: 0,
@@ -121,7 +113,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
     data:  { synth, output_bytes: run.output_bytes, synth_cot: run.synth_cot },
   }]);
 
-  // EVAL (one per wiggum_eval_log entry, or fallback to scores)
   const evalLog = run.wiggum_eval_log ?? [];
   if (evalLog.length > 0) {
     const total = evalLog.length;
@@ -144,7 +135,6 @@ function buildColumns(run: RunRecord): DagNode[][] {
     })));
   }
 
-  // OUTPUT
   const outColor = run.final === "PASS" ? "#3fb950" : run.final === "FAIL" ? "#f85149" : "#8b949e";
   cols.push([{
     id: "output", type: "output", col: 0, row: 0, x: 0, y: 0,
@@ -231,8 +221,261 @@ function SvgNode({ node, selected, onClick }: { node: DagNode; selected: boolean
   );
 }
 
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+function renderInline(text: string): ReactNode {
+  const segs: ReactNode[] = [];
+  let i = 0; let buf = ""; let key = 0;
+  while (i < text.length) {
+    if (text.startsWith("**", i)) {
+      if (buf) { segs.push(buf); buf = ""; }
+      const end = text.indexOf("**", i + 2);
+      if (end !== -1) { segs.push(<strong key={key++}>{text.slice(i + 2, end)}</strong>); i = end + 2; continue; }
+    }
+    if (text[i] === "`") {
+      if (buf) { segs.push(buf); buf = ""; }
+      const end = text.indexOf("`", i + 1);
+      if (end !== -1) {
+        segs.push(<code key={key++} style={{ fontFamily: "var(--font-mono)", background: "rgba(255,255,255,0.09)", padding: "1px 4px", borderRadius: 3, fontSize: "0.88em" }}>{text.slice(i + 1, end)}</code>);
+        i = end + 1; continue;
+      }
+    }
+    if (text[i] === "*" && !text.startsWith("**", i)) {
+      if (buf) { segs.push(buf); buf = ""; }
+      const end = text.indexOf("*", i + 1);
+      if (end !== -1 && !text.startsWith("**", end)) { segs.push(<em key={key++}>{text.slice(i + 1, end)}</em>); i = end + 1; continue; }
+    }
+    buf += text[i]; i++;
+  }
+  if (buf) segs.push(buf);
+  return <>{segs}</>;
+}
+
+function MdView({ content }: { content: string }) {
+  const nodes: ReactNode[] = [];
+  const lines = content.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.startsWith("```")) {
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
+      i++;
+      nodes.push(
+        <pre key={nodes.length} style={{ background: "rgba(0,0,0,0.35)", padding: "8px 10px", borderRadius: 5, overflowX: "auto", fontSize: 10, fontFamily: "var(--font-mono)", margin: "5px 0", border: "1px solid var(--border)", lineHeight: 1.5 }}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    const hm = line.match(/^(#{1,4}) (.*)/);
+    if (hm) {
+      const sizes = [null, 14, 13, 12, 11];
+      nodes.push(
+        <div key={nodes.length} style={{ fontWeight: 700, fontSize: sizes[hm[1].length] ?? 12, color: "var(--text)", margin: "10px 0 3px", lineHeight: 1.3 }}>
+          {renderInline(hm[2])}
+        </div>
+      );
+      i++; continue;
+    }
+
+    if (line.match(/^[-_*]{3,}$/)) {
+      nodes.push(<div key={nodes.length} style={{ borderTop: "1px solid var(--border)", margin: "6px 0" }} />);
+      i++; continue;
+    }
+
+    if (line.match(/^[-*] /)) {
+      const items: ReactNode[] = [];
+      while (i < lines.length && lines[i].match(/^[-*] /)) {
+        const txt = lines[i].replace(/^[-*] /, "");
+        items.push(<div key={i} style={{ paddingLeft: 10, fontSize: 11, color: "var(--text)", marginBottom: 1, lineHeight: 1.5 }}>• {renderInline(txt)}</div>);
+        i++;
+      }
+      nodes.push(<div key={nodes.length} style={{ margin: "3px 0" }}>{items}</div>);
+      continue;
+    }
+
+    if (line.match(/^\d+\. /)) {
+      const items: ReactNode[] = [];
+      while (i < lines.length && lines[i].match(/^\d+\. /)) {
+        const txt = lines[i].replace(/^\d+\. /, "");
+        items.push(<div key={i} style={{ paddingLeft: 10, fontSize: 11, color: "var(--text)", marginBottom: 1, lineHeight: 1.5 }}>{lines[i].match(/^\d+/)![0]}. {renderInline(txt)}</div>);
+        i++;
+      }
+      nodes.push(<div key={nodes.length} style={{ margin: "3px 0" }}>{items}</div>);
+      continue;
+    }
+
+    if (!line.trim()) { nodes.push(<div key={nodes.length} style={{ height: 5 }} />); i++; continue; }
+
+    nodes.push(
+      <div key={nodes.length} style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.5, marginBottom: 2 }}>
+        {renderInline(line)}
+      </div>
+    );
+    i++;
+  }
+  return <div style={{ wordBreak: "break-word" }}>{nodes}</div>;
+}
+
+// ── Output content preview ────────────────────────────────────────────────────
+function OutputPreview({ runId }: { runId: string }) {
+  const [open,    setOpen]    = useState(false);
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err,     setErr]     = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (content !== null) return;
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/content`);
+      if (!res.ok) { const t = await res.text(); throw new Error(t); }
+      const data = await res.json() as { content: string };
+      setContent(data.content);
+    } catch (e) { setErr(String(e)); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button onClick={toggle} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--dim)", cursor: "pointer", fontSize: 10, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        {open ? "▲ hide preview" : "▼ preview output"}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, maxHeight: 380, overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, padding: "10px 12px" }}>
+          {loading && <div style={{ color: "var(--dim)", fontSize: 11 }}>Loading…</div>}
+          {err     && <div style={{ color: "var(--fail)", fontSize: 11 }}>{err}</div>}
+          {content && <MdView content={content} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stage token display ───────────────────────────────────────────────────────
+function StageToks({ candidates, tokensByStage }: { candidates: string[]; tokensByStage?: Record<string, StageTokens> }) {
+  if (!tokensByStage) return null;
+  const st = candidates.map((k) => tokensByStage[k]).find(Boolean);
+  if (!st || (!st.input && !st.output)) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 3 }}>Tokens</div>
+      <div style={{ display: "flex", gap: 14, fontSize: 11, fontFamily: "var(--font-mono)" }}>
+        {st.input  != null && <span><span style={{ color: "var(--dim)" }}>in </span><span style={{ color: "var(--text)" }}>{st.input.toLocaleString()}</span></span>}
+        {st.output != null && <span><span style={{ color: "var(--dim)" }}>out </span><span style={{ color: "var(--text)" }}>{st.output.toLocaleString()}</span></span>}
+        {st.calls  != null && st.calls > 1 && <span><span style={{ color: "var(--dim)" }}>×</span><span style={{ color: "var(--text)" }}>{st.calls}</span></span>}
+        {st.total_ms != null && <span style={{ color: "var(--dim)" }}>{(st.total_ms / 1000).toFixed(1)}s</span>}
+      </div>
+    </div>
+  );
+}
+
+function AllStageToks({ tokensByStage }: { tokensByStage?: Record<string, StageTokens> }) {
+  if (!tokensByStage) return null;
+  const entries = Object.entries(tokensByStage).filter(([, st]) => (st.input ?? 0) + (st.output ?? 0) > 0);
+  if (entries.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Token breakdown</div>
+      {entries.map(([name, st]) => (
+        <div key={name} style={{ display: "flex", gap: 0, fontSize: 10, marginBottom: 2, fontFamily: "var(--font-mono)", alignItems: "baseline" }}>
+          <span style={{ color: "var(--dim)", minWidth: 64 }}>{name}</span>
+          <span style={{ color: "var(--text)", minWidth: 50 }}>{(st.input ?? 0).toLocaleString()}<span style={{ color: "var(--dim)" }}>↑</span></span>
+          <span style={{ color: "var(--text)" }}>{(st.output ?? 0).toLocaleString()}<span style={{ color: "var(--dim)" }}>↓</span></span>
+          {(st.calls ?? 0) > 1 && <span style={{ color: "var(--dim)", marginLeft: 6 }}>×{st.calls}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── RLHF panel ────────────────────────────────────────────────────────────────
+function RlhfPanel({ runId, nodeId }: { runId: string; nodeId: string }) {
+  const [rating,    setRating]    = useState<1 | -1 | null>(null);
+  const [comment,   setComment]   = useState("");
+  const [saved,     setSaved]     = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const qc = useQueryClient();
+
+  const { data: feedbackList } = useQuery({
+    queryKey:  ["feedback", runId],
+    queryFn:   () => fetch(`/api/feedback/${runId}`).then((r) => r.json() as Promise<FeedbackRecord[]>),
+    staleTime: 10_000,
+  });
+
+  useEffect(() => {
+    // Find most-recent feedback for this node
+    const existing = [...(feedbackList ?? [])].reverse().find((f) => f.node_id === nodeId);
+    if (existing) {
+      setRating(existing.rating);
+      setComment(existing.comment ?? "");
+      setSaved(true);
+    } else {
+      setRating(null);
+      setComment("");
+      setSaved(false);
+    }
+  }, [feedbackList, nodeId]);
+
+  const submit = async () => {
+    if (rating === null) return;
+    setSubmitting(true);
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: runId, node_id: nodeId, rating, comment }),
+      });
+      setSaved(true);
+      void qc.invalidateQueries({ queryKey: ["feedback", runId] });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const thumbStyle = (active: boolean, color: string): CSSProperties => ({
+    background: active ? `${color}20` : "none",
+    border: `1px solid ${active ? color : "var(--border)"}`,
+    color: active ? color : "var(--dim)",
+    borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 13, lineHeight: 1,
+  });
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 7 }}>
+        Rate this step
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 7, alignItems: "center" }}>
+        <button style={thumbStyle(rating === 1,  "#34d399")} onClick={() => { setRating(1);  setSaved(false); }}>👍</button>
+        <button style={thumbStyle(rating === -1, "#f87171")} onClick={() => { setRating(-1); setSaved(false); }}>👎</button>
+        {saved && <span style={{ fontSize: 10, color: "var(--pass)", marginLeft: 2 }}>✓ saved</span>}
+      </div>
+      <textarea
+        value={comment}
+        onChange={(e) => { setComment(e.target.value); setSaved(false); }}
+        placeholder="Add a comment…"
+        rows={2}
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", fontSize: 11, padding: "5px 8px", resize: "vertical", fontFamily: "inherit", marginBottom: 6, outline: "none" }}
+      />
+      <button
+        onClick={submit}
+        disabled={rating === null || submitting}
+        style={{ background: rating !== null ? "rgba(129,140,248,0.12)" : "none", border: "1px solid var(--accent)", color: rating !== null ? "var(--accent)" : "var(--dim)", borderRadius: 5, padding: "4px 0", cursor: rating !== null ? "pointer" : "not-allowed", fontSize: 11, width: "100%" }}
+      >
+        {submitting ? "Saving…" : saved ? "✓ Feedback saved" : "Submit feedback"}
+      </button>
+    </div>
+  );
+}
+
 // ── Node inspector content ────────────────────────────────────────────────────
-function InspRow({ label, value }: { label: string; value: React.ReactNode }) {
+function InspRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "4px 0", borderBottom: "1px solid rgba(42,45,58,.5)", fontSize: 12 }}>
       <span style={{ color: "var(--dim)", minWidth: 90, flexShrink: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
@@ -258,19 +501,21 @@ function DimBars({ dims }: { dims: WiggumDim }) {
   );
 }
 
-function NodeInspectorBody({ node }: { node: DagNode }) {
+function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
   const d = node.data as Record<string, unknown>;
+  const tbs = run.tokens_by_stage;
 
   if (node.type === "task") {
-    const run = d as unknown as RunRecord;
+    const r = d as unknown as RunRecord;
     return (
       <>
-        <div style={{ fontSize: 12, lineHeight: 1.6, marginBottom: 10, wordBreak: "break-word", color: "var(--text)" }}>{run.task}</div>
-        <InspRow label="timestamp"  value={run.timestamp?.slice(0, 19).replace("T", " ")} />
-        <InspRow label="model"      value={run.producer_model} />
-        <InspRow label="evaluator"  value={run.evaluator_model} />
-        <InspRow label="type"       value={run.task_type ?? "—"} />
-        <InspRow label="duration"   value={run.run_duration_s ? `${run.run_duration_s.toFixed(1)}s` : "—"} />
+        <div style={{ fontSize: 12, lineHeight: 1.6, marginBottom: 10, wordBreak: "break-word", color: "var(--text)" }}>{r.task}</div>
+        <InspRow label="timestamp"  value={r.timestamp?.slice(0, 19).replace("T", " ")} />
+        <InspRow label="model"      value={r.producer_model} />
+        <InspRow label="evaluator"  value={r.evaluator_model} />
+        <InspRow label="type"       value={r.task_type ?? "—"} />
+        <InspRow label="duration"   value={r.run_duration_s ? `${r.run_duration_s.toFixed(1)}s` : "—"} />
+        <InspRow label="tokens"     value={`${(r.input_tokens ?? 0).toLocaleString()} in · ${(r.output_tokens ?? 0).toLocaleString()} out`} />
       </>
     );
   }
@@ -296,6 +541,7 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
         {plan.notes && <InspRow label="notes" value={plan.notes} />}
         {(plan.known_facts ?? []).map((f, i) => <InspRow key={i} label={`known ${i + 1}`} value={f} />)}
         {(plan.knowledge_gaps ?? []).map((g, i) => <InspRow key={i} label={`gap ${i + 1}`} value={g} />)}
+        <StageToks candidates={["plan", "planner", "plan_prior", "prior"]} tokensByStage={tbs} />
       </>
     );
   }
@@ -309,6 +555,7 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
           {tc.query ?? "—"}
         </div>
         <InspRow label="result" value={tc.result_chars != null ? `${tc.result_chars.toLocaleString()} chars` : "—"} />
+        <StageToks candidates={["search", "web_search", "fetch", "browse"]} tokensByStage={tbs} />
       </>
     );
   }
@@ -322,14 +569,16 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
         <InspRow label="in tokens"  value={synth?.input?.toLocaleString() ?? "—"} />
         <InspRow label="time"       value={synth?.total_ms != null ? `${(synth.total_ms / 1000).toFixed(1)}s` : "—"} />
         <InspRow label="output"     value={d.output_bytes != null ? `${((d.output_bytes as number) / 1024).toFixed(1)} KB` : "—"} />
+        <AllStageToks tokensByStage={tbs} />
         {cot && cot.length > 0 && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Chain of thought</div>
-            <div style={{ maxHeight: 140, overflowY: "auto", fontSize: 11, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word" }}>
+            <div style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word" }}>
               {cot.slice(0, 3).join(" · ")}
             </div>
           </div>
         )}
+        <OutputPreview runId={run.run_id} />
       </>
     );
   }
@@ -341,6 +590,7 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
         <InspRow label="round" value={String(entry.round)} />
         <InspRow label="score" value={entry.score?.toFixed(2) ?? "—"} />
         {entry.dims && <DimBars dims={entry.dims} />}
+        <StageToks candidates={["eval", "wiggum", "annotate"]} tokensByStage={tbs} />
         {(entry.issues ?? []).length > 0 && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Issues</div>
@@ -351,7 +601,7 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
         )}
         {entry.feedback && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Feedback</div>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Evaluator feedback</div>
             <div style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word" }}>{entry.feedback}</div>
           </div>
         )}
@@ -360,20 +610,22 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
   }
 
   if (node.type === "output") {
-    const run = d as unknown as RunRecord;
-    const scores = run.wiggum_scores ?? [];
+    const r = d as unknown as RunRecord;
+    const scores = r.wiggum_scores ?? [];
     return (
       <>
         <InspRow label="status" value={
-          <span className={clsx("badge", (run.final ?? "error").toLowerCase())}>{run.final ?? "running"}</span>
+          <span className={clsx("badge", (r.final ?? "error").toLowerCase())}>{r.final ?? "running"}</span>
         } />
-        {run.output_path && <InspRow label="path"  value={run.output_path} />}
-        {run.output_bytes != null && <InspRow label="size"  value={`${(run.output_bytes / 1024).toFixed(1)} KB · ${run.output_lines ?? "?"} lines`} />}
+        {r.output_path && <InspRow label="path"  value={r.output_path} />}
+        {r.output_bytes != null && <InspRow label="size"  value={`${(r.output_bytes / 1024).toFixed(1)} KB · ${r.output_lines ?? "?"} lines`} />}
         {scores.length > 0 && (
           <InspRow label="scores" value={
             <>{scores.map((s, i) => <span key={i} className="score-pill">{s.toFixed(1)}</span>)}</>
           } />
         )}
+        <InspRow label="tokens" value={`${(r.input_tokens ?? 0).toLocaleString()} in · ${(r.output_tokens ?? 0).toLocaleString()} out`} />
+        <OutputPreview runId={r.run_id} />
       </>
     );
   }
@@ -381,11 +633,11 @@ function NodeInspectorBody({ node }: { node: DagNode }) {
   return null;
 }
 
-function NodeInspector({ node, onClose }: { node: DagNode; onClose: () => void }) {
+function NodeInspector({ node, run, onClose }: { node: DagNode; run: RunRecord; onClose: () => void }) {
   const cfg = NODE_CFG[node.type];
   return (
     <div style={{
-      width: 300, flexShrink: 0, background: "var(--surface)", borderLeft: "1px solid var(--border)",
+      width: 340, flexShrink: 0, background: "var(--surface)", borderLeft: "1px solid var(--border)",
       display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
       <div style={{
@@ -401,7 +653,8 @@ function NodeInspector({ node, onClose }: { node: DagNode; onClose: () => void }
         <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 2px" }}>×</button>
       </div>
       <div style={{ padding: "10px 14px", overflowY: "auto", flex: 1 }}>
-        <NodeInspectorBody node={node} />
+        <NodeInspectorBody node={node} run={run} />
+        <RlhfPanel runId={run.run_id} nodeId={node.id} />
       </div>
     </div>
   );
@@ -457,9 +710,7 @@ function RunList({ runs, selected, onSelect }: {
         Runs ({runs.length})
       </div>
       <div style={{ overflowY: "auto", flex: 1 }}>
-        {runs.length === 0 && (
-          <div className="empty-state">No runs yet.</div>
-        )}
+        {runs.length === 0 && <div className="empty-state">No runs yet.</div>}
         {runs.map((r) => {
           const score = r.wiggum_scores?.at(-1);
           const isSelected = selected?.run_id === r.run_id;
@@ -510,7 +761,6 @@ export function Explorer() {
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
 
-  // Prefer a run with tool_calls or wiggum_scores over an empty shell
   const defaultRun = runs.find((r) => (r.tool_calls?.length ?? 0) > 0 || (r.wiggum_scores?.length ?? 0) > 0) ?? runs[0] ?? null;
   const activeRun  = selectedRun ?? defaultRun;
 
@@ -547,6 +797,7 @@ export function Explorer() {
               {selectedNode && (
                 <NodeInspector
                   node={selectedNode}
+                  run={activeRun}
                   onClose={() => setSelectedNode(null)}
                 />
               )}

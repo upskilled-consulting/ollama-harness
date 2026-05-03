@@ -72,6 +72,7 @@ export interface RunRecord {
   synth_cot?:             string[];
   total_search_chars?:    number;
   final:                  "PASS" | "FAIL" | "ERROR" | null;
+  final_content?:         string | null;
   leverage?:              number;
   tac_hours?:             number;
 }
@@ -152,6 +153,15 @@ export interface PlanRecord {
   knowledge_gaps?: string[];
   search_queries?: string[];
   created_at?:     string;
+}
+
+export interface FeedbackRecord {
+  feedback_id: string;
+  run_id:      string;
+  node_id:     string;
+  rating:      1 | -1;
+  comment:     string;
+  created_at:  string;
 }
 
 export interface CurationEntry {
