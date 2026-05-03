@@ -91,6 +91,22 @@ def main() -> None:
         print(f"[start] available: {', '.join(SERVICES)}")
         sys.exit(1)
 
+    # Build dashboard dist so port 7860 always serves fresh UI
+    import os
+    dashboard_dir = os.path.join(os.path.dirname(__file__), "dashboard")
+    if os.path.isdir(dashboard_dir):
+        print("[start] building dashboard…", flush=True)
+        result = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=dashboard_dir,
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            print("[start] dashboard built ok", flush=True)
+        else:
+            print("[start] dashboard build FAILED — continuing anyway", flush=True)
+            print(result.stderr[-2000:], flush=True)
+
     # Free stale port holders before starting
     for name in chosen:
         if name in PORT_MAP:
