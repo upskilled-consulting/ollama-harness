@@ -100,24 +100,10 @@ body {
 .score-pill    { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 600; margin: 2px; background: rgba(96,165,250,.15); color: var(--blue); font-family: var(--font-mono); }
 
 /* ── Run detail expand ── */
-.run-detail {
-  padding: 14px 16px 16px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-}
-.detail-card       { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 12px; }
-.detail-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); margin-bottom: 8px; }
-.dim-row      { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
-.dim-label    { width: 90px; color: var(--dim); font-size: 10px; flex-shrink: 0; }
-.dim-bar-wrap { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
-.dim-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); }
-.dim-value    { width: 22px; text-align: right; color: var(--text); font-size: 10px; }
+.issues-scroll { max-height: 120px; overflow-y: auto; }
 .issue-item           { color: var(--dim); font-size: 11px; padding: 3px 0 3px 12px; border-bottom: 1px solid rgba(42,45,58,.6); position: relative; line-height: 1.45; word-break: break-word; }
 .issue-item::before   { content: "·"; position: absolute; left: 0; color: var(--warn); font-size: 14px; line-height: 1.1; }
 .issue-item:last-child { border-bottom: none; }
-.issues-scroll { max-height: 120px; overflow-y: auto; }
-.task-full     { color: var(--text); font-size: 11px; line-height: 1.5; white-space: normal; word-break: break-word; }
 
 /* ── Forms ── */
 .form-group   { margin-bottom: 14px; }
