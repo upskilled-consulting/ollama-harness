@@ -75,6 +75,8 @@ export interface RunRecord {
   final_content?:         string | null;
   leverage?:              number;
   tac_hours?:             number;
+  orchestrated?:          boolean;
+  subtask_count?:         number;
 }
 
 export interface Kpi {

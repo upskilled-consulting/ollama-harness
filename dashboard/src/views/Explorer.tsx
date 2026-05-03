@@ -86,7 +86,9 @@ function buildColumns(run: RunRecord): DagNode[][] {
       type:  "search" as NodeType,
       col: 0, row: 0, x: 0, y: 0,
       title: trunc(tc.query ?? tc.name, 22),
-      sub:   `${tc.name} · ${(tc.result_chars ?? 0).toLocaleString()}c`,
+      sub:   tc.result_chars != null
+        ? `${tc.name} · ${(tc.result_chars / 1000).toFixed(1)}k`
+        : tc.name,
       color: NODE_CFG.search.color,
       data:  tc,
     })));
@@ -484,19 +486,33 @@ function InspRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+const DIM_COLORS: Record<string, string> = {
+  relevance:    "#4f8ef7",
+  completeness: "#3fb950",
+  depth:        "#a78bfa",
+  specificity:  "#22d3ee",
+  structure:    "#fb923c",
+  grounded:     "#f0b429",
+};
+
 function DimBars({ dims }: { dims: WiggumDim }) {
   const keys = Object.keys(dims).filter((k) => typeof dims[k] === "number");
   return (
-    <div style={{ marginTop: 4 }}>
-      {keys.map((k) => (
-        <div key={k} className="dim-row">
-          <span className="dim-label">{k}</span>
-          <div className="dim-bar-wrap">
-            <div className="dim-bar-fill" style={{ width: `${Math.min(100, ((dims[k] ?? 0) / 10) * 100)}%` }} />
+    <div style={{ marginTop: 6 }}>
+      {keys.map((k) => {
+        const val   = dims[k] ?? 0;
+        const color = DIM_COLORS[k] ?? "#4f8ef7";
+        const pct   = Math.min(100, (val / 10) * 100);
+        return (
+          <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: "var(--dim)", minWidth: 84, textTransform: "capitalize" }}>{k}</span>
+            <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.07)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 3, transition: "width 0.3s" }} />
+            </div>
+            <span style={{ fontSize: 10, color, fontFamily: "var(--font-mono)", minWidth: 22, textAlign: "right" }}>{val}</span>
           </div>
-          <span className="dim-value">{dims[k]}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -516,6 +532,9 @@ function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
         <InspRow label="type"       value={r.task_type ?? "—"} />
         <InspRow label="duration"   value={r.run_duration_s ? `${r.run_duration_s.toFixed(1)}s` : "—"} />
         <InspRow label="tokens"     value={`${(r.input_tokens ?? 0).toLocaleString()} in · ${(r.output_tokens ?? 0).toLocaleString()} out`} />
+        {r.orchestrated && (
+          <InspRow label="orchestrated" value={r.subtask_count != null ? `${r.subtask_count} subtasks` : "yes"} />
+        )}
       </>
     );
   }
@@ -572,9 +591,15 @@ function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
         <AllStageToks tokensByStage={tbs} />
         {cot && cot.length > 0 && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Chain of thought</div>
-            <div style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word" }}>
-              {cot.slice(0, 3).join(" · ")}
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>
+              Chain of thought ({cot.length})
+            </div>
+            <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5 }}>
+              {cot.map((step, i) => (
+                <div key={i} style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word", padding: "5px 8px", background: "rgba(0,0,0,0.2)", borderRadius: 4, borderLeft: "2px solid rgba(129,140,248,0.4)" }}>
+                  {step}
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -605,6 +630,14 @@ function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
             <div style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.5, wordBreak: "break-word" }}>{entry.feedback}</div>
           </div>
         )}
+        {entry.thinking && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>Evaluator reasoning</div>
+            <div style={{ maxHeight: 200, overflowY: "auto", fontSize: 10, color: "var(--dim)", lineHeight: 1.6, wordBreak: "break-word", padding: "6px 8px", background: "rgba(0,0,0,0.2)", borderRadius: 4, borderLeft: "2px solid rgba(227,179,65,0.4)" }}>
+              {entry.thinking}
+            </div>
+          </div>
+        )}
       </>
     );
   }
@@ -625,6 +658,8 @@ function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
           } />
         )}
         <InspRow label="tokens" value={`${(r.input_tokens ?? 0).toLocaleString()} in · ${(r.output_tokens ?? 0).toLocaleString()} out`} />
+        {r.leverage   != null && <InspRow label="leverage" value={`${r.leverage.toFixed(1)}×`} />}
+        {r.tac_hours  != null && <InspRow label="tac hours" value={`${r.tac_hours.toFixed(2)} h`} />}
         <OutputPreview runId={r.run_id} />
       </>
     );
