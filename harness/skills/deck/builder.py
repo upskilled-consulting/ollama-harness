@@ -37,7 +37,7 @@ def _set_bg(slide, color: str) -> None:
     fill.fore_color.rgb = _rgb(color)
 
 
-def _blank_slide(prs: Presentation):
+def _blank_slide(prs):  # type: ignore[no-untyped-def]
     try:
         layout = prs.slide_layouts[6]
     except IndexError:
