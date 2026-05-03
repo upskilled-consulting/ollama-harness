@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections import Counter, defaultdict
 
 from fastapi import APIRouter, HTTPException
 
@@ -122,4 +123,52 @@ async def get_dashboard_data():
         "score_trend":  score_trend,
         "cost":         cost,
         "claude_stats": {},
+    }
+
+
+@router.get("/analytics")
+async def get_analytics():
+    runs = _load_runs(n=10_000)
+
+    # Daily aggregation
+    daily: dict[str, dict] = defaultdict(lambda: {
+        "date": "", "total": 0, "pass": 0, "fail": 0, "error": 0,
+        "input_tokens": 0, "output_tokens": 0, "scores": [],
+    })
+    for r in runs:
+        ts = r.get("timestamp", "")
+        date = ts[:10] if len(ts) >= 10 else "unknown"
+        d = daily[date]
+        d["date"] = date
+        d["total"] += 1
+        final = r.get("final")
+        if final == "PASS":        d["pass"]  += 1
+        elif final == "FAIL":      d["fail"]  += 1
+        elif final == "ERROR":     d["error"] += 1
+        d["input_tokens"]  += r.get("input_tokens", 0) or 0
+        d["output_tokens"] += r.get("output_tokens", 0) or 0
+        if r.get("wiggum_scores"):
+            d["scores"].append(r["wiggum_scores"][-1])
+
+    result = []
+    for d in daily.values():
+        scores = d.pop("scores")
+        d["mean_score"] = round(sum(scores) / len(scores), 2) if scores else None
+        result.append(d)
+    result.sort(key=lambda d: d["date"])
+
+    # Score distribution histogram (buckets 0–10)
+    all_scores = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
+    buckets = [0] * 11
+    for s in all_scores:
+        buckets[min(10, max(0, round(s)))] += 1
+    score_dist = [{"score": i, "count": buckets[i]} for i in range(11)]
+
+    # Task type breakdown
+    task_types = Counter(r.get("task_type", "unknown") for r in runs if r.get("task_type"))
+
+    return {
+        "daily":              result,
+        "score_distribution": score_dist,
+        "task_types":         [{"type": k, "count": v} for k, v in task_types.most_common()],
     }

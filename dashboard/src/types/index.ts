@@ -174,3 +174,27 @@ export interface CurationEntry {
   tokens_in?: number;
   tokens_out?: number;
 }
+
+export interface AnalyticsDay {
+  date:          string;
+  total:         number;
+  pass:          number;
+  fail:          number;
+  error:         number;
+  mean_score:    number | null;
+  input_tokens:  number;
+  output_tokens: number;
+}
+
+export interface AnalyticsData {
+  daily:              AnalyticsDay[];
+  score_distribution: { score: number; count: number }[];
+  task_types:         { type: string; count: number }[];
+}
+
+export interface ArtifactContent {
+  content:   string;
+  truncated: boolean;
+  bytes:     number;
+  path:      string;
+}

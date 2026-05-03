@@ -1,4 +1,4 @@
-import type { Artifact, CurationEntry, DashboardData, FeedbackRecord, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -33,8 +33,11 @@ export const api = {
   feedback:        (run_id: string) => get<FeedbackRecord[]>(`/feedback/${run_id}`),
   submit_feedback: (body: { run_id: string; node_id: string; rating: number; comment: string }) =>
     post<FeedbackRecord>("/feedback", body),
-  run_content: (run_id: string) =>
+  run_content:      (run_id: string) =>
     get<{ content: string; path: string; bytes: number }>(`/runs/${run_id}/content`),
+  analytics:        () => get<AnalyticsData>("/analytics"),
+  artifact_content: (artifact_id: string) =>
+    get<ArtifactContent>(`/artifacts/${artifact_id}/content`),
 };
 
 export function createRunsSocket(onMessage: (run: RunRecord) => void): WebSocket {

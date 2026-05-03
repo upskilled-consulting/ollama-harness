@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useArtifacts } from "@/hooks/useRuns";
+import { useArtifacts, useArtifactContent } from "@/hooks/useRuns";
+import { MdView } from "@/components/MdView";
 import type { Artifact } from "@/types";
 
 function basename(path: string): string {
@@ -32,16 +33,58 @@ const EXT_COLORS: Record<string, string> = {
   html: "#22d3ee",
 };
 
+const TEXT_EXTS = new Set(["md", "txt", "py", "json", "csv", "html", "js", "ts", "yaml", "toml"]);
+
+function ArtifactPreview({ artifactId, fileExt }: { artifactId: string; fileExt: string }) {
+  const { data, isLoading, error } = useArtifactContent(artifactId);
+
+  if (isLoading) return (
+    <div style={{ padding: "12px 16px", color: "var(--dim)", fontSize: 12 }}>Loading preview…</div>
+  );
+  if (error) return (
+    <div style={{ padding: "12px 16px", color: "var(--fail)", fontSize: 12 }}>File not found on disk.</div>
+  );
+  if (!data) return null;
+
+  return (
+    <div style={{ padding: "8px 16px 16px" }}>
+      <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 8, fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
+        {data.path}
+        {data.truncated && (
+          <span style={{ marginLeft: 8, color: "var(--warn)" }}>
+            (preview truncated — {size(data.bytes)} total)
+          </span>
+        )}
+      </div>
+      <div style={{
+        background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
+        padding: "12px 14px", maxHeight: 420, overflowY: "auto",
+        fontSize: 12, lineHeight: 1.6,
+      }}>
+        {fileExt === "md" ? (
+          <MdView content={data.content} />
+        ) : (
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono)", color: "var(--text)" }}>
+            {data.content}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ArtifactRow({ a }: { a: Artifact }) {
   const [expanded, setExpanded] = useState(false);
-  const file = basename(a.path);
-  const color = EXT_COLORS[ext(a.path)] ?? "var(--dim)";
+  const file     = basename(a.path);
+  const fext     = ext(a.path);
+  const color    = EXT_COLORS[fext] ?? "var(--dim)";
+  const canPreview = TEXT_EXTS.has(fext);
 
   return (
     <>
       <tr
-        style={{ cursor: "pointer" }}
-        onClick={() => setExpanded((x) => !x)}
+        style={{ cursor: canPreview ? "pointer" : "default" }}
+        onClick={() => canPreview && setExpanded((x) => !x)}
       >
         <td>
           <span style={{ color, fontWeight: 600, fontFamily: "var(--font-mono)", fontSize: 12 }}>
@@ -56,10 +99,8 @@ function ArtifactRow({ a }: { a: Artifact }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} style={{ padding: "8px 16px 16px", background: "var(--surface-2, #12151f)" }}>
-            <div style={{ fontSize: 11, color: "var(--dim)", wordBreak: "break-all", fontFamily: "var(--font-mono)" }}>
-              {a.path}
-            </div>
+          <td colSpan={6} style={{ padding: 0, background: "var(--surface-2, #12151f)" }}>
+            <ArtifactPreview artifactId={a.artifact_id} fileExt={fext} />
           </td>
         </tr>
       )}
@@ -74,10 +115,9 @@ export function Artifacts() {
   if (isLoading) return <div className="loading">Loading…</div>;
   if (error)     return <div className="page-error">Could not load artifacts.</div>;
 
-  const artifacts = (data ?? []).filter((a) => {
-    if (!filter) return true;
-    return basename(a.path).toLowerCase().includes(filter.toLowerCase());
-  });
+  const artifacts = (data ?? []).filter((a) =>
+    !filter || basename(a.path).toLowerCase().includes(filter.toLowerCase())
+  );
 
   const totalBytes = (data ?? []).reduce((acc, a) => acc + (a.bytes ?? 0), 0);
   const byType: Record<string, number> = {};
@@ -87,7 +127,7 @@ export function Artifacts() {
     <div>
       <div className="view-header">
         <h1>Artifacts</h1>
-        <p>{(data ?? []).length} output files · {(totalBytes / 1024).toFixed(0)} KB total</p>
+        <p>{(data ?? []).length} output files · {(totalBytes / 1024).toFixed(0)} KB total · click a text file to preview</p>
       </div>
 
       <div className="kpi-row" style={{ marginBottom: 24 }}>

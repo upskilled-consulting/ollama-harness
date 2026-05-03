@@ -23,6 +23,19 @@ export function useCuration() {
   return useQuery({ queryKey: ["curation"], queryFn: api.curation, staleTime: 60_000 });
 }
 
+export function useAnalytics() {
+  return useQuery({ queryKey: ["analytics"], queryFn: api.analytics, staleTime: 30_000 });
+}
+
+export function useArtifactContent(artifactId: string | null) {
+  return useQuery({
+    queryKey: ["artifact_content", artifactId],
+    queryFn:  () => api.artifact_content(artifactId!),
+    enabled:  !!artifactId,
+    staleTime: 60_000,
+  });
+}
+
 export function useDashboardData() {
   return useQuery({ queryKey: ["data"], queryFn: api.data, refetchInterval: 10_000 });
 }
