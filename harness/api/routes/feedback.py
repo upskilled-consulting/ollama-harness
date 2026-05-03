@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ async def post_feedback(body: FeedbackBody):
         "node_id":     body.node_id,
         "rating":      body.rating,
         "comment":     body.comment,
-        "created_at":  datetime.now(timezone.utc).isoformat(),
+        "created_at":  datetime.now(UTC).isoformat(),
     }
     FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
