@@ -46,6 +46,8 @@ dependencies = [
     "youtube-transcript-api>=0.6",
     # Semantic Scholar
     "requests>=2.32",
+    # Deck generation
+    "python-pptx>=1.0",
     # CLI
     "pyfiglet>=1.0",
     "rich>=13.0",
@@ -88,6 +90,9 @@ harness  = "harness.api.main:serve"
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["harness*"]
+
+[tool.setuptools.package-data]
+"harness.skills" = ["*.j2", "templates/*.j2"]
 
 [build-system]
 requires      = ["setuptools>=68"]

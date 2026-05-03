@@ -49,6 +49,7 @@ uv pip install -e .   # register the `oh` entry point
 |---|---|---|
 | [Ollama](https://ollama.com) | LLM inference (default) | `ollama serve` must be running |
 | [llama.cpp server](https://github.com/ggerganov/llama.cpp) | Alternative inference backend | Configure via `HARNESS_ENDPOINTS` |
+| [Node.js ≥ 18](https://nodejs.org) | Dashboard UI | `start.py` builds it automatically; manual: `cd dashboard && npm install && npm run build` |
 | [Playwright](https://playwright.dev) | Browser skills | `playwright install chromium` |
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | Audio transcription | Build binary, place at `whisper.cpp/` |
 
