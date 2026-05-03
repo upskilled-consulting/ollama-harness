@@ -97,9 +97,10 @@ def main() -> None:
     if os.path.isdir(dashboard_dir):
         print("[start] building dashboard…", flush=True)
         result = subprocess.run(
-            ["npm", "run", "build"],
+            "npm run build",
             cwd=dashboard_dir,
             capture_output=True, text=True,
+            shell=True,
         )
         if result.returncode == 0:
             print("[start] dashboard built ok", flush=True)
