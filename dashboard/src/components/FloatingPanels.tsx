@@ -12,14 +12,28 @@ type HistoryEntry =
   | { kind: "output"; text: string; runId?: string; status?: string }
   | { kind: "error";  text: string };
 
-const HARNESS_ROOT = "~/Desktop/harness-refactor";
+const OH_BANNER =
+`      ___           ___
+     /\\  \\         /\\__\\
+    /::\\  \\       /:/  /
+   /:/\\:\\  \\     /:/__/
+  /:/  \\:\\  \\   /::\\  \\ ___
+ /:/__/ \\:\\__\\ /:/\\:\\  /\\__\\
+ \\:\\  \\ /:/  / \\/__\\:\\/:/  /
+  \\:\\  /:/  /       \\::/  /
+   \\:\\/:/  /        /:/  /
+    \\::/  /        /:/  /
+     \\/__/         \\/__/    `;
+
+const OH_WELCOME: HistoryEntry[] = [
+  { kind: "output", text: OH_BANNER },
+  { kind: "output", text: "ollama-harness agent CLI  —  type a task or /skill" },
+  { kind: "output", text: 'type "help" for available skills' },
+];
 
 function TerminalPanel({ onClose }: { onClose: () => void }) {
-  const [cwd,     setCwd]     = useState(HARNESS_ROOT);
   const [input,   setInput]   = useState("");
-  const [history, setHistory] = useState<HistoryEntry[]>([
-    { kind: "output", text: "Harness shell — enter tasks or /commands" },
-  ]);
+  const [history, setHistory] = useState<HistoryEntry[]>(OH_WELCOME);
   const [histIdx, setHistIdx] = useState(-1);
   const inputRef  = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -64,35 +78,31 @@ function TerminalPanel({ onClose }: { onClose: () => void }) {
     setInput("");
     setHistIdx(-1);
 
-    // cd
-    const cdMatch = cmd.match(/^cd\s+(.*)/);
-    if (cdMatch) {
-      const target = cdMatch[1].trim();
-      if (target === "~" || target === "") {
-        setCwd("~");
-      } else if (target === "..") {
-        setCwd((prev) => prev.split("/").slice(0, -1).join("/") || "~");
-      } else if (target.startsWith("/") || target.startsWith("~")) {
-        setCwd(target);
-      } else {
-        setCwd((prev) => `${prev}/${target}`);
-      }
-      push({ kind: "output", text: "" });
-      return;
-    }
-
     // clear
     if (cmd === "clear" || cmd === "cls") {
-      setHistory([]);
+      setHistory(OH_WELCOME);
       return;
     }
 
     // help
     if (cmd === "help") {
       push({ kind: "output", text: [
-        "Built-in: cd <path>  clear  help",
-        "Harness:  /email  /lit-review  /recall  /introspect  /deck  …",
-        "Anything else is submitted as a harness task.",
+        "SKILLS",
+        "  /lit-review <topic>     fetch papers, annotate, synthesize",
+        "  /browser <url> <goal>   LLM-guided web navigation",
+        "  /design <url>           extract design system tokens",
+        "  /deck --design <url> --content <src>  generate .pptx",
+        "  /email <contact> <goal> draft and send via Gmail",
+        "  /recall <topic>         surface observations from memory",
+        "  /introspect             generate live capabilities doc",
+        "  /orientation            summarise project state",
+        "  /debug [filter]         diagnose recent FAIL/ERROR runs",
+        "",
+        "BUILT-INS",
+        "  clear   reset terminal",
+        "  help    show this message",
+        "",
+        "Anything else is submitted as a free-form task.",
       ].join("\n") });
       return;
     }
@@ -128,7 +138,7 @@ function TerminalPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const prompt = `${cwd} $`;
+  const prompt = "oh >";
 
   return (
     <div style={{
@@ -144,7 +154,7 @@ function TerminalPanel({ onClose }: { onClose: () => void }) {
         background: "#0d0f18",
       }}>
         <span style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)", flex: 1 }}>
-          harness — {cwd}
+          oh — ollama-harness
         </span>
         <button onClick={() => setHistory([])} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", padding: 2 }}>
           <RotateCcw size={13} />
