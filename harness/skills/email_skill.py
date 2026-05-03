@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat
+from harness.schema import make_id
 
 _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 
@@ -140,6 +141,7 @@ def _log_draft_trace(
     """Append one runs.jsonl entry per email draft so each gets its own dashboard row."""
     from harness.logger import LOG_PATH
     record = {
+        "run_id":         make_id(),
         "timestamp":      datetime.now(UTC).isoformat(),
         "task":           f"Email draft: {name} <{to_email}>",
         "producer_model": producer_model,

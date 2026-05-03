@@ -1319,7 +1319,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
         print(f"[agent] model={producer_model}  mode={mode}")
 
         # Standalone skills that produce their own output don't require a .md path
-        _path_optional = {"email", "github", "review", "lit-review", "recall", "queue", "sync-wiki", "orientation", "introspect", "playwright", "sitemap", "crawl", "transcribe", "re-orient", "suggest", "debug", "troubleshoot", "design", "build-page", "site"}
+        _path_optional = {"email", "github", "review", "lit-review", "recall", "queue", "sync-wiki", "orientation", "introspect", "playwright", "sitemap", "crawl", "transcribe", "re-orient", "suggest", "debug", "troubleshoot", "design", "build-page", "site", "deck"}
         # Add plugin commands that declare path_optional=true
         if _pl:
             for _pk, _pc in _pl.get_commands().items():
@@ -1358,7 +1358,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
 
         # URL fetch — inject content of any http(s):// URLs referenced in the task
         # Skills that drive the browser themselves — don't pre-fetch the target URL as context
-        _url_fetch_skip = {"playwright", "sitemap", "crawl", "design", "build-page", "site"}
+        _url_fetch_skip = {"playwright", "sitemap", "crawl", "design", "build-page", "site", "deck"}
         task_urls = detect_task_urls(task) if not (set(explicit_skills) & _url_fetch_skip) else []
         has_url_content = False
         if task_urls:
@@ -1674,18 +1674,46 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
         def _handle_introspect():
             print("\n[skill:introspect] standalone mode — answering from memory + context files...")
             trace.data["task_type"] = "introspect"
-            from harness.skills import load_context_files
+            from harness.skills import REGISTRY, load_context_files
+
+            # Build live capabilities document from the skill registry and current config
+            _hook_labels = {
+                "standalone":     "Standalone (slash command)",
+                "pre_research":   "Pre-research hook",
+                "pre_synthesis":  "Pre-synthesis hook",
+                "post_synthesis": "Post-synthesis hook",
+                "post_wiggum":    "Post-eval hook",
+                "modifier":       "Modifier flag",
+            }
+            _sections: dict[str, list[str]] = {}
+            for name, entry in REGISTRY.items():
+                label = _hook_labels.get(entry.get("hook", ""), entry.get("hook", ""))
+                _sections.setdefault(label, []).append(f"- **/{name}** — {entry['description']}")
+            caps_lines = [
+                "# Agent Capabilities\n",
+                f"## Model configuration\n- Producer: {producer_model}\n- Evaluator: {_ann_eval_model}\n",
+            ]
+            for label, items in _sections.items():
+                caps_lines.append(f"## {label}\n" + "\n".join(items))
+            capabilities_doc = "\n\n".join(caps_lines)
+            print(f"  [introspect] built live capabilities doc ({len(capabilities_doc)} chars, {len(REGISTRY)} skills)")
+
+            # Wiki/context files supplement the live doc (human-authored notes, examples, etc.)
             ctx_files = load_context_files()
-            if not ctx_files:
-                print("  [introspect] no context files found in context/ — answering from memory only")
+            if ctx_files and len(ctx_files.strip()) > 4:
+                print(f"  [introspect] loaded {len(ctx_files)} chars from wiki/context")
             else:
-                print(f"  [introspect] loaded {len(ctx_files)} chars from context/")
-            mem_ctx = memory.get_context(task)
+                ctx_files = ""
+
+            # Use a fixed introspection query so memory search returns agent-knowledge
+            # observations rather than research papers that happen to match the task string.
+            mem_ctx = memory.get_context("agent capabilities skills configuration models")
             if mem_ctx:
                 print(f"  [introspect] {mem_ctx.count('**[')} memory observation(s) retrieved")
             else:
                 print("  [introspect] no relevant memory observations")
-            combined = "\n\n".join(filter(None, [ctx_files, mem_ctx]))
+
+            combined = "\n\n".join(filter(None, [capabilities_doc, ctx_files, mem_ctx]))
             # Custom prompt — SYNTH_INSTRUCTION is for research docs and causes hallucination here.
             # num_predict=2000 is enough for any self-description and keeps vLLM context headroom.
             prompt = (
@@ -1709,7 +1737,14 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                 trace.finish("ERROR")
                 return
             print("\n" + content + "\n")
-            write_output(content, path, trace)
+            _out_path = path
+            if not _out_path:
+                from datetime import datetime as _dt
+                _ts  = _dt.now().strftime("%Y%m%dT%H%M%S")
+                _out = _ROOT / "data" / "output"
+                _out.mkdir(parents=True, exist_ok=True)
+                _out_path = str(_out / f"introspect-{_ts}.md")
+            write_output(content, _out_path, trace)
             trace.finish("PASS")
             _store_memory(memory, task, "introspect", trace.data, content)
 
@@ -2980,6 +3015,89 @@ Rules:
                 trace.finish("PASS")
                 _store_memory(memory, task, _skill_name, trace.data, html[:8000])
 
+        def _handle_deck():
+            import re as _re
+            from datetime import datetime as _dt
+            from pathlib import Path as _Path
+
+            from harness.skills.deck import (
+                DesignTheme, build_deck, load_content,
+                parse_deck_task, parse_design_tokens,
+            )
+            from harness.skills.site_skill import extract_design_system
+
+            print("\n[skill:deck] starting...")
+            trace.data["task_type"] = "deck"
+
+            try:
+                parsed = parse_deck_task(task)
+            except ValueError as _e:
+                print(f"[error] {_e}")
+                trace.finish("ERROR")
+                return
+
+            _design_src  = parsed["design_src"]
+            _content_src = parsed["content_src"]
+            _out         = parsed["output_path"]
+            _title       = parsed["title"]
+
+            if not _out:
+                _slug = _re.sub(r"[^\w]+", "-", (_title or "deck").lower())[:30]
+                _out  = str(_ROOT / "data" / "output" / f"deck-{_slug}-{_dt.now().strftime('%Y%m%dT%H%M%S')}.pptx")
+
+            # ── Step 1: design system ────────────────────────────────────────
+            design_md = ""
+            if _design_src:
+                if _design_src.startswith("http"):
+                    from harness.vision import VISION_MODEL as _VM
+                    print(f"  [deck] extracting design system from {_design_src}...")
+                    design_md = extract_design_system(
+                        url      = _design_src,
+                        model    = producer_model,
+                        vision_model = _VM,
+                        headed   = False,
+                        run_id   = trace.data.get("run_id", ""),
+                    )
+                else:
+                    _ds_file = _Path(_design_src).expanduser()
+                    if not _ds_file.exists():
+                        print(f"[error] design file not found: {_ds_file}")
+                        trace.finish("ERROR")
+                        return
+                    design_md = _ds_file.read_text(encoding="utf-8")
+
+            theme = parse_design_tokens(design_md) if design_md else DesignTheme()
+            print(f"  [deck] theme: bg={theme.bg_primary}  accent={theme.accent}  font={theme.heading_font}")
+
+            # ── Step 2: content ──────────────────────────────────────────────
+            if not _content_src:
+                print("[error] /deck requires --content <url|folder|pdf>")
+                trace.finish("ERROR")
+                return
+
+            try:
+                content_pages = load_content(_content_src)
+            except (ValueError, RuntimeError) as _e:
+                print(f"[error] {_e}")
+                trace.finish("ERROR")
+                return
+
+            # ── Step 3: build deck ───────────────────────────────────────────
+            out_path = build_deck(
+                theme       = theme,
+                content     = content_pages,
+                output_path = _out,
+                deck_title  = _title,
+            )
+
+            trace.data["output_path"] = out_path
+            trace.finish("PASS")
+            _store_memory(
+                memory, task, "deck", trace.data,
+                f"Deck: {_title or 'untitled'} | {len(content_pages)} source(s) | design: {_design_src or 'default'} | out: {out_path}",
+            )
+            print(f"\n  [deck] → {out_path}")
+
         _STANDALONE = {
             "annotate":     _handle_annotate,
             "email":        _handle_email,
@@ -3004,6 +3122,7 @@ Rules:
             "design":       _handle_site,
             "build-page":   _handle_site,
             "site":         _handle_site,
+            "deck":         _handle_deck,
         }
 
         for _skill in explicit_skills:

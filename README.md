@@ -80,6 +80,15 @@ oh /build-page design.md from content/ save to index.html
 
 # Full design-extract + page-build in one command
 oh /site https://example.com from content/ save to index.html
+
+# Generate a themed .pptx deck from a PDF paper
+oh /deck --design https://example.com --content paper.pdf --out slides.pptx
+
+# Deck from a URL content source with an existing design system
+oh /deck --design brand.md --content https://example.com/article --out deck.pptx
+
+# Deck from a folder of .md files styled to match a live site
+oh /deck --design https://example.com --content ~/notes/ --title "Q2 Review" --out deck.pptx
 ```
 
 ---
@@ -97,8 +106,10 @@ oh /site https://example.com from content/ save to index.html
 | `/design <url>` | Extract design system tokens from a live URL |
 | `/build-page <design.md> from <dir/>` | Generate themed HTML page from .md content files |
 | `/site <url> from <dir/>` | Design extraction + page build in one command |
+| `/deck --design <url\|md> --content <url\|dir\|pdf>` | Generate a themed .pptx slide deck |
 | `/transcribe <url\|path>` | Transcribe YouTube video or local audio |
 | `/recall <topic>` | Surface relevant observations from memory |
+| `/introspect` | Generate a live capabilities doc from the skill registry |
 | `/orientation` | Summarise project state + recent activity |
 | `/re-orient` | Rebuild orientation cache from GitHub state |
 | `/suggest` | Recommend next research tasks |
@@ -150,6 +161,30 @@ SENDER_EMAIL=you@example.com
 
 ---
 
+## Deck generation
+
+`/deck` extracts a design system from any URL (or reads an existing `.md` design file), loads content from a URL, folder of `.md` files, or PDF (local or remote), and renders a fully themed `.pptx` using python-pptx.
+
+```bash
+oh /deck --design https://stripe.com --content research.pdf --out deck.pptx
+oh /deck --design brand.md --content ~/notes/ --title "Q2 Review" --out deck.pptx
+oh /deck --design https://notion.so --content https://example.com/paper.pdf
+```
+
+Content sources are auto-detected:
+
+| Source | Handling |
+|---|---|
+| `https://...` (web page) | Playwright scrape → structured markdown |
+| `https://....pdf` | MarkItDown converts directly from URL |
+| `/path/to/file.pdf` | MarkItDown converts local PDF |
+| `/path/to/folder/` | All `.md` / `.txt` files in directory |
+| `/path/to/file.md` | Single markdown file |
+
+Slide types are inferred from markdown structure: `#` → title slide, `##` → section divider, bullet lists → content slides (auto-split at 6 bullets), `> blockquote` → callout, markdown tables → table slides.
+
+---
+
 ## Page generation
 
 `/build-page` uses a three-pass decomposed strategy that handles any number of content files without context overflow:
@@ -159,6 +194,28 @@ SENDER_EMAIL=you@example.com
 3. **Sections** — one LLM call per file, role-aware card HTML injected into the shell
 
 Result: a complete, themed, clustered page regardless of how many files are in the content directory.
+
+---
+
+## Dashboard
+
+A React/TypeScript UI (Vite + Tanstack Query) provides live visibility into every run.
+
+| View | Description |
+|---|---|
+| **Dashboard** | KPI cards (total runs, pass rate, avg score, token spend) + recent activity feed |
+| **Runs** | Master-detail split: compact run list on the left, full DAG inspector on the right. Click any run to see the pipeline graph, per-stage token counts, output preview, Wiggum scores with dimension bars, evaluator feedback, and an RLHF thumbs-up/down panel per node. |
+| **Submit** | Fire a task directly from the browser; result appears live in Runs. |
+| **Analytics** | Time-series charts for run volume, pass rate, and token usage. |
+| **Sessions** | Group runs by session for multi-turn task tracking. |
+| **Artifacts** | Browse output files written by runs. |
+| **Fine-tune** | Training metrics (loss, accuracy curves) and RL dataset browser — preference pairs, reward feedback, GRPO rollouts, and DPO examples with Wiggum evaluator annotations. |
+| **MCP** | Inspect registered MCP tool servers. |
+
+Two floating action buttons in the lower-right corner provide quick access without cluttering the sidebar:
+
+- **Terminal** — a harness shell with `cd` navigation, command history (↑/↓), `clear`/`help`, and live run-status badges for any submitted task.
+- **Voice** — the voice input panel for hands-free task submission.
 
 ---
 

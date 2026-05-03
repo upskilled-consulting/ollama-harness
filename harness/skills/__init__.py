@@ -363,6 +363,18 @@ REGISTRY: dict[str, dict] = {
         "auto":   None,
     },
 
+    "deck": {
+        "description": (
+            "Generate a themed .pptx slide deck. "
+            "Extracts a design system from a URL or .md file, loads content from a URL, "
+            "folder of .md files, or PDF (local or URL), and renders slides with python-pptx. "
+            "Invocation: /deck --design <url|design.md> --content <url|dir|pdf> [--out <file.pptx>] [--title \"Title\"]"
+        ),
+        "hook":   "standalone",
+        "prompt": None,
+        "auto":   None,
+    },
+
     "scratchpad": {
         "description": (
             "Pre-synthesis: run Python code to compute exact values before writing. "

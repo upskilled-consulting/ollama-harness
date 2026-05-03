@@ -36,6 +36,8 @@ def _load_runs(n: int = _MAX_RECENT, *, full: bool = False) -> list[dict]:
             except json.JSONDecodeError:
                 continue
             rid = r.get("run_id") or r.get("timestamp", "") + r.get("task", "")[:30]
+            if not r.get("run_id"):
+                r["run_id"] = rid
             if rid and rid not in seen:
                 seen.add(rid)
                 if not full:

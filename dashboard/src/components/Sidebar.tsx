@@ -1,7 +1,7 @@
-import { LayoutDashboard, Table2, SendHorizontal, BarChart2, Mic, Cpu, Workflow, CalendarDays, FolderOpen } from "lucide-react";
+import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu } from "lucide-react";
 import { clsx } from "clsx";
 
-export type View = "home" | "runs" | "submit" | "analytics" | "explorer" | "sessions" | "artifacts" | "voice" | "mcp";
+export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp";
 
 interface NavItem {
   id:    View;
@@ -14,15 +14,13 @@ const TOP_ITEMS: NavItem[] = [
   { id: "runs",      icon: <Table2 size={18} />,          label: "Runs"       },
   { id: "submit",    icon: <SendHorizontal size={18} />,  label: "Submit"     },
   { id: "analytics", icon: <BarChart2 size={18} />,       label: "Analytics"  },
-  { id: "explorer",  icon: <Workflow size={18} />,         label: "Explorer"   },
   { id: "sessions",  icon: <CalendarDays size={18} />,    label: "Sessions"   },
   { id: "artifacts", icon: <FolderOpen size={18} />,      label: "Artifacts"  },
+  { id: "finetune",  icon: <Microscope size={18} />,      label: "Fine-tune"  },
+  { id: "mcp",       icon: <Cpu size={18} />,             label: "MCP"        },
 ];
 
-const BOTTOM_ITEMS: NavItem[] = [
-  { id: "voice", icon: <Mic size={18} />, label: "Voice" },
-  { id: "mcp",   icon: <Cpu size={18} />, label: "MCP"   },
-];
+const BOTTOM_ITEMS: NavItem[] = [];
 
 interface Props {
   active:   View;

@@ -8,9 +8,10 @@ import { Submit }    from "@/views/Submit";
 import { Analytics } from "@/views/Analytics";
 import { Voice }     from "@/views/Voice";
 import { Mcp }       from "@/views/Mcp";
-import { Explorer }  from "@/views/Explorer";
 import { Sessions }  from "@/views/Sessions";
-import { Artifacts } from "@/views/Artifacts";
+import { Artifacts }       from "@/views/Artifacts";
+import { Finetune }        from "@/views/Finetune";
+import { FloatingPanels }  from "@/components/FloatingPanels";
 
 const qc = new QueryClient();
 
@@ -19,9 +20,9 @@ const VIEWS: Record<View, React.ReactNode> = {
   runs:      <Runs />,
   submit:    <Submit />,
   analytics: <Analytics />,
-  explorer:  <Explorer />,
   sessions:  <Sessions />,
   artifacts: <Artifacts />,
+  finetune:  <Finetune />,
   voice:     <Voice />,
   mcp:       <Mcp />,
 };
@@ -34,6 +35,7 @@ function App() {
     <div id="layout">
       <Sidebar active={view} onChange={setView} />
       <div id="content">{VIEWS[view]}</div>
+      <FloatingPanels />
     </div>
   );
 }
