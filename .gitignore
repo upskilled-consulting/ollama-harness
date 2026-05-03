@@ -70,3 +70,7 @@ _port_scripts.py
 # OS
 .DS_Store
 Thumbs.db
+
+# Server log redirects
+api_out.txt
+api_err.txt
