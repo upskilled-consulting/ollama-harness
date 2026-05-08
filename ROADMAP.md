@@ -60,6 +60,7 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 | `/debug [filter]` | ✓ FAIL/ERROR run diagnosis |
 | `/sync-wiki` | ✓ deterministic wiki sync |
 | `/panel` | ✓ 3-persona wiggum review panel |
+| `/grill-me [domain]` | → 0.3.5 saturation-driven user interview |
 
 ---
 
@@ -165,6 +166,66 @@ with ThreadPoolExecutor(max_workers=parallel) as pool:
     for fut in as_completed(futures):
         results[futures[fut]] = fut.result()
 ```
+
+### `/grill-me` — Saturation-driven user interview
+
+Mirrors `gather_research()` exactly — same loop shape, same novelty gate, same oversearch
+analog — but the information source is the user instead of the web. Each round the agent
+generates one targeted question, reads the user's answer as its "search result", compresses
+it into `knowledge_state`, and evaluates novelty. When answers stop adding new information,
+the loop terminates and the knowledge state is synthesized into a structured brief.
+
+**Core loop:**
+```
+for round_num in range(1, MAX_INTERVIEW_ROUNDS + 1):
+    question = plan_question(goal, knowledge_state, round_num)
+    answer   = ask_user(question)           # input() in terminal; SSE card in dashboard
+    novelty  = assess_novelty([answer], knowledge_state)
+    if round_num > MIN_INTERVIEW_ROUNDS and novelty < NOVELTY_THRESHOLD:
+        break
+    knowledge_state = compress_knowledge(knowledge_state, [answer])
+```
+
+**New helper — `plan_question(goal, knowledge_state, round_num)`:**
+Analogous to `plan_query()`. Generates one targeted follow-up question based on what
+the agent already knows and what gaps remain. Prompt instructs the model to cover
+`who / what / why / constraints / success criteria` in the early rounds, then
+drill into specifics once context is established.
+
+**User-fatigue detector (oversearch analog):**
+If 2+ consecutive rounds produce answers below a word-count floor (e.g., < 15 words)
+the agent infers the user has nothing more to add and terminates early — identical logic
+to the domain-diversity termination in `gather_research()`.
+
+**Parameters:**
+| | |
+|---|---|
+| `MIN_INTERVIEW_ROUNDS` | 3 — covers who/what/why before novelty gating activates |
+| `MAX_INTERVIEW_ROUNDS` | 8 — hard cap; respects user time |
+| `--thorough` | disables novelty gate, runs all rounds (analogous to `force_deep`) |
+| `--for <skill>` | tailors question framing to target output: `deck`, `research`, `email` |
+
+**Output:** structured knowledge brief (markdown):
+```
+## Context
+## Goals
+## Constraints & non-goals
+## Open questions (unresolved after interview)
+## Suggested next steps
+```
+
+The brief is written to `data/briefs/<slug>.md` and printed to stdout. Can pipe directly:
+`/grill-me --for deck` → brief → `/deck --content brief.md`.
+
+**Dashboard path:**
+Each question is pushed as an SSE event (`type: "grill_question"`). The Submit view renders
+a question card with a text input; submitting fires `POST /api/runs/{run_id}/grill-answer`
+which unblocks the agent loop for the next round. Progress bar shows round N of MAX.
+
+**Integration:**
+Any skill can call `grill_me_preflight(task, trace)` to run a short interview before
+executing — e.g., `/deck` runs a 3-round preflight when the task string is short/ambiguous,
+ensuring the slide structure reflects actual intent rather than the agent's best guess.
 
 ### Pattern 3 — Agent pool for orchestrator subtasks
 `orchestrator.py` spawns subtasks via `ThreadPoolExecutor` already, but subtasks are
