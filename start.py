@@ -36,18 +36,25 @@ def _taskkill(pid: int) -> None:
     subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
 
 
+def _port_listening(port: int) -> bool:
+    r = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+    return any(f":{port} " in l and "LISTENING" in l for l in r.stdout.splitlines())
+
+
 def _kill_port(port: int) -> None:
-    """Kill any process currently holding a TCP port."""
-    r = subprocess.run(
-        ["netstat", "-ano"],
-        capture_output=True, text=True,
-    )
+    """Kill any process holding a TCP port, then wait until the socket is free."""
+    r = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
     for line in r.stdout.splitlines():
         if f":{port} " in line and "LISTENING" in line:
             parts = line.split()
             pid = int(parts[-1])
             if pid > 4:  # skip System (PID 4)
                 _taskkill(pid)
+    # Poll until the OS releases the port (up to 8 s)
+    for _ in range(16):
+        if not _port_listening(port):
+            return
+        time.sleep(0.5)
 
 
 def _stream(name: str, proc: subprocess.Popen) -> None:
@@ -108,12 +115,10 @@ def main() -> None:
             print("[start] dashboard build FAILED — continuing anyway", flush=True)
             print(result.stderr[-2000:], flush=True)
 
-    # Free stale port holders before starting
+    # Free stale port holders before starting (each _kill_port waits until free)
     for name in chosen:
         if name in PORT_MAP:
             _kill_port(PORT_MAP[name])
-    if any(name in PORT_MAP for name in chosen):
-        time.sleep(1)  # let OS release ports
 
     for name in chosen:
         _start(name, SERVICES[name])
