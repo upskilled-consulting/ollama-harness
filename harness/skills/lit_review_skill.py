@@ -111,8 +111,7 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
         print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
     after_dt  = _parse_date(after)  if after  else None
     before_dt = _parse_date(before) if before else None
-    _ctx = _trace.span("fetch", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()
-    with _ctx:
+    with (_trace.span("fetch", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
         rows = fetch(
             query=arxiv_q,
             max_results=max_fetch,
@@ -126,7 +125,7 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
     # If keyword extraction found nothing, retry with "all" field
     if not rows and field != "all":
         print("  [lit-review] abs search returned 0 — retrying with field=all")
-        with _ctx:
+        with (_trace.span("fetch_retry", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
             rows = fetch(query=arxiv_q, max_results=max_fetch, batch_size=100,
                          field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=3.0)
     print(f"[lit-review] fetched {len(rows)} papers")

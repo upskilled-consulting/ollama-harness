@@ -1258,9 +1258,11 @@ _LIT_REVIEW_NL_RE = re.compile(
 )
 
 
-def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluator_model: str = None):
+def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None):
     global _KEEP_ALIVE
     from harness.wiggum import EVALUATOR_MODEL, ANNOTATE_EVALUATOR_MODEL
+    if producer_model is None:
+        producer_model = MODEL
 
     # Strip box-drawing Unicode (U+2500–U+257F) introduced by pasting Rich panel output,
     # then collapse runs of whitespace so downstream parsing sees clean text.
@@ -1599,22 +1601,31 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                 _slug = _re.sub(r"[^\w]+", "_", query.lower() if query else "review")[:50].strip("_")
                 out = LIT_REVIEWS_DIR / f"{_slug}.md"
             trace.data["task_type"] = "lit-review"
-            result = run_lit_review(
-                query=query,
-                out_path=out,
-                max_fetch=max_fetch,
-                max_annotate=max_ann,
-                after=after,
-                before=before,
-                csv_path=csv_path if (no_fetch or csv_path) else None,
-                no_curate=no_curate,
-                no_wiggum=no_wiggum,
-                no_s2=no_s2,
-                template=template,
-                producer_model=producer_model,
-                evaluator_model=_ann_eval_model,
-                _trace=trace,
-            )
+            try:
+                result = run_lit_review(
+                    query=query,
+                    out_path=out,
+                    max_fetch=max_fetch,
+                    max_annotate=max_ann,
+                    after=after,
+                    before=before,
+                    csv_path=csv_path if (no_fetch or csv_path) else None,
+                    no_curate=no_curate,
+                    no_wiggum=no_wiggum,
+                    no_s2=no_s2,
+                    template=template,
+                    producer_model=producer_model,
+                    evaluator_model=_ann_eval_model,
+                    _trace=trace,
+                )
+            except Exception as _lr_err:
+                trace.data["final_content"] = (
+                    f"# Lit-review failed\n\n"
+                    f"**Error:** {type(_lr_err).__name__}: {_lr_err}\n"
+                    f"**Query:** {query}\n"
+                )
+                trace.finish("ERROR")
+                return
             out_path_str = result.get("out_path", "")
             out_p = Path(out_path_str) if out_path_str else None
             trace.data["output_path"]         = out_path_str
