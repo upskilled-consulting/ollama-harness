@@ -97,7 +97,11 @@ async def get_run_content(run_id: str):
     if inline:
         return {"content": inline, "path": path, "bytes": len(inline.encode())}
 
-    raise HTTPException(status_code=404, detail="No output available for this run")
+    # Return a readable explanation instead of a raw 404
+    final   = run.get("final") or "unknown"
+    task    = (run.get("task") or "")[:120]
+    message = f"No output recorded for this run.\n\nStatus: {final}\nTask: {task}"
+    return {"content": message, "path": None, "bytes": len(message.encode())}
 
 
 @router.get("/data")

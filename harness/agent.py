@@ -1626,6 +1626,16 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                 for t in result.get("paper_titles", [])
             ]
             if result.get("error") or not out_path_str:
+                err = result.get("error", "unknown")
+                papers_found = result.get("papers", 0)
+                trace.data["final_content"] = (
+                    f"# Lit-review aborted\n\n"
+                    f"**Error:** {err}\n"
+                    f"**Papers found:** {papers_found}\n"
+                    f"**Query:** {query}\n\n"
+                    f"arXiv returned no results. Try a shorter, keyword-style query:\n"
+                    f"e.g. `Gemma language model evaluation` instead of a full sentence."
+                )
                 trace.finish("ERROR")
             else:
                 trace.finish("PASS")
