@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 import harness.logger as _logger_mod
 
 

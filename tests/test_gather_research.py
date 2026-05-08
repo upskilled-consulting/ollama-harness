@@ -11,9 +11,7 @@ add zero net-new domains. force_deep disables it.
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, call
-
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers
