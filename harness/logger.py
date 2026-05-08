@@ -351,7 +351,7 @@ class RunTrace:
         )
         _append_jsonl(ARTIFACTS_PATH, {"event": "artifact_create", **a.to_dict()})
 
-    def log_message(self, role: str, content: str = None, cot: str = None, tool_calls: list = None, tool_name: str = None):
+    def log_message(self, role: str, content: str = None, cot: str = None, tool_calls: list = None, tool_name: str = None, stage: str = None):
         """Record one LLM message turn in messages.jsonl."""
         m = Message(
             run_id=self.run_id,
@@ -359,6 +359,7 @@ class RunTrace:
             project_id=self.project_id,
             seq=self._msg_seq,
             role=role,
+            stage=stage or None,
             content=content,
             cot=cot or None,
             tool_calls=tool_calls,
@@ -367,6 +368,11 @@ class RunTrace:
         )
         self._msg_seq += 1
         _append_jsonl(MESSAGES_PATH, m.to_dict())
+
+    def log_llm_turn(self, stage: str, input_text: str, output_text: str, thinking: str = "") -> None:
+        """Log one complete LLM prompt+response pair to messages.jsonl, tagged by stage."""
+        self.log_message(role="user",      content=input_text,  stage=stage)
+        self.log_message(role="assistant", content=output_text, cot=thinking or None, stage=stage)
 
     def log_plan_record(self, plan_dict: dict, plan_type: str = "agent") -> str:
         """Write an OrchestratorPlan record to plans.jsonl. Returns plan_id."""

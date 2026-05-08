@@ -1,12 +1,14 @@
-"""GET /api/sessions, /api/plans, /api/artifacts, /api/curation"""
+"""GET /api/sessions, /api/plans, /api/artifacts, /api/curation, /api/runs/{id}/messages"""
 
 import json
 import os
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from harness.config import (
     ARTIFACTS_FILE,
+    DATA_DIR,
     LEGACY_ARTIFACTS_FILE,
     LEGACY_CURATION_LOG,
     LEGACY_PLANS_FILE,
@@ -163,3 +165,38 @@ async def get_artifact_content(artifact_id: str):
         }
     except OSError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+_MESSAGES_FILE = DATA_DIR / "messages.jsonl"
+_MSG_CONTENT_MAX = 40_000
+
+
+@router.get("/runs/{run_id}/messages")
+async def get_run_messages(
+    run_id: str,
+    stage: Optional[str] = Query(default=None),
+):
+    """Return logged LLM turns for a run, optionally filtered by stage."""
+    if not _MESSAGES_FILE.exists():
+        return []
+    records: list[dict] = []
+    for line in _MESSAGES_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get("run_id") != run_id:
+            continue
+        if stage and r.get("stage") != stage:
+            continue
+        # Truncate very large content to keep response size reasonable
+        if r.get("content") and len(r["content"]) > _MSG_CONTENT_MAX:
+            r = dict(r)
+            r["content"]   = r["content"][:_MSG_CONTENT_MAX]
+            r["truncated"] = True
+        records.append(r)
+    records.sort(key=lambda r: r.get("seq", 0))
+    return records

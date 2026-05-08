@@ -41,6 +41,8 @@ export interface StageTokens {
   output?:         number;
   calls?:          number;
   total_ms?:       number;
+  eval_ms?:        number;
+  prompt_ms?:      number;
   thinking_chars?: number;
 }
 
@@ -155,6 +157,18 @@ export interface PlanRecord {
   knowledge_gaps?: string[];
   search_queries?: string[];
   created_at?:     string;
+}
+
+export interface RunMessage {
+  run_id:    string;
+  seq:       number;
+  role:      string;
+  stage:     string | null;
+  content:   string | null;
+  cot:       string | null;
+  chars:     number | null;
+  truncated?: boolean;
+  timestamp: string;
 }
 
 export interface FeedbackRecord {

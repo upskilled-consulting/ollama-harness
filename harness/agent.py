@@ -1001,8 +1001,10 @@ def synthesize(task: str, research_context: str, vision_context: str = "", file_
         options=_synth_options(producer_model),
     )
     if trace is not None:
+        _thinking = getattr(response.message, "thinking", "") or ""
         trace.log_usage(response, stage="synth")
-        trace.log_synth_cot(getattr(response.message, "thinking", "") or "")
+        trace.log_synth_cot(_thinking)
+        trace.log_llm_turn("synth", prompt, response["message"].get("content", ""), _thinking)
     return response["message"].get("content", "")
 
 
@@ -1731,6 +1733,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                     options={"temperature": 0.1, "num_predict": 2000, "num_ctx": 16384, "repeat_penalty": 1.1},
                 )
             trace.log_usage(response, stage="introspect")
+            trace.log_llm_turn("introspect", prompt, response["message"].get("content", "").strip())
             content = clean_synthesis_output(response["message"].get("content", "").strip())
             if not content:
                 print("[error] introspect returned empty output")
@@ -1785,6 +1788,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                         options={"temperature": 0.1, "num_predict": 3000},
                     )
                 trace.log_usage(response, stage="orientation")
+                trace.log_llm_turn("orientation", prompt, response["message"].get("content", "").strip())
                 content = clean_synthesis_output(response["message"].get("content", "").strip())
             except Exception as _syn_err:
                 print(f"  [orientation] synthesis skipped ({_syn_err}); using raw doc")

@@ -147,6 +147,7 @@ class Message:
     project_id:  str           = ""
     seq:         int           = 0
     role:        str           = ""        # system | user | assistant | tool
+    stage:       str | None = None      # pipeline stage (synth, introspect, eval, …)
     content:     str | None = None
     cot:         str | None = None      # chain-of-thought / thinking text
     tool_calls:  list | None = None

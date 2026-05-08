@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useAllRuns } from "@/hooks/useRuns";
 import { MdView } from "@/components/MdView";
-import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord } from "@/types";
+import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage } from "@/types";
 
 // ── shared helpers ─────────────────────────────────────────────────────────────
 
@@ -657,18 +657,257 @@ function LeftPanel({ runs, selected, onSelect }: { runs: RunRecord[]; selected: 
   );
 }
 
+// ── LLM message viewer ────────────────────────────────────────────────────────
+
+const ROLE_COLORS: Record<string, string> = {
+  user:      "#4f8ef7",
+  assistant: "#22d3ee",
+  system:    "#a78bfa",
+  tool:      "#fb923c",
+};
+
+function MessageViewer({ runId, stage }: { runId: string; stage: string }) {
+  const [open, setOpen] = useState(false);
+
+  const { data: messages, isLoading, error } = useQuery({
+    queryKey:  ["messages", runId, stage],
+    queryFn:   () => fetch(`/api/runs/${runId}/messages?stage=${encodeURIComponent(stage)}`)
+                       .then((r) => r.json() as Promise<RunMessage[]>),
+    enabled:   open,
+    staleTime: 60_000,
+  });
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--dim)", cursor: "pointer", fontSize: 10, padding: "3px 10px", textTransform: "uppercase", letterSpacing: "0.05em" }}
+      >
+        {open ? "▲ hide messages" : "▼ view input / output"}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          {isLoading && <div style={{ fontSize: 11, color: "var(--dim)" }}>Loading…</div>}
+          {error     && <div style={{ fontSize: 11, color: "var(--fail)" }}>Failed to load messages.</div>}
+          {messages && messages.length === 0 && (
+            <div style={{ fontSize: 11, color: "var(--dim)", fontStyle: "italic" }}>
+              No messages recorded for this stage yet — they'll appear after the next run.
+            </div>
+          )}
+          {messages && messages.map((msg) => {
+            const color = ROLE_COLORS[msg.role] ?? "#8b949e";
+            return (
+              <div key={msg.seq} style={{ border: `1px solid ${color}25`, borderLeft: `3px solid ${color}`, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: `${color}10` }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color, fontFamily: "monospace" }}>{msg.role}</span>
+                  {msg.chars != null && <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{msg.chars.toLocaleString()} chars</span>}
+                  {msg.truncated && <span style={{ fontSize: 9, color: "var(--warn)" }}>truncated</span>}
+                </div>
+                {msg.content && (
+                  <pre style={{ margin: 0, padding: "8px 10px", fontSize: 11, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)", fontFamily: "var(--font-mono)" }}>
+                    {msg.content}
+                  </pre>
+                )}
+                {msg.cot && (
+                  <details style={{ borderTop: `1px solid ${color}20` }}>
+                    <summary style={{ padding: "4px 10px", fontSize: 9, color: "var(--dim)", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      chain of thought ({msg.cot.length.toLocaleString()} chars)
+                    </summary>
+                    <pre style={{ margin: 0, padding: "8px 10px", fontSize: 10, lineHeight: 1.6, color: "var(--dim)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 240, overflowY: "auto", background: "rgba(0,0,0,0.1)", fontFamily: "var(--font-mono)" }}>
+                      {msg.cot}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Context window treemap ─────────────────────────────────────────────────────
+
+type ViewMode = "dag" | "context";
+
+function inferContextLimit(model: string | undefined): number {
+  if (!model) return 32768;
+  const m = model.toLowerCase();
+  if (m.includes("128k") || m.includes("72b") || m.includes("70b")) return 131072;
+  if (m.includes("32k")) return 32768;
+  return 32768;
+}
+
+const STAGE_CFG: Record<string, { color: string; label: string }> = {
+  search_query:        { color: "#fb923c", label: "Search" },
+  synth:               { color: "#22d3ee", label: "Synthesis" },
+  synth_count:         { color: "#0e8899", label: "Synth count" },
+  tool_loop:           { color: "#4f8ef7", label: "Tool loop" },
+  wiggum_eval:         { color: "#e3b341", label: "Eval" },
+  wiggum_revise:       { color: "#9c7a08", label: "Revise" },
+  planner:             { color: "#38bdf8", label: "Planner" },
+  memory:              { color: "#a78bfa", label: "Memory" },
+  compress_knowledge:  { color: "#3fb950", label: "Compress" },
+  other:               { color: "#6b7280", label: "Other" },
+};
+
+function ContextTreemap({ run }: { run: RunRecord }) {
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const tbs = run.tokens_by_stage;
+  if (!tbs) {
+    return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>No token breakdown recorded for this run.</div>;
+  }
+
+  const entries = Object.entries(tbs)
+    .filter(([, st]) => (st.input ?? 0) > 0)
+    .sort(([, a], [, b]) => (b.input ?? 0) - (a.input ?? 0));
+
+  if (entries.length === 0) {
+    return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>No input token data recorded for this run.</div>;
+  }
+
+  const limit      = inferContextLimit(run.producer_model);
+  const totalInput = run.input_tokens ?? entries.reduce((s, [, st]) => s + (st.input ?? 0), 0);
+  const fillPct    = Math.min(100, (totalInput / limit) * 100);
+  const fillColor  = fillPct > 90 ? "var(--fail)" : fillPct > 70 ? "var(--warn)" : "var(--accent)";
+
+  const selSt  = selected ? tbs[selected]  : null;
+  const selCfg = selected ? (STAGE_CFG[selected] ?? { color: "#8b949e", label: selected }) : null;
+
+  return (
+    <div style={{ padding: "16px 18px", overflowY: "auto", flex: 1 }}>
+      {/* fill gauge */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <span>Context window fill</span>
+          <span style={{ fontFamily: "var(--font-mono)", color: fillColor }}>
+            {totalInput.toLocaleString()} / {limit.toLocaleString()} tok · {fillPct.toFixed(1)}%
+          </span>
+        </div>
+        <div style={{ height: 7, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${fillPct}%`, height: "100%", borderRadius: 4, background: fillColor, transition: "width 0.4s" }} />
+        </div>
+        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 3, fontFamily: "var(--font-mono)" }}>
+          model: {run.producer_model ?? "unknown"} · inferred limit: {limit.toLocaleString()} tok
+        </div>
+      </div>
+
+      {/* treemap box */}
+      <div
+        style={{ height: 148, background: "rgba(0,0,0,0.28)", borderRadius: 7, border: "1px solid var(--border)", overflow: "hidden", display: "flex", cursor: "default" }}
+        onClick={() => setSelected(null)}
+      >
+        {entries.map(([stage, st]) => {
+          const pct        = ((st.input ?? 0) / limit) * 100;
+          const cfg        = STAGE_CFG[stage] ?? { color: "#8b949e", label: stage };
+          const isSelected = selected === stage;
+          return (
+            <div
+              key={stage}
+              onClick={(e) => { e.stopPropagation(); setSelected(isSelected ? null : stage); }}
+              style={{
+                width: `${pct}%`, height: "100%", flexShrink: 0,
+                background: cfg.color,
+                opacity: selected && !isSelected ? 0.35 : 0.82,
+                outline: isSelected ? "2px solid rgba(255,255,255,0.8)" : "none",
+                outlineOffset: -2,
+                display: "flex", flexDirection: "column", justifyContent: "flex-end",
+                padding: "5px 6px", overflow: "hidden", cursor: "pointer",
+                borderRight: "1px solid rgba(0,0,0,0.22)",
+                transition: "opacity 0.15s",
+                boxSizing: "border-box",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = "1"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = selected && !isSelected ? "0.35" : "0.82"; }}
+            >
+              {pct > 4 && (
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.95)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {cfg.label}
+                </div>
+              )}
+              {pct > 7 && (
+                <div style={{ fontSize: 8, color: "rgba(255,255,255,0.6)", fontFamily: "var(--font-mono)", marginTop: 1 }}>
+                  {(st.input ?? 0).toLocaleString()}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {fillPct < 92 && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0 }}>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.1)", textTransform: "uppercase", letterSpacing: "0.12em" }}>unused</span>
+          </div>
+        )}
+      </div>
+
+      {/* selected stage detail */}
+      {selected && selSt && selCfg && (
+        <div style={{ marginTop: 12, padding: "11px 14px", background: "var(--surface)", border: `1px solid ${selCfg.color}35`, borderLeft: `3px solid ${selCfg.color}`, borderRadius: 7 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: selCfg.color, marginBottom: 9 }}>
+            {selCfg.label}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px 20px" }}>
+            {([
+              ["Input tokens",   (selSt.input ?? 0).toLocaleString()],
+              ["Output tokens",  (selSt.output ?? 0).toLocaleString()],
+              ["LLM calls",      String(selSt.calls ?? 1)],
+              ["% of window",    `${((selSt.input ?? 0) / limit * 100).toFixed(2)}%`],
+              ["Total time",     selSt.total_ms   != null ? `${(selSt.total_ms   / 1000).toFixed(2)}s` : null],
+              ["Prompt time",    selSt.prompt_ms  != null ? `${(selSt.prompt_ms  / 1000).toFixed(2)}s` : null],
+              ["Eval time",      selSt.eval_ms    != null ? `${(selSt.eval_ms    / 1000).toFixed(2)}s` : null],
+              ["Thinking chars", selSt.thinking_chars ? selSt.thinking_chars.toLocaleString() : null],
+            ] as [string, string | null][]).filter(([, v]) => v !== null).map(([label, value]) => (
+              <div key={label}>
+                <div style={{ fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+                <div style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</div>
+              </div>
+            ))}
+          </div>
+          <MessageViewer runId={run.run_id} stage={selected} />
+        </div>
+      )}
+
+      {/* legend */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 14px", marginTop: 13 }}>
+        {entries.map(([stage, st]) => {
+          const cfg = STAGE_CFG[stage] ?? { color: "#8b949e", label: stage };
+          const pct = ((st.input ?? 0) / limit) * 100;
+          return (
+            <div key={stage} onClick={() => setSelected(selected === stage ? null : stage)}
+              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, cursor: "pointer", opacity: selected && selected !== stage ? 0.45 : 1, transition: "opacity 0.15s" }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
+              <span style={{ color: "var(--dim)" }}>{cfg.label}</span>
+              <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>{pct.toFixed(1)}%</span>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10 }}>
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)", flexShrink: 0 }} />
+          <span style={{ color: "var(--dim)" }}>unused</span>
+          <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>{Math.max(0, 100 - fillPct).toFixed(1)}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export function Runs() {
   const { data: runs = [], isLoading, error } = useAllRuns();
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
+  const [viewMode,     setViewMode]     = useState<ViewMode>("dag");
 
   const defaultRun = runs.find((r) => (r.tool_calls?.length ?? 0) > 0 || (r.wiggum_scores?.length ?? 0) > 0) ?? runs[0] ?? null;
   const activeRun  = selectedRun ?? defaultRun;
 
   const handleSelectRun = (r: RunRecord) => { setSelectedRun(r); setSelectedNode(null); };
   const handleDeselectRun = () => { setSelectedRun(null); setSelectedNode(null); };
+  const handleViewMode = (m: ViewMode) => { setViewMode(m); if (m !== "dag") setSelectedNode(null); };
 
   if (isLoading) return <div className="loading">Loading…</div>;
   if (error)     return <div className="page-error">Failed to load runs.</div>;
@@ -681,10 +920,33 @@ export function Runs() {
         {activeRun ? (
           <>
             <RunSummaryCard run={activeRun} onClose={handleDeselectRun} />
+
+            {/* view mode tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
+              {(["dag", "context"] as ViewMode[]).map((m) => (
+                <button key={m} onClick={() => handleViewMode(m)} style={{
+                  padding: "6px 16px", fontSize: 10, fontWeight: 700, cursor: "pointer",
+                  textTransform: "uppercase", letterSpacing: "0.07em",
+                  background: "none", border: "none",
+                  borderBottom: viewMode === m ? "2px solid var(--accent)" : "2px solid transparent",
+                  color: viewMode === m ? "var(--accent)" : "var(--dim)",
+                  marginBottom: -1, transition: "color 0.15s",
+                }}>
+                  {m === "dag" ? "Pipeline DAG" : "Context window"}
+                </button>
+              ))}
+            </div>
+
             <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-              <DagCanvas run={activeRun} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
-              {selectedNode && (
-                <NodeInspector node={selectedNode} run={activeRun} onClose={() => setSelectedNode(null)} />
+              {viewMode === "dag" ? (
+                <>
+                  <DagCanvas run={activeRun} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
+                  {selectedNode && (
+                    <NodeInspector node={selectedNode} run={activeRun} onClose={() => setSelectedNode(null)} />
+                  )}
+                </>
+              ) : (
+                <ContextTreemap run={activeRun} />
               )}
             </div>
           </>
