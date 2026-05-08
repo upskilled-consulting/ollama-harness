@@ -133,7 +133,7 @@ def fetch(
 
     sort_clause = "&sortBy=submittedDate&sortOrder=descending" if sort_by else ""
 
-    rows = []
+    rows: list[dict] = []
     seen_ids: set[str] = set(existing_ids or [])
     skipped_date = 0
     skipped_dup  = 0
