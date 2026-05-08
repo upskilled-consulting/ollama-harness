@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, LiveRun, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -38,6 +38,8 @@ export const api = {
   analytics:        () => get<AnalyticsData>("/analytics"),
   artifact_content: (artifact_id: string) =>
     get<ArtifactContent>(`/artifacts/${artifact_id}/content`),
+  live_run: () =>
+    fetch(`${BASE}/runs/live`).then((r) => r.ok ? r.json() as Promise<LiveRun | null> : Promise.resolve(null)).catch(() => null),
 };
 
 export function createRunsSocket(onMessage: (run: RunRecord) => void): WebSocket {

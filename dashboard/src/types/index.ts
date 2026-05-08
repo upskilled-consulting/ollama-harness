@@ -171,6 +171,15 @@ export interface RunMessage {
   timestamp: string;
 }
 
+export interface LiveRun {
+  run_id:        string;
+  task:          string;
+  started_at:    string;
+  current_stage: string;
+  stages_seen:   string[];
+  elapsed_s:     number;
+}
+
 export interface FeedbackRecord {
   feedback_id: string;
   run_id:      string;

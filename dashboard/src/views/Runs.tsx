@@ -1,9 +1,9 @@
-import { useState, useMemo, useEffect, type ReactNode, type CSSProperties } from "react";
+import { useState, useMemo, useEffect, useRef, type ReactNode, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { useAllRuns } from "@/hooks/useRuns";
+import { useAllRuns, useLiveRun } from "@/hooks/useRuns";
 import { MdView } from "@/components/MdView";
-import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage } from "@/types";
+import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage, LiveRun } from "@/types";
 
 // ── shared helpers ─────────────────────────────────────────────────────────────
 
@@ -168,21 +168,57 @@ function SvgEdge({ edge }: { edge: DagEdge }) {
     stroke={edge.from.color} strokeWidth={1.5} strokeDasharray="5 3" opacity={0.4} />;
 }
 
-function SvgNode({ node, selected, onClick }: { node: DagNode; selected: boolean; onClick: () => void }) {
+type NodeStatus = "done" | "running" | "pending";
+
+function SvgNode({ node, selected, onClick, status = "done" }: {
+  node: DagNode; selected: boolean; onClick: () => void; status?: NodeStatus;
+}) {
+  const isPending = status === "pending";
+  const isRunning = status === "running";
   return (
     <g transform={`translate(${node.x},${node.y})`} onClick={onClick} style={{ cursor: "pointer" }}>
-      <rect width={NW} height={NH} rx={5} fill={selected ? "rgba(255,255,255,0.06)" : "#0d1018"}
-        stroke={node.color} strokeWidth={selected ? 1.8 : 1} />
-      <rect width={4} height={NH} rx={2} fill={node.color} />
-      <text x={12} y={16} fill={node.color} fontSize={8} fontFamily="monospace" fontWeight="bold" letterSpacing="0.1em">
+      <rect width={NW} height={NH} rx={5}
+        fill={isPending ? "#0a0c12" : selected ? "rgba(255,255,255,0.06)" : "#0d1018"}
+        stroke={isPending ? "rgba(255,255,255,0.18)" : node.color}
+        strokeWidth={selected || isRunning ? 1.8 : 1}
+        strokeDasharray={isPending ? "4 3" : undefined}
+        style={{ transition: "stroke 0.3s, fill 0.3s" }}
+      />
+      {/* Pulsing outer ring for running state */}
+      {isRunning && (
+        <rect width={NW} height={NH} rx={5} fill="none"
+          stroke={node.color} strokeWidth={2.5} className="dag-pulse" />
+      )}
+      <rect width={4} height={NH} rx={2} fill={node.color} opacity={isPending ? 0.25 : 1} />
+      <text x={12} y={16} fill={node.color} fontSize={8} fontFamily="monospace" fontWeight="bold"
+        letterSpacing="0.1em" opacity={isPending ? 0.35 : 1}>
         {NODE_CFG[node.type].label}
       </text>
-      <text x={12} y={34} fill="#e2e8f0" fontSize={11} fontWeight="bold" fontFamily="system-ui, sans-serif">
+      <text x={12} y={34} fill="#e2e8f0" fontSize={11} fontWeight="bold"
+        fontFamily="system-ui, sans-serif" opacity={isPending ? 0.35 : 1}>
         {node.title}
       </text>
-      <text x={12} y={52} fill="#64748b" fontSize={9} fontFamily="system-ui, sans-serif">
+      <text x={12} y={52} fill="#64748b" fontSize={9} fontFamily="system-ui, sans-serif"
+        opacity={isPending ? 0.35 : 1}>
         {node.sub}
       </text>
+      {/* Spinning dots for running state */}
+      {isRunning && (
+        <g transform={`translate(${NW - 22}, ${NH / 2 - 3})`}>
+          {([0, 1, 2] as const).map((i) => (
+            <circle key={i} cx={i * 6} cy={0} r={2} fill={node.color}
+              className={`dag-dot-${i}`} />
+          ))}
+        </g>
+      )}
+      {/* Checkmark for done state */}
+      {status === "done" && !selected && (
+        <g transform={`translate(${NW - 16}, 5)`}>
+          <circle cx={5} cy={5} r={5} fill={node.color} fillOpacity={0.15} />
+          <path d="M2.5 5 L4.5 7 L7.5 3" stroke={node.color} strokeWidth={1.2}
+            fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      )}
       <rect width={NW} height={NH} rx={5} fill="transparent" />
     </g>
   );
@@ -570,11 +606,126 @@ function DagCanvas({ run, selectedNode, onSelectNode }: { run: RunRecord; select
   );
 }
 
+// ── Live DAG ───────────────────────────────────────────────────────────────────
+
+const LIVE_STAGE_ORDER = ["memory", "plan", "search", "synth", "eval"] as const;
+
+const LIVE_STAGE_LABELS: Record<string, { running: string; done: string; pending: string }> = {
+  memory:  { running: "retrieving…",  done: "memory",    pending: "memory"    },
+  plan:    { running: "planning…",    done: "plan",      pending: "plan"      },
+  search:  { running: "searching…",   done: "search",    pending: "search"    },
+  synth:   { running: "synthesizing…",done: "synthesis", pending: "synthesis" },
+  eval:    { running: "evaluating…",  done: "eval",      pending: "eval"      },
+};
+
+const LIVE_STAGE_TO_TYPE: Record<string, NodeType> = {
+  memory: "memory",
+  plan:   "plan",
+  search: "search",
+  synth:  "synthesis",
+  eval:   "eval",
+};
+
+function liveNodeStatus(stage: string, liveRun: LiveRun): NodeStatus {
+  if (stage === liveRun.current_stage) return "running";
+  if (liveRun.stages_seen.includes(stage)) return "done";
+  return "pending";
+}
+
+function buildLiveColumns(liveRun: LiveRun): { cols: DagNode[][]; statusMap: Record<string, NodeStatus> } {
+  const statusMap: Record<string, NodeStatus> = {};
+  const cols: DagNode[][] = [];
+
+  // TASK — always done
+  statusMap["task"] = "done";
+  cols.push([{ id: "task", type: "task", col: 0, row: 0, x: 0, y: 0,
+    title: trunc(liveRun.task, 22), sub: "in progress",
+    color: NODE_CFG.task.color, data: {} }]);
+
+  // Middle stages
+  for (const stage of LIVE_STAGE_ORDER) {
+    const st  = liveNodeStatus(stage, liveRun);
+    const lbl = LIVE_STAGE_LABELS[stage];
+    const typ = LIVE_STAGE_TO_TYPE[stage];
+    statusMap[stage] = st;
+    cols.push([{ id: stage, type: typ, col: 0, row: 0, x: 0, y: 0,
+      title: lbl[st], sub: st === "running" ? "active" : st === "done" ? "done" : "queued",
+      color: NODE_CFG[typ].color, data: {} }]);
+  }
+
+  // OUTPUT — always pending while run is live
+  statusMap["output"] = "pending";
+  cols.push([{ id: "output", type: "output", col: 0, row: 0, x: 0, y: 0,
+    title: "output", sub: "pending",
+    color: "#8b949e", data: {} }]);
+
+  return { cols, statusMap };
+}
+
+function LiveDagCanvas({ liveRun }: { liveRun: LiveRun }) {
+  const { cols, statusMap } = buildLiveColumns(liveRun);
+  const { nodes, width, height } = layoutColumns(cols);
+  const edges = buildEdges(cols, nodes);
+  return (
+    <div style={{ flex: 1, overflow: "auto", background: "var(--bg)", padding: 8 }}>
+      <svg width={width} height={height} style={{ display: "block" }}>
+        {edges.map((edge, i) => <SvgEdge key={i} edge={edge} />)}
+        {nodes.map((node) => (
+          <SvgNode key={node.id} node={node} selected={false} onClick={() => undefined}
+            status={statusMap[node.id] ?? "pending"} />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ── Elapsed ticker ─────────────────────────────────────────────────────────────
+
+function useElapsed(startedAt: string) {
+  const [elapsed, setElapsed] = useState(0);
+  const ref = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const t0 = new Date(startedAt).getTime();
+    const tick = () => setElapsed(Math.floor((Date.now() - t0) / 1000));
+    tick();
+    ref.current = setInterval(tick, 1000);
+    return () => { if (ref.current) clearInterval(ref.current); };
+  }, [startedAt]);
+  return elapsed;
+}
+
 // ── Left panel: filter + list ──────────────────────────────────────────────────
 
 type StatusFilter = "all" | "pass" | "fail" | "error" | "running";
 
-function LeftPanel({ runs, selected, onSelect }: { runs: RunRecord[]; selected: RunRecord | null; onSelect: (r: RunRecord) => void }) {
+function LiveRunCard({ liveRun, isSelected, onSelect }: { liveRun: LiveRun; isSelected: boolean; onSelect: () => void }) {
+  const elapsed = useElapsed(liveRun.started_at);
+  const stageLbl = LIVE_STAGE_LABELS[liveRun.current_stage]?.running ?? liveRun.current_stage;
+  return (
+    <div onClick={onSelect} style={{
+      padding: "8px 12px", cursor: "pointer",
+      borderLeft: `3px solid ${isSelected ? "#22d3ee" : "#22d3ee55"}`,
+      borderBottom: "1px solid rgba(34,211,238,0.15)",
+      background: isSelected ? "rgba(34,211,238,0.07)" : "rgba(34,211,238,0.03)",
+      transition: "background 0.1s",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
+        <span className="live-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "#22d3ee", display: "inline-block", flexShrink: 0 }} />
+        <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "#22d3ee", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>live</span>
+        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{elapsed}s</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 3 }}>
+        {liveRun.task.slice(0, 46)}{liveRun.task.length > 46 ? "…" : ""}
+      </div>
+      <div style={{ fontSize: 9, color: "#22d3ee99", fontFamily: "var(--font-mono)" }}>{stageLbl}</div>
+    </div>
+  );
+}
+
+function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLive }: {
+  runs: RunRecord[]; selected: RunRecord | null; onSelect: (r: RunRecord) => void;
+  liveRun: LiveRun | null; liveSelected: boolean; onSelectLive: () => void;
+}) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
 
@@ -619,7 +770,8 @@ function LeftPanel({ runs, selected, onSelect }: { runs: RunRecord[]; selected: 
 
       {/* run list */}
       <div style={{ overflowY: "auto", flex: 1 }}>
-        {filtered.length === 0 && <div className="empty-state">No runs match.</div>}
+        {liveRun && <LiveRunCard liveRun={liveRun} isSelected={liveSelected} onSelect={onSelectLive} />}
+        {filtered.length === 0 && !liveRun && <div className="empty-state">No runs match.</div>}
         {filtered.map((r) => {
           const score      = r.wiggum_scores?.at(-1);
           const isSelected = selected?.run_id === r.run_id;
@@ -898,26 +1050,58 @@ function ContextTreemap({ run }: { run: RunRecord }) {
 
 export function Runs() {
   const { data: runs = [], isLoading, error } = useAllRuns();
+  const { data: liveRun = null }              = useLiveRun();
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
   const [viewMode,     setViewMode]     = useState<ViewMode>("dag");
+  const [liveSelected, setLiveSelected] = useState(false);
+
+  // Auto-select the live run when one starts; deselect when it finishes
+  const prevLive = useRef<string | null>(null);
+  useEffect(() => {
+    if (liveRun && prevLive.current !== liveRun.run_id) {
+      setLiveSelected(true);
+      setSelectedRun(null);
+      prevLive.current = liveRun.run_id;
+    }
+    if (!liveRun && prevLive.current) {
+      setLiveSelected(false);
+      prevLive.current = null;
+    }
+  }, [liveRun]);
 
   const defaultRun = runs.find((r) => (r.tool_calls?.length ?? 0) > 0 || (r.wiggum_scores?.length ?? 0) > 0) ?? runs[0] ?? null;
-  const activeRun  = selectedRun ?? defaultRun;
+  const activeRun  = liveSelected ? null : (selectedRun ?? defaultRun);
 
-  const handleSelectRun = (r: RunRecord) => { setSelectedRun(r); setSelectedNode(null); };
+  const handleSelectRun = (r: RunRecord) => { setSelectedRun(r); setSelectedNode(null); setLiveSelected(false); };
   const handleDeselectRun = () => { setSelectedRun(null); setSelectedNode(null); };
   const handleViewMode = (m: ViewMode) => { setViewMode(m); if (m !== "dag") setSelectedNode(null); };
+  const handleSelectLive = () => { setLiveSelected(true); setSelectedRun(null); setSelectedNode(null); };
 
   if (isLoading) return <div className="loading">Loading…</div>;
   if (error)     return <div className="page-error">Failed to load runs.</div>;
 
   return (
     <div style={{ margin: "-28px", height: "100vh", display: "flex", overflow: "hidden" }}>
-      <LeftPanel runs={runs} selected={activeRun} onSelect={handleSelectRun} />
+      <LeftPanel runs={runs} selected={activeRun} onSelect={handleSelectRun}
+        liveRun={liveRun} liveSelected={liveSelected} onSelectLive={handleSelectLive} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {activeRun ? (
+        {liveSelected && liveRun ? (
+          <>
+            {/* Live run header */}
+            <div style={{ padding: "10px 16px", background: "var(--surface)", borderBottom: "1px solid rgba(34,211,238,0.2)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+              <span className="live-dot" style={{ width: 8, height: 8, borderRadius: "50%", background: "#22d3ee", display: "inline-block" }} />
+              <span style={{ fontSize: 12, color: "#22d3ee", fontWeight: 700, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.06em" }}>running</span>
+              <span style={{ fontSize: 12, color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{liveRun.task}</span>
+            </div>
+
+            {/* Live DAG — no tabs, no context window during run */}
+            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+              <LiveDagCanvas liveRun={liveRun} />
+            </div>
+          </>
+        ) : activeRun ? (
           <>
             <RunSummaryCard run={activeRun} onClose={handleDeselectRun} />
 

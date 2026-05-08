@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, createRunsSocket } from "@/api/client";
-import type { FeedbackRecord, RunRecord } from "@/types";
+import type { FeedbackRecord, LiveRun, RunRecord } from "@/types";
 
 export function useSessions() {
   return useQuery({ queryKey: ["sessions"], queryFn: api.sessions, staleTime: 30_000 });
@@ -13,6 +13,15 @@ export function useArtifacts() {
 
 export function useAllRuns() {
   return useQuery({ queryKey: ["all_runs"], queryFn: api.all_runs, staleTime: 10_000 });
+}
+
+export function useLiveRun() {
+  return useQuery<LiveRun | null>({
+    queryKey:       ["live_run"],
+    queryFn:        api.live_run,
+    refetchInterval: 1_500,
+    staleTime:      0,
+  });
 }
 
 export function usePlans() {

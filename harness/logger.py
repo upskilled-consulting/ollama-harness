@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from harness.config import RUNS_FILE, TRACES_DIR
+from harness.config import LIVE_RUN_FILE, RUNS_FILE, TRACES_DIR
 from harness.schema import (
     ARTIFACTS_PATH,
     MESSAGES_PATH,
@@ -72,8 +72,10 @@ class RunTrace:
         self.experiment_id   = os.environ.get("HARNESS_EXPERIMENT_ID", "")
         self.treatment_level = os.environ.get("HARNESS_TREATMENT_LEVEL", "")
         self.task_id         = os.environ.get("HARNESS_TASK_ID", "")
-        self._msg_seq    = 0
-        self._is_sub     = _is_sub
+        self._msg_seq        = 0
+        self._is_sub         = _is_sub
+        self._current_stage  = "startup"
+        self._stages_seen: list[str] = []
 
         self.data: dict[str, Any] = {
             "run_id":           self.run_id,
@@ -312,6 +314,31 @@ class RunTrace:
             "result_chars": result_chars,
         })
 
+    def set_stage(self, stage: str) -> None:
+        """Mark entry into a pipeline stage and write a live snapshot for the dashboard."""
+        self._current_stage = stage
+        if stage not in self._stages_seen:
+            self._stages_seen.append(stage)
+        if not self._is_sub:
+            self._write_live()
+
+    def _write_live(self) -> None:
+        snapshot = {
+            "run_id":        self.run_id,
+            "task":          self._task,
+            "started_at":    self.data["timestamp"],
+            "current_stage": self._current_stage,
+            "stages_seen":   list(self._stages_seen),
+            "elapsed_s":     round(time.monotonic() - self._run_start, 1),
+        }
+        tmp = str(LIVE_RUN_FILE) + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f)
+            os.replace(tmp, str(LIVE_RUN_FILE))
+        except OSError:
+            pass
+
     def log_synth_cot(self, thinking: str):
         """Append one synthesis thinking block. Called once per synthesize() invocation."""
         if thinking:
@@ -460,6 +487,10 @@ class RunTrace:
         tac_str  = f"  tac={tac_hours}h" if tac_hours else ""
         print(f"  [log] {dur}s  in={tok_in} out={tok_out} tok{tac_str}{lev_str}")
         if not self._is_sub:
+            try:
+                LIVE_RUN_FILE.unlink(missing_ok=True)
+            except OSError:
+                pass
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(self.data) + "\n")
             print(f"  [log] -> {LOG_PATH}")

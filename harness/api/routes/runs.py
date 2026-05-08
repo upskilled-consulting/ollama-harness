@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 
 from fastapi import APIRouter, HTTPException
 
-from harness.config import LEGACY_RUNS_FILE, RUNS_FILE
+from harness.config import LEGACY_RUNS_FILE, LIVE_RUN_FILE, RUNS_FILE
 
 router = APIRouter(tags=["runs"])
 
@@ -47,6 +47,17 @@ def _load_runs(n: int = _MAX_RECENT, *, full: bool = False) -> list[dict]:
 
     all_records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
     return all_records[:n]
+
+
+@router.get("/runs/live")
+async def get_live_run():
+    """Return the in-progress run snapshot written by RunTrace.set_stage(), or null."""
+    if not LIVE_RUN_FILE.exists():
+        return None
+    try:
+        return json.loads(LIVE_RUN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 @router.get("/runs")

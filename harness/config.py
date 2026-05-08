@@ -39,6 +39,7 @@ EMAIL_DRAFTS_DIR          = DATA_DIR / "email_drafts"
 SCREENSHOTS_DIR           = DATA_DIR / "screenshots"
 TRANSCRIPTS_DIR           = DATA_DIR / "transcripts"
 MCP_LOG                   = DATA_DIR / "mcp_tasks.jsonl"
+LIVE_RUN_FILE             = DATA_DIR / "live_run.json"
 
 # Legacy data from harness-engineering (sibling repo) — read-only historical source
 LEGACY_ROOT          = ROOT.parent / "harness-engineering"

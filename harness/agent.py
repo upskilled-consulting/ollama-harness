@@ -121,7 +121,7 @@ def _estimate_keep_alive(task_type: str, explicit_skills: set, use_wiggum: bool)
 
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)
 
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from harness.logger import RunTrace
 from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
@@ -3148,6 +3148,7 @@ Rules:
             print("  [plugin] URL content available — skipping memory + planner")
         else:
             # Memory retrieval — before planning so the planner can use prior context
+            trace.set_stage("memory")
             with trace.span("memory_retrieval"):
                 memory_context, _mem_titles = memory.get_context_with_titles(task)
             if memory_context:
@@ -3160,6 +3161,7 @@ Rules:
                 print("\n  [memory] no relevant history")
 
             # Planning — analyse task + memory; produces search queries and synthesis notes
+            trace.set_stage("plan")
             print("  [planner] generating plan...")
             with trace.span("planner"):
                 plan, _planner_resp = make_plan(task, memory_context)
@@ -3233,6 +3235,7 @@ Rules:
             else:
                 context = ""
         else:
+            trace.set_stage("search")
             with trace.span("gather_research"):
                 context = gather_research(task, trace, planned_queries=plan.search_queries or None, producer_model=producer_model, force_deep=force_deep, task_type=plan.task_type or "")
 
@@ -3301,6 +3304,7 @@ Rules:
         # Count constraint: detect before synthesis so we can use the count-aware prompt directly
         expected_count = plan.expected_sections or extract_count_constraint(task)
 
+        trace.set_stage("synth")
         print("\n  [synth] synthesizing from merged results...")
         if expected_count is not None:
             print(f"  [count] detected count constraint: {expected_count} — using count-aware synthesis")
@@ -3360,6 +3364,7 @@ Rules:
                 run_post_synthesis(active_skills, content, task, path or "", producer_model)
 
         if use_wiggum:
+            trace.set_stage("eval")
             # /panel skill activates the 3-persona panel inside wiggum
             if "panel" in active_skills:
                 os.environ["WIGGUM_PANEL"] = "1"
