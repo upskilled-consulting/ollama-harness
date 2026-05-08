@@ -41,13 +41,13 @@ function ParamBadge({ name, required }: { name: string; required: boolean }) {
 function ToolCard({ tool }: { tool: McpTool }) {
   return (
     <div className="card" style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
         <span className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{tool.name}</span>
-        <span style={{ fontSize: 11, color: "var(--dim)" }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {tool.parameters.map((p) => (
             <ParamBadge key={p.name} name={p.name} required={p.required} />
           ))}
-        </span>
+        </div>
       </div>
       <p style={{ margin: 0, fontSize: 12, color: "var(--dim)", lineHeight: 1.5 }}>
         {tool.description}
@@ -57,7 +57,7 @@ function ToolCard({ tool }: { tool: McpTool }) {
 }
 
 export function Mcp() {
-  const { data: tools, isLoading: toolsLoading } = useMcpTools();
+  const { data: tools, isLoading: toolsLoading, error: toolsError } = useMcpTools();
   const { data, isLoading, error } = useMcpLog();
 
   const entries = data ?? [];
@@ -75,7 +75,9 @@ export function Mcp() {
         </div>
         {toolsLoading
           ? <div className="loading">Loading tools…</div>
-          : (tools ?? []).map((t) => <ToolCard key={t.name} tool={t} />)
+          : toolsError
+            ? <div className="page-error">Could not load tool manifest — is the server running? ({String(toolsError)})</div>
+            : (tools ?? []).map((t) => <ToolCard key={t.name} tool={t} />)
         }
       </div>
 

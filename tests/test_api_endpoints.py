@@ -100,6 +100,31 @@ class TestMcpLogEndpoint:
         assert isinstance(resp.json(), list)
 
 
+class TestMcpToolsEndpoint:
+
+    def test_mcp_tools_returns_three_tools(self):
+        resp = client.get("/api/mcp/tools")
+        assert resp.status_code == 200
+        tools = resp.json()
+        assert isinstance(tools, list)
+        assert len(tools) == 3
+        names = {t["name"] for t in tools}
+        assert names == {"run_task", "run_orchestrated", "get_run"}
+        for t in tools:
+            assert "description" in t
+            assert "parameters" in t
+            assert isinstance(t["parameters"], list)
+
+    def test_mcp_tools_have_required_param_flag(self):
+        resp = client.get("/api/mcp/tools")
+        tools = resp.json()
+        for t in tools:
+            for p in t["parameters"]:
+                assert "name" in p
+                assert "type" in p
+                assert "required" in p
+
+
 class TestWebSocketRoute:
 
     def test_ws_runs_endpoint_exists(self):

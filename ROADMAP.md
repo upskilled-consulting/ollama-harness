@@ -22,15 +22,22 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 - MCP server with security hardening (task length cap, UNC block, injection scan, semaphore, API key)
 - DPO/GRPO/SFT RL dataset pipeline — exported from `runs.jsonl` to HF-ready formats
 - Nanda annotator fine-tuning pipeline (`finetune_annotate.py`) with v2 dataset
-- PyPI package setup (`pyproject.toml` with metadata, build-system, entry points)
+- PyPI package setup (`pyproject.toml` with metadata, build-system, entry points) — wheel smoke-tested ✓
 - Ruff + mypy + TypeScript type-checking all clean in CI
+- Leverage metric (`score × lines / runtime_hours`, tac_hours override) logged on every run ✓
+- Fan-out planned queries in `gather_research()` — parallel `ThreadPoolExecutor` prefetch ✓
+- Oversearch detector — domain diversity tracking, terminates after 2 consecutive zero-net-new-domain rounds ✓
+- Test suite — 28 tests across logger, agent, and API endpoint modules ✓
 
 ### Dashboard views
 - **Home** — KPI cards (total runs, pass rate, avg score, token spend) + activity feed
-- **Runs** — merged Runs + Explorer: compact run list + DAG inspector (pipeline graph, per-stage tokens, output preview, Wiggum scores + dim bars, evaluator feedback, RLHF panel)
-- **Submit** — fire a task from the browser; result appears live in Runs
+- **Runs** — merged Runs + Explorer: compact run list + DAG inspector (pipeline graph, per-stage tokens, output preview, Wiggum scores + dim bars, evaluator feedback, RLHF panel, leverage chip)
+- **Submit** — fire a task from the browser; live pulse dot while in flight, `ResultCard` on completion ✓
+- **Sessions** — grouped by `session_id`, per-session pass rate / wall time / token spend ✓
+- **Analytics** — time-series charts: run volume, pass rate by day, score distribution, token trend ✓
+- **Artifacts** — browse output files with markdown preview and download ✓
 - **Fine-tune** — training metrics charts (loss, accuracy, lr) + RL dataset browser (preference pairs, reward feedback, GRPO rollouts, DPO with evaluator feedback)
-- **MCP** — registered MCP tool server inspector
+- **MCP** — registered tool inspector: tool cards with name, description, required/optional param badges ✓
 - **Floating terminal** — `oh >` REPL with input history, live run-status badges
 - **Voice FAB** — voice input panel
 
@@ -56,91 +63,55 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 
 ---
 
-## 0.1.0 — PyPI release blockers
+## 0.1.0 — PyPI release blockers ✓ COMPLETE
 
-These must be resolved before `python -m build && twine upload dist/*`.
-
-### P0: Commit deck skill implementation
-`harness/skills/deck/builder.py`, `content.py`, `skill.py`, `theme.py` are untracked.
-The `/deck` skill is documented and referenced in `__init__.py` but absent from the package.
-
-### P0: Add package_data for templates and assets
-Jinja2 templates (`*.j2`) and `kg_template.html.j2` are not Python files and won't be
-included in the wheel without explicit `package_data` in `pyproject.toml`:
-
-```toml
-[tool.setuptools.package-data]
-"harness.skills" = ["*.j2", "templates/*.j2"]
-```
-
-### P0: Document or bundle the dashboard
-Users who `pip install ollama-harness` and run `oh` or `python start.py` need either:
-- A pre-built `dashboard/dist/` committed to the repo and served by the FastAPI static mount, **or**
-- A clear prerequisite note in the README: "Node.js ≥ 18 required; `start.py` builds the dashboard automatically on first run."
-
-`start.py` already calls `npm run build` before launching — document this explicitly.
-
-### P1: Gitignore lit-review cache
-`harness/skills/.lit_review_cache/` contains hundreds of per-paper JSON files that
-should not be in the repo. Add to `.gitignore`.
-
-### P1: Smoke test the wheel
-```bash
-python -m build
-pip install dist/ollama_harness-0.1.0-py3-none-any.whl --force-reinstall
-oh --help
-oh /introspect
-```
-Confirm entry points resolve and Jinja templates load from the installed package path.
+All items resolved. Wheel smoke-tested: `oh --help`, `/introspect`, Jinja templates load
+from installed path. Dashboard bundled via `start.py → npm run build`.
 
 ---
 
-## 0.2.0 — Dashboard completeness
+## 0.2.0 — Dashboard completeness ✓ COMPLETE
 
-### Sessions view
-Currently a placeholder. Wire to `GET /api/sessions` — group runs by `session_id`,
-show per-session stats (total runs, pass rate, wall time, token spend).
+All views wired and shipping:
+- Sessions — grouped by `session_id`, per-session pass rate / wall time / tokens
+- Artifacts — file browser with markdown preview
+- Analytics — time-series charts (run volume, pass rate, score distribution, token trend)
+- Submit — live pulse dot while in flight; `ResultCard` with score, duration, output preview
+- MCP inspector — real tool cards from `GET /api/mcp/tools`, param badges, call log
 
-### Artifacts view
-Currently a placeholder. Wire to `GET /api/artifacts` — browse output files written
-by runs, with download and preview (markdown rendered via `MdView`).
-
-### Analytics charts
-Currently a placeholder. Time-series charts (run volume, pass rate by day, token spend
-trend, score distribution histogram) from `runs.jsonl` aggregated server-side.
-
-### Submit: live output streaming
-`POST /api/tasks` queues a run and returns a `run_id`. The Submit view should then
-open an SSE connection to `/api/runs/{run_id}/stream` and render the agent's stdout
-(plan events, search rounds, wiggum scores) in real time — identical to the terminal
-but with structured rendering for `[EVENT]` lines.
-
-### MCP inspector
-The MCP view needs real content: list registered servers, show available tools per server,
-allow test invocations, display recent MCP call logs from `runs.jsonl` tool_calls.
+Remaining open: **Submit live output streaming** (SSE per-run stdout → structured rendering)
+— not yet implemented; deferred to 0.3.0.
 
 ---
 
 ## 0.3.0 — Self-improvement loop
 
+### ✓ Leverage as RLHF reward signal
+Computed and logged on every run in `RunTrace.finish()`. Proxy formula:
+`leverage = wiggum_score × output_lines / (runtime_hours)`. Overridden by exact
+`tac_hours × quality_norm / runtime_s` formula when `tac_hours` is set. Exposed as
+`leverage` chip in Runs list and summary card. Secondary DPO reward signal available.
+
+### ✓ Fan-out planned queries
+`gather_research()` pre-fetches all `planned_queries` in parallel via
+`ThreadPoolExecutor(max_workers=5)` before the loop starts. Loop reads pre-fetched
+results; falls back to direct `web_search_raw` if prefetch raised. Eliminates sequential
+blocking on the minimum-window rounds.
+
+### ✓ Oversearch detector
+Domain diversity tracking per round: `net_new_domains = round_domains - seen_domains`.
+After `SEARCHES_PER_TASK` (2) minimum rounds, fires if 2 consecutive rounds add zero
+net-new domains. Disabled by `force_deep=True`. Estimated 20-40% token reduction on
+well-sourced tasks.
+
+### ✓ Autoresearch stall replan
+Stall replan injection into `PROPOSE_PROMPT` after 4+ consecutive discarded experiments.
+Already in place.
+
 ### `/plan` interactive approval
 Show gap analysis and proposed search queries before any search runs. Terminal path:
 `input()` prompt with editable query list. Dashboard path: SSE plan event → editable
 plan card with Approve button → `POST /api/runs/{run_id}/approve-plan` → agent continues.
-
-### Autoresearch stall replan
-If 4+ consecutive autoresearch experiments are discarded, inject into `PROPOSE_PROMPT`:
-"The last 4 variations were all discarded — propose a fundamentally different framing."
-Mirrors MagenticOne's replan trigger. Low effort, high impact on proposer local minima.
-
-### Oversearch detector
-Track unique-domain coverage across search rounds: after each round, count net-new domains
-vs. rounds already seen. If 2+ consecutive rounds add zero net-new domains — or new snippets
-overlap >85% with already-retrieved content (cosine sim on embeddings) — terminate early and
-proceed to synthesis. Dual signal: domain diversity (cheap, no model call) + semantic overlap
-(accurate, uses existing `nomic-embed-text` embed path). Prevents the model from spending
-tokens re-fetching the same sources under different query phrasings. Estimated 20-40% token
-reduction on tasks where the top-5 sources answer the question fully.
 
 ### Search result cache
 SQLite-backed cache keyed on normalized query fingerprint (24h TTL). Wire into
@@ -163,17 +134,11 @@ After fine-tune v2 completes:
 `trl dpo --model <sft-checkpoint> --dataset hf_datasets/dpo.jsonl`
 Re-import via Ollama Modelfile and benchmark against base producer.
 
-### Leverage as RLHF reward signal
-Current reward signal is Wiggum score — a quality proxy, but blind to human-time cost.
-Leverage = (task_value × automation_fraction) / human_time_saved. Concretely:
-`leverage = wiggum_score × output_lines / (run_duration_s / 3600)` as a first proxy.
-This is already derivable from `runs.jsonl` fields (`wiggum_scores`, `output_lines`,
-`run_duration_s`). Compute and log `leverage` on every run; expose in `RunRecord` and
-the Runs dashboard. Use as secondary reward in DPO preference pairs: prefer runs with
-higher leverage over runs with the same Wiggum score but slower execution or shorter
-output. Connects the multiplicative capability model (pipeline value = ∏ stage_factors)
-to the fine-tuning loop — a producer that oversearches or over-generates burns leverage
-and will be down-ranked even if its raw quality score is acceptable.
+### Submit: live output streaming
+`POST /api/tasks` queues a run and returns a `run_id`. The Submit view should then
+open an SSE connection to `/api/runs/{run_id}/stream` and render the agent's stdout
+(plan events, search rounds, wiggum scores) in real time — identical to the terminal
+but with structured rendering for `[EVENT]` lines.
 
 ---
 
@@ -181,6 +146,9 @@ and will be down-ranked even if its raw quality score is acceptable.
 
 Four patterns ordered by orchestration complexity. Start with Pattern 1 (already in place);
 each step up requires a more capable orchestrating model.
+
+### ✓ Pattern 2 — Fan-out web search
+`gather_research()` pre-fetches planned queries in parallel. Implemented in 0.3.0.
 
 ### Pattern 2 — Fan-out annotation loop ← next
 The annotation loop in `lit_review_skill.py` calls the LLM once per paper, sequentially.
@@ -197,11 +165,6 @@ with ThreadPoolExecutor(max_workers=parallel) as pool:
     for fut in as_completed(futures):
         results[futures[fut]] = fut.result()
 ```
-
-### Pattern 2 — Fan-out web search
-`gather_research()` runs search rounds sequentially. Each query is independent. Fan-out
-the search round loop: spawn N query threads, collect with `as_completed`, merge results.
-Reduces research wall time by 3-4× on tasks with ≥5 search queries.
 
 ### Pattern 3 — Agent pool for orchestrator subtasks
 `orchestrator.py` spawns subtasks via `ThreadPoolExecutor` already, but subtasks are
