@@ -76,5 +76,9 @@ api_out.txt
 api_err.txt
 
 # Notebooks
+notebooks/
 *.ipynb
 .ipynb_checkpoints/
+
+# TTS training artifacts
+speecht5_nicho/

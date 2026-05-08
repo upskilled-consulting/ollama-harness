@@ -239,33 +239,35 @@ trace reconstruction across agent conversation histories.
 Fine-tune `microsoft/speecht5_tts` on local voice recordings to produce a personalized
 speech model that feeds back into the harness voice interface.
 
-### Data pipeline
+### Data pipeline ✓
 Timestamped transcripts (`data/transcripts/*-transcript.md`) are paired with matching WAVs
 (`notes/*.wav`). `my_utils.py` parses each transcript line into a manifest row with
 `audio_filepath`, `start`, `end`, `duration`, and `text`. Segments are filtered by duration
 (1.5–10s) and word count (≥4 words), and short-circuit endings (`"...and"`, `"...of"`, etc.)
-are dropped. The `reading_scripts.md` file at repo root contains prepared passages to record
-as additional op-notes — targeting 200+ clean utterances before a first training run.
+are dropped. `reading_scripts.md` contains prepared passages to record as additional op-notes.
+Current dataset: ~20 clean utterances. Target before next training pass: 200+.
 
-### Speaker embeddings
-512-dim x-vector embeddings via `speechbrain/spkrec-xvect-voxceleb`. Each segment's audio
-is sliced to its exact timestamp window and resampled to 16kHz before embedding extraction.
-Inference uses an average embedding across all training clips for a stable identity vector.
+### Speaker embeddings ✓
+512-dim x-vector embeddings via `speechbrain==0.5.15` + `spkrec-xvect-voxceleb`. Each
+segment is sliced to its exact timestamp window and resampled to 16kHz before embedding.
+Inference averages embeddings across all training clips for a stable identity vector.
+Note: `speechbrain>=1.0` has a broken lazy-importer that cascades on missing optional deps
+(`k2`, `flair`) — pin to `0.5.15`.
 
-### Training
+### Training ✓
 `Seq2SeqTrainer` on `SpeechT5ForTextToSpeech`, 500 steps, batch 2 + gradient accumulation 4,
-`lr=1e-5`, fp16. Processed dataset saved to `data/tts_dataset/processed/` (Arrow format) so
-re-runs skip audio preprocessing. Checkpoint saved to `speecht5_nicho/final/`.
+`lr=1e-5`, fp16. Final checkpoint at `speecht5_nicho/checkpoint-500/`, training loss 0.467.
+Notebooks: `notebooks/tts_training.ipynb`, `notebooks/tts_inference.ipynb`.
 
 ### Integration target
 Swap the voice FAB's synthesis backend from an external API to the local fine-tuned checkpoint.
 The `/transcribe` skill already handles audio input; TTS closes the other direction.
 
 ### Iterative improvement
-Each new op-note recording expands the training set. Once the dataset reaches ~500 utterances,
-run a second fine-tuning pass on top of the first checkpoint (continued training, not from base).
-Wiggum-style eval for voice: MOS proxy via a discriminator or preference comparison against the
-base SpeechT5 voice.
+Record the passages in `reading_scripts.md`, rebuild the manifest, and run a continued
+training pass on top of `checkpoint-500` (not from base). Target: 200+ utterances before
+the second pass, 500+ before evaluating voice character transfer. Wiggum-style eval for
+voice: MOS proxy via preference comparison against the base SpeechT5 output.
 
 ---
 
