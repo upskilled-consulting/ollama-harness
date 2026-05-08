@@ -28,6 +28,11 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 - Fan-out planned queries in `gather_research()` — parallel `ThreadPoolExecutor` prefetch ✓
 - Oversearch detector — domain diversity tracking, terminates after 2 consecutive zero-net-new-domain rounds ✓
 - Test suite — 28 tests across logger, agent, and API endpoint modules ✓
+- Search result cache (`search_cache.py`) — SQLite TTL cache for DDGS results and research contexts ✓
+- Chunked URL retrieval (`chunker.py`) — 512-token overlapping segments, semantic top-K retrieval via nomic-embed-text ✓
+- OCR cascade (`ocr.py`) — PyMuPDF → llama-server GLM-OCR → llama3.2-vision fallback ✓
+- Perfetto trace instrumentation — Chrome Trace Event JSON per run, loadable at ui.perfetto.dev ✓
+- Curator (`curator.py`) — 5-persona LLM paper scoring with veto floor; filters annotation corpus ✓
 
 ### Dashboard views
 - **Home** — KPI cards (total runs, pass rate, avg score, token spend) + activity feed
@@ -60,6 +65,7 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 | `/debug [filter]` | ✓ FAIL/ERROR run diagnosis |
 | `/sync-wiki` | ✓ deterministic wiki sync |
 | `/panel` | ✓ 3-persona wiggum review panel |
+| `/curate` | ✓ 5-persona LLM paper scoring + veto-floor corpus filter |
 | `/grill-me [domain]` | → 0.3.5 saturation-driven user interview |
 | `/onboarding` | → 0.3.5 first-run personalization via /grill-me |
 
@@ -115,15 +121,16 @@ Show gap analysis and proposed search queries before any search runs. Terminal p
 `input()` prompt with editable query list. Dashboard path: SSE plan event → editable
 plan card with Approve button → `POST /api/runs/{run_id}/approve-plan` → agent continues.
 
-### Search result cache
-SQLite-backed cache keyed on normalized query fingerprint (24h TTL). Wire into
-`web_search_raw()` — transparent to the pipeline. Eliminates DDGS rate-limit risk
-and removes ~30s latency per autoresearch iteration on repeat eval tasks.
+### ✓ Search result cache
+`search_cache.py` — SQLite-backed, keyed on normalized query fingerprint, 24h TTL.
+Wired into `web_search_raw()` as transparent cache; separate `get_research`/`put_research`
+for full research-context cache (opt-in via `RESEARCH_CACHE=1`). Eliminates DDGS
+rate-limit risk; removes ~30s latency per autoresearch iteration on repeat eval tasks.
 
-### Chunked URL retrieval
-Replace hard-truncation at `URL_ENRICH_MAX_CHARS = 8000` with semantic chunking:
-512-token overlapping segments → embed via `nomic-embed-text` → retrieve top-K
-chunks most similar to the task string. Depends on `sqlite-vec` (already in deps).
+### ✓ Chunked URL retrieval
+`chunker.py` — replaces hard-truncation at 8000 chars with 512-token overlapping segments
+embedded via `nomic-embed-text`; retrieves top-K chunks most similar to the task string.
+Provenance metadata attached per chunk. Falls back to head-truncation if embed model unavailable.
 
 ### Nanda annotator integration
 After fine-tune v2 completes:
@@ -309,6 +316,93 @@ Full peer-to-peer agent messaging. Prerequisite for the autonomous swarm — the
 Proposer/Executor/Critic loop requires agents to coordinate directly without a central
 bottleneck. Blocked on: cycle detection, shared file conflict resolution, distributed
 trace reconstruction across agent conversation histories.
+
+---
+
+## 0.3.6 — Observability, tooling, and critic infrastructure
+
+Items recovered from pre-refactor roadmap that are open and not yet ported.
+
+### Unified structured event protocol (`[EVENT]` format)
+All pipeline stages print `[EVENT]<json>` to stdout. The SSE stream already delivers
+these to the dashboard. Currently the dashboard renders raw stdout; structured events
+enable per-stage progress cards, live plan display, and training metrics without polling.
+
+Event taxonomy:
+```json
+{"type": "plan",   "data": {"queries": [...], "gaps": [...], "complexity": "high"}}
+{"type": "search", "data": {"query": "...", "round": 1, "hits": 3}}
+{"type": "synth",  "data": {"stage": "start", "tokens_in": 4200}}
+{"type": "wiggum", "data": {"round": 1, "score": 7.4, "dims": {...}}}
+{"type": "metric", "data": {"step": 14, "loss": 1.35, "epoch": 0.13}}
+{"type": "span",   "data": {"name": "forward_pass", "duration_ms": 1240}}
+{"type": "log",    "data": {"text": "raw stdout line"}}
+```
+
+Non-`[EVENT]` lines fall through as `log` — backward compatible. Build order:
+1. Emit `plan` + `search` + `wiggum` events from `agent.py` and `wiggum.py` — small, immediate
+2. Add `DashboardCallback` (`trl.TrainerCallback`) to `finetune_annotate.py` — emits `metric`
+   events per step + appends to `finetune_metrics.jsonl`; `GET /api/finetune/metrics` serves it
+3. Dashboard: parse `[EVENT]` prefix → plan card above log stream; Training tab with live loss
+4. `FinetuneTracer` — `torch.cuda.Event` GPU-accurate spans; writes `traces/finetune_<ts>.json`
+
+Ties Submit streaming, `/plan` card, and live training metrics into one coherent protocol.
+
+### Agentic cost estimator (COCOMO II analog)
+Pre-task estimate of LLM calls, tokens, wall time, and wiggum rounds — calibrated from
+`runs.jsonl` actuals. Emits alongside the `plan` event so the user knows before committing
+whether a task is a 2-minute or 45-minute run.
+
+```python
+CostEstimate(
+    estimated_llm_calls      = N,
+    estimated_tokens         = K,
+    estimated_wiggum_rounds  = 1-3,
+    estimated_wall_time_s    = T,
+    complexity               = "low" | "medium" | "high",
+    risk_flags               = ["count_constraint", "novel_task_type", ...],
+    confidence               = 0.0-1.0,
+)
+```
+
+COCOMO II → harness unit mapping: SLOC → task complexity + expected output size;
+Precedentedness → memory hit rate; Architecture/Risk → plan complexity + subtask count;
+Team cohesion → evaluator/producer score variance; Process maturity → wiggum round
+distribution. Trains on `runs.jsonl` after 50+ runs; self-calibrating. Variance between
+estimated and actual logged per run for retrospective drift analysis.
+
+Plugs into: `/plan` card (show before any search runs); swarm scheduler (allocate model
+tier by estimated cost); roadmap prioritization (rank open items by effort/value ratio).
+
+### Harness ontology layer (`code-review-graph`)
+Tree-sitter AST parsing → function call graph → community detection → SQLite graph.
+Incremental updates in <2s per save. Enables:
+- **Blast-radius context for Proposer/Critic** — "changing `synthesize()` touches 6 downstream callers" — 8× fewer tokens than full-file reads per published benchmarks
+- **`/plan` blast-radius preview** — before executing a plan step, query which harness functions are affected
+- **Dead code detection** — orphaned skills, stale stage hooks, unused utilities
+- **Wiki auto-generation** — `code-review-graph wiki` produces markdown from code communities via Ollama → feeds harness memory
+- **Structural graph diffs across worktrees** — each Proposer worktree builds its own graph; Critic compares edge sets
+
+```bash
+pip install "code-review-graph[communities,wiki]"
+code-review-graph build    # initial parse
+code-review-graph watch    # incremental on save/commit
+```
+
+Build after Stage 4 Proposer prototype exists — most valuable once agents need structured
+context about what they can mutate and what the downstream impact is.
+
+### Evaluator rotation (Gemma 4 26B)
+`Qwen3-Coder:30b` is the sole evaluator across wiggum and panel. Single-evaluator
+autoresearch risks optimizing against one model's scoring bias invisibly.
+
+Gemma 4 26B (MoE, 3.8B active params at inference) is the right candidate: different
+architecture family (Google vs Alibaba), fits alongside pi-qwen-32b without full VRAM swap,
+256K context, native function calling, configurable thinking mode.
+
+Test protocol: `EVALUATOR_MODEL=gemma4:26b python eval_suite.py --tasks T_D,T_E --score`.
+If scores diverge significantly → rotate evaluators across autoresearch sessions or add
+Gemma 4 as a 4th panel persona. If scores converge → rubric is robust.
 
 ---
 
