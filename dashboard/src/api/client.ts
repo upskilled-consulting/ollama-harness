@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, LiveRun, McpLogEntry, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -24,6 +24,7 @@ export const api = {
   all_runs:  ()                             => get<RunRecord[]>("/runs/all"),
   queue:     ()                             => get<{ pending: number; items: QueueItem[] }>("/queue"),
   mcp_log:   (limit = 200)                 => get<McpLogEntry[]>(`/mcp/log?limit=${limit}`),
+  mcp_tools: ()                             => get<McpTool[]>("/mcp/tools"),
   sessions:  ()                             => get<Session[]>("/sessions"),
   artifacts: ()                             => get<Artifact[]>("/artifacts"),
   plans:     ()                             => get<PlanRecord[]>("/plans"),

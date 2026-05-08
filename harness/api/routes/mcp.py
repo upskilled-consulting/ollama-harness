@@ -1,4 +1,4 @@
-"""GET /api/mcp/log — MCP task log."""
+"""GET /api/mcp/log — MCP task log.  GET /api/mcp/tools — registered tool manifest."""
 
 import json
 
@@ -7,6 +7,37 @@ from fastapi import APIRouter
 from harness.config import LEGACY_MCP_LOG, MCP_LOG
 
 router = APIRouter(tags=["mcp"])
+
+_TOOLS = [
+    {
+        "name": "run_task",
+        "description": "Run a research or synthesis task through the harness agent pipeline. Include a .md output path in the task string.",
+        "parameters": [
+            {"name": "task",    "type": "string", "required": True},
+            {"name": "api_key", "type": "string", "required": False},
+        ],
+    },
+    {
+        "name": "run_orchestrated",
+        "description": "Run a complex multi-subtask research task through the orchestrator. Decomposes into parallel subtasks.",
+        "parameters": [
+            {"name": "task",    "type": "string", "required": True},
+            {"name": "api_key", "type": "string", "required": False},
+        ],
+    },
+    {
+        "name": "get_run",
+        "description": "Retrieve a run record from runs.jsonl by run_id. Returns JSON summary of task, scores, status, and duration.",
+        "parameters": [
+            {"name": "run_id", "type": "string", "required": True},
+        ],
+    },
+]
+
+
+@router.get("/tools")
+async def mcp_tools():
+    return _TOOLS
 
 
 @router.get("/log")

@@ -61,6 +61,10 @@ export function useMcpLog() {
   return useQuery({ queryKey: ["mcp_log"], queryFn: () => api.mcp_log(), refetchInterval: 5_000 });
 }
 
+export function useMcpTools() {
+  return useQuery({ queryKey: ["mcp_tools"], queryFn: api.mcp_tools, staleTime: Infinity });
+}
+
 export function useSubmitTask() {
   const qc = useQueryClient();
   return useMutation({

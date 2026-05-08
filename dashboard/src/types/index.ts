@@ -221,3 +221,15 @@ export interface ArtifactContent {
   bytes:     number;
   path:      string;
 }
+
+export interface McpToolParam {
+  name:     string;
+  type:     string;
+  required: boolean;
+}
+
+export interface McpTool {
+  name:        string;
+  description: string;
+  parameters:  McpToolParam[];
+}
