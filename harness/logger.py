@@ -467,17 +467,21 @@ class RunTrace:
             self.data["final"] = final
         self.data["run_duration_s"] = round(time.monotonic() - self._run_start, 1)
 
-        tac_hours = self.data.get("tac_hours")
-        scores    = self.data.get("wiggum_scores") or []
+        tac_hours    = self.data.get("tac_hours")
+        scores       = self.data.get("wiggum_scores") or []
+        runtime_s    = self.data["run_duration_s"]
+        output_lines = self.data.get("output_lines", 0)
         if tac_hours and scores:
             quality_norm  = scores[-1] / 10.0
             tac_s         = tac_hours * 3600.0
-            runtime_s     = self.data["run_duration_s"]
             energy_cost   = float(os.environ.get("HARNESS_ENERGY_COST_PER_RUN", 0.0))
             infer_cost    = float(os.environ.get("HARNESS_INFERENCE_COST_PER_RUN", 0.0))
             hourly_rate   = float(os.environ.get("HARNESS_HOURLY_RATE", 75.0))
             cost_s        = ((energy_cost + infer_cost) / hourly_rate) * 3600.0
             self.data["leverage"] = round((tac_s * quality_norm) / max(runtime_s + cost_s, 1.0), 2)
+        elif scores and output_lines and runtime_s > 0:
+            # Proxy: score × lines / (runtime_hours) — derivable from every run
+            self.data["leverage"] = round(scores[-1] * output_lines / max(runtime_s / 3600.0, 1e-6), 2)
 
         tok_in   = self.data["input_tokens"]
         tok_out  = self.data["output_tokens"]

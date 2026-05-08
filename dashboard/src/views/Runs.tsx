@@ -559,6 +559,7 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
         <Chip label="in"       value={run.input_tokens ? run.input_tokens.toLocaleString() : null} />
         <Chip label="out"      value={run.output_tokens ? run.output_tokens.toLocaleString() : null} />
         <Chip label="output"   value={run.output_bytes != null ? `${(run.output_bytes / 1024).toFixed(1)} KB` : null} />
+        {run.leverage != null && <Chip label="leverage" value={`${run.leverage.toFixed(1)}×`} />}
         {scores.map((s, i) => (
           <span key={i} style={{ display: "inline-flex", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, fontWeight: 700, fontFamily: "var(--font-mono)", background: `${scoreColor(s)}15`, border: `1px solid ${scoreColor(s)}40`, color: scoreColor(s) }}>
             r{i + 1} · {s.toFixed(1)}
@@ -796,6 +797,9 @@ function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLi
                 {r.final && <span className={clsx("badge", r.final.toLowerCase())} style={{ fontSize: "0.6rem" }}>{r.final}</span>}
                 {score != null && (
                   <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)", color: scoreColor(score) }}>{score.toFixed(1)}</span>
+                )}
+                {r.leverage != null && (
+                  <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>{r.leverage.toFixed(0)}×</span>
                 )}
                 {r.run_duration_s != null && (
                   <span style={{ fontSize: 10, color: "var(--dim)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>{r.run_duration_s.toFixed(0)}s</span>
