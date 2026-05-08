@@ -1,5 +1,6 @@
 """GET /api/runs — active + recent runs; GET /api/data — dashboard payload."""
 
+import asyncio
 import json
 import os
 from collections import Counter, defaultdict
@@ -73,6 +74,25 @@ async def get_all_runs():
     return _load_runs(n=10_000)
 
 
+def _find_run_by_id(run_id: str) -> dict | None:
+    """Scan JSONL files (newest-first) for a specific run_id without loading everything."""
+    for path in (RUNS_FILE, LEGACY_RUNS_FILE):
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("run_id") == run_id:
+                return r
+    return None
+
+
 @router.get("/runs/{run_id}/content")
 async def get_run_content(run_id: str):
     """Return the markdown output file content for a run.
@@ -80,8 +100,7 @@ async def get_run_content(run_id: str):
     Falls back to inline final_content stored in the run record when the output
     file is absent (common for legacy runs whose paths no longer exist on disk).
     """
-    runs = _load_runs(n=10_000, full=True)
-    run = next((r for r in runs if r.get("run_id") == run_id), None)
+    run = await asyncio.to_thread(_find_run_by_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
