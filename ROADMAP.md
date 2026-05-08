@@ -61,6 +61,7 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 | `/sync-wiki` | ✓ deterministic wiki sync |
 | `/panel` | ✓ 3-persona wiggum review panel |
 | `/grill-me [domain]` | → 0.3.5 saturation-driven user interview |
+| `/onboarding` | → 0.3.5 first-run personalization via /grill-me |
 
 ---
 
@@ -226,6 +227,59 @@ which unblocks the agent loop for the next round. Progress bar shows round N of 
 Any skill can call `grill_me_preflight(task, trace)` to run a short interview before
 executing — e.g., `/deck` runs a 3-round preflight when the task string is short/ambiguous,
 ensuring the slide structure reflects actual intent rather than the agent's best guess.
+
+### `/onboarding` — First-run personalization
+
+`/grill-me` applied to a specific goal: learning who the user is before they've run a
+single task. Called automatically on the first invocation of `oh` when no user profile
+exists, or explicitly any time to refresh configuration.
+
+**What makes it distinct from a bare `/grill-me` run:**
+
+1. **Fixed question scaffold** — the first 3 rounds always cover the same ground regardless
+   of novelty: role and domain, primary use cases, output format preferences. This ensures a
+   minimum viable profile even if answers are terse. Free-form novelty-gated rounds follow.
+
+2. **Writes persistent config, not just a brief** — after the interview, synthesizes answers
+   into two artifacts:
+   - `data/user_profile.md` — human-readable, version-controlled, editable
+   - `.harness-user.toml` — machine-readable config consumed by the harness at startup:
+     ```toml
+     [user]
+     role          = "ML researcher"
+     domain        = "LLM fine-tuning, RLHF, local inference"
+     preferred_model  = "pi-qwen-32b"
+     preferred_format = "markdown with H2 sections"
+     verbosity     = "concise"
+
+     [routing]
+     research_tasks = "pi-qwen-32b"
+     coding_tasks   = "qwen2.5-coder-14b"
+     ```
+
+3. **Seeds semantic memory** — user-provided domain terms, prior project names, preferred
+   vocabulary, and stated expertise are embedded via `nomic-embed-text` and written to
+   ChromaDB's `user_context` collection. Subsequent `/recall` and synthesis prompts
+   include top-K user-context chunks alongside task-specific memory — so the model
+   already "knows" the user's stack, terminology, and constraints before the first task runs.
+
+4. **Auto-triggers on first use** — detected by absence of `.harness-user.toml`. The
+   terminal prints a one-line prompt before launching the interview:
+   ```
+   oh > No user profile found. Running /onboarding (takes ~2 min). Skip with --no-onboard.
+   ```
+
+5. **Re-run is additive, not destructive** — subsequent `/onboarding` runs diff the new
+   answers against the existing profile and merge changes rather than overwriting, preserving
+   manual edits to `.harness-user.toml`.
+
+**Tactful by design:** question count is capped at 6 regardless of `MAX_INTERVIEW_ROUNDS`.
+The user is new to the system — the goal is a warm start, not a thorough audit. Depth comes
+later from accumulated run telemetry.
+
+**After onboarding completes**, runs `/orientation` to show the user what was configured and
+suggest a first task based on their stated use case. Closes the loop: the harness knows who
+it's talking to before the first real `oh <task>` is ever typed.
 
 ### Pattern 3 — Agent pool for orchestrator subtasks
 `orchestrator.py` spawns subtasks via `ThreadPoolExecutor` already, but subtasks are
