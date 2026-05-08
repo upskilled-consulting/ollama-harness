@@ -40,6 +40,10 @@ _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)
 
 
+def _emit(event_type: str, data: dict) -> None:
+    print(f"[EVENT]{json.dumps({'type': event_type, 'data': data})}", flush=True)
+
+
 try:
     from markitdown import MarkItDown
     MARKITDOWN_AVAILABLE = True
@@ -536,6 +540,7 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
         if panel_reviews:
             round_record["panel_reviews"] = panel_reviews
         trace["rounds"].append(round_record)
+        _emit("wiggum", {"round": round_num, "score": score, "passed": passed, "dims": dims})
 
         if passed:
             print(f"\n[wiggum] PASS on round {round_num} (score {score}/10)")

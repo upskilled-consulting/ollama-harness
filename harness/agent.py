@@ -140,6 +140,12 @@ except ImportError:
 MODEL = os.environ.get("HARNESS_PRODUCER_MODEL", "pi-qwen-32b").strip()
 COMPRESS_MODEL = os.environ.get("COMPRESS_MODEL", MODEL).strip()  # lighter model for compress_knowledge / plan_query
 
+
+def _emit(event_type: str, data: dict) -> None:
+    """Print a structured pipeline event consumed by the dashboard SSE stream."""
+    import json as _j
+    print(f"[EVENT]{_j.dumps({'type': event_type, 'data': data})}", flush=True)
+
 # If the configured models aren't served, fall back to whatever vLLM has loaded.
 # This prevents 404s when switching between model configs without restarting the server.
 try:
@@ -912,6 +918,7 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             print(f"  [web_search {round_num}] {query}{suffix}")
             results = web_search_raw(query)
 
+        _emit("search", {"round": round_num, "query": query, "hits": len(results)})
         trace.log_tool_call("web_search", query, len(format_results(results)))
 
         # Domain tracking for oversearch detector (cheap — always run)
@@ -3235,6 +3242,13 @@ Rules:
             if _planner_resp is not None:
                 trace.log_usage(_planner_resp, stage="planner")
                 trace.log_planner_cot(_planner_resp)
+            _emit("plan", {
+                "task_type":  plan.task_type,
+                "complexity": plan.complexity,
+                "queries":    plan.search_queries or [],
+                "gaps":       plan.knowledge_gaps or [],
+                "notes":      plan.notes or "",
+            })
             print(f"  [planner] {plan.task_type} / {plan.complexity}"
                   + (f" / {plan.expected_sections} sections" if plan.expected_sections else "")
                   + (f"\n  [planner] note: {plan.notes}" if plan.notes else ""))
@@ -3371,6 +3385,7 @@ Rules:
 
         trace.set_stage("synth")
         print("\n  [synth] synthesizing from merged results...")
+        _emit("synth", {"stage": "start", "task_type": plan.task_type, "context_chars": len(context)})
         if expected_count is not None:
             print(f"  [count] detected count constraint: {expected_count} — using count-aware synthesis")
             with trace.span("synthesize", model=producer_model):
@@ -3381,6 +3396,7 @@ Rules:
 
         # Clean fences and trailing epilogues before any downstream processing
         content = clean_synthesis_output(content)
+        _emit("synth", {"stage": "done", "chars": len(content)})
 
         # Count verification (safety net — synthesis should already comply)
         if expected_count is not None:
