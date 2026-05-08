@@ -15,24 +15,29 @@ _queue_lock = asyncio.Lock()
 
 
 async def _run_task(item: QueueItem, request: TaskRequest) -> None:
-    import sys
-
-    from harness.config import ROOT
-
     async with _queue_lock:
         item.status = "running"
 
-    cmd = [sys.executable, str(ROOT / "oh.py"), request.task]
-    if request.producer_model:
-        cmd += ["--producer", request.producer_model]
-    if request.no_wiggum:
-        cmd.append("--no-wiggum")
+    def _execute() -> None:
+        from harness.agent import run as _agent_run
+        try:
+            _agent_run(
+                request.task,
+                use_wiggum=not bool(request.no_wiggum),
+                producer_model=request.producer_model or None,
+            )
+        except SystemExit:
+            # agent calls sys.exit(1) on some error paths — catch here so we
+            # don't propagate SystemExit through asyncio.to_thread into the server
+            pass
 
-    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(ROOT))
-    await proc.wait()
-
-    async with _queue_lock:
-        item.status = "done" if proc.returncode == 0 else "error"
+    try:
+        await asyncio.to_thread(_execute)
+        async with _queue_lock:
+            item.status = "done"
+    except Exception:
+        async with _queue_lock:
+            item.status = "error"
 
 
 @router.post("/tasks", status_code=202)
@@ -42,5 +47,3 @@ async def submit_task(request: TaskRequest, background: BackgroundTasks):
         _queue.append(item)
     background.add_task(_run_task, item, request)
     return {"item_id": item.item_id, "status": "pending"}
-
-
