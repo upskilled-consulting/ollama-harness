@@ -2,7 +2,6 @@
 
 import json
 import os
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -174,7 +173,7 @@ _MSG_CONTENT_MAX = 40_000
 @router.get("/runs/{run_id}/messages")
 async def get_run_messages(
     run_id: str,
-    stage: Optional[str] = Query(default=None),
+    stage: str | None = Query(default=None),
 ):
     """Return logged LLM turns for a run, optionally filtered by stage."""
     if not _MESSAGES_FILE.exists():
