@@ -623,7 +623,12 @@ def run_lit_review(
 ) -> dict:
     t0 = time.monotonic()
 
+    def _stage(name: str) -> None:
+        if _trace and hasattr(_trace, "set_stage"):
+            _trace.set_stage(name)
+
     # 1. Fetch or load
+    _stage("search")
     if csv_path and csv_path.exists():
         print(f"\n[lit-review] loading {csv_path}...")
         with open(csv_path, newline="", encoding="utf-8") as f:
@@ -636,22 +641,25 @@ def run_lit_review(
             return {"papers": 0, "clusters": 0, "out_path": "", "error": "no_papers"}
 
     # 2. Enrich
+    _stage("plan")
     with (_trace.span("enrich", papers=len(papers)) if _trace else _nullctx()):
         papers, graph = step_enrich(papers, skip=no_s2)
 
     # 3. Curate
+    _stage("memory")
     papers = step_curate(papers, max_annotate, query=query, skip=no_curate,
                          producer_model=producer_model, _trace=_trace)
 
     # 4. Annotate
+    _stage("synth")
     papers = step_annotate(papers, producer_model, evaluator_model,
                            use_wiggum=(not no_wiggum),
                            checkpoint_dir=checkpoint_dir, _trace=_trace)
 
-    # 5. Cluster
+    # 5. Cluster + 6. Synthesize
+    _stage("eval")
     clusters = step_cluster(papers, model=DEFAULT_CLUSTER_MODEL, _trace=_trace)
 
-    # 6. Synthesize
     synthesis_data = step_synthesize(papers, clusters, model=DEFAULT_CLUSTER_MODEL,
                                      _trace=_trace)
 
