@@ -120,7 +120,7 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
             sort_by=False,
             after=after_dt,
             before=before_dt,
-            sleep_s=3.0,
+            sleep_s=5.0,
         )
     # If keyword extraction found nothing, retry with "all" field
     if not rows and field != "all":

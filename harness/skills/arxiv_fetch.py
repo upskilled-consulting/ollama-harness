@@ -45,7 +45,7 @@ except ImportError as _e:
 BASE_URL     = "https://export.arxiv.org/api/query?"
 DEFAULT_MAX  = 300
 DEFAULT_BATCH = 100
-DEFAULT_SLEEP = 3.0
+DEFAULT_SLEEP = 5.0
 
 COLUMNS = ["title", "authors", "published", "updated", "summary",
            "arxiv_url", "pdf_url", "arxiv_id", "categories"]
@@ -147,7 +147,20 @@ def fetch(
         )
         print(f"[arxiv] fetching {start}–{start + this_batch}...  ", end="", flush=True)
 
+        # Fetch with 429 retry — arXiv rate-limits aggressively; back off and retry.
         feed = feedparser.parse(url)
+        _status = getattr(feed, "status", 200)
+        if _status == 429:
+            for _wait in (30, 60, 120):
+                print(f"429 rate-limited — waiting {_wait}s")
+                time.sleep(_wait)
+                feed = feedparser.parse(url)
+                if getattr(feed, "status", 200) != 429:
+                    break
+            else:
+                print("[arxiv] still rate-limited after retries — stopping")
+                break
+
         entries = feed.entries
 
         if not entries:
