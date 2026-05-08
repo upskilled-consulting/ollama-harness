@@ -39,9 +39,8 @@ from pathlib import Path
 
 try:
     import feedparser
-except ImportError:
-    print("[arxiv_fetch] feedparser not installed: pip install feedparser")
-    sys.exit(1)
+except ImportError as _e:
+    raise ImportError("[arxiv_fetch] feedparser not installed: uv add feedparser") from _e
 
 BASE_URL     = "https://export.arxiv.org/api/query?"
 DEFAULT_MAX  = 300

@@ -80,16 +80,41 @@ ANNOTATE_MODEL = "nanda-annotator-v2-q4km:latest"
 # Step 1: Fetch
 # ---------------------------------------------------------------------------
 
+_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "with", "and", "or",
+    "is", "are", "be", "as", "by", "from", "that", "this", "using", "use",
+    "relative", "merits", "local", "agentic", "how", "what", "why", "which",
+    "we", "our", "their", "its", "via", "versus", "vs",
+})
+
+
+def _arxiv_query(natural: str) -> str:
+    """Extract key terms from a natural-language query for arXiv keyword search."""
+    words = re.sub(r"[^a-zA-Z0-9\s\-]", " ", natural).split()
+    keywords = [w for w in words if len(w) > 2 and w.lower() not in _STOPWORDS]
+    if not keywords:
+        return natural
+    # Keep up to 8 most informative (longer) tokens
+    keywords.sort(key=lambda w: -len(w))
+    return " ".join(keywords[:8])
+
+
 def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None,
                field: str = "abs", _trace=None) -> list[dict]:
     from harness.skills.arxiv_fetch import _parse_date, fetch
-    print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
+    arxiv_q = _arxiv_query(query) if len(query.split()) > 5 else query
+    if arxiv_q != query:
+        print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers")
+        print(f"  query : {query!r}")
+        print(f"  arxiv : {arxiv_q!r}")
+    else:
+        print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
     after_dt  = _parse_date(after)  if after  else None
     before_dt = _parse_date(before) if before else None
-    _ctx = _trace.span("fetch", query=query, max_fetch=max_fetch) if _trace else _nullctx()
+    _ctx = _trace.span("fetch", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()
     with _ctx:
         rows = fetch(
-            query=query,
+            query=arxiv_q,
             max_results=max_fetch,
             batch_size=100,
             field=field,
@@ -98,6 +123,12 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
             before=before_dt,
             sleep_s=3.0,
         )
+    # If keyword extraction found nothing, retry with "all" field
+    if not rows and field != "all":
+        print("  [lit-review] abs search returned 0 — retrying with field=all")
+        with _ctx:
+            rows = fetch(query=arxiv_q, max_results=max_fetch, batch_size=100,
+                         field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=3.0)
     print(f"[lit-review] fetched {len(rows)} papers")
     return rows
 
@@ -603,7 +634,7 @@ def run_lit_review(
         papers = step_fetch(query, max_fetch, after, before, _trace=_trace)
         if not papers:
             print("[lit-review] no papers fetched — aborting")
-            return {}
+            return {"papers": 0, "clusters": 0, "out_path": "", "error": "no_papers"}
 
     # 2. Enrich
     with (_trace.span("enrich", papers=len(papers)) if _trace else _nullctx()):

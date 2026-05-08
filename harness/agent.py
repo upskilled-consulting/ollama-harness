@@ -1625,7 +1625,10 @@ def run(task: str, use_wiggum: bool = True, producer_model: str = MODEL, evaluat
                 {"name": "web_search", "query": t}
                 for t in result.get("paper_titles", [])
             ]
-            trace.finish("PASS")
+            if result.get("error") or not out_path_str:
+                trace.finish("ERROR")
+            else:
+                trace.finish("PASS")
             if out_p and out_p.exists():
                 _store_memory(memory, task, "lit-review", trace.data, out_p.read_text(encoding="utf-8"))
 
