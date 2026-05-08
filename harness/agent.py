@@ -872,24 +872,52 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
         except Exception as _e:
             print(f"  [rcache] cache lookup failed: {_e} — running search normally")
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from urllib.parse import urlparse
+
     all_result_sets  = []
     queries_used     = []
     knowledge_state  = ""
     novelty_scores   = []
     novelty_gate     = NOVELTY_THRESHOLD if not force_deep else -1   # -1 = never gate
+    seen_domains:    set[str] = set()
+    consecutive_zero_domain_rounds = 0
+
+    # Fan-out: pre-fetch all planned queries in parallel.
+    # Gap-targeted rounds stay sequential — each query depends on knowledge_state
+    # accumulated from prior rounds and can't be generated upfront.
+    prefetched: dict[int, list[dict]] = {}
+    if planned_queries:
+        _pq = planned_queries[:MAX_SEARCH_ROUNDS]
+        print(f"  [web_search] pre-fetching {len(_pq)} planned queries in parallel...")
+        with ThreadPoolExecutor(max_workers=min(len(_pq), 5)) as pool:
+            _futs = {pool.submit(web_search_raw, q): (i + 1, q) for i, q in enumerate(_pq)}
+            for fut in as_completed(_futs):
+                rnum, _q = _futs[fut]
+                try:
+                    prefetched[rnum] = fut.result()
+                except Exception as _e:
+                    print(f"  [web_search pre-fetch error] query {rnum}: {_e}")
+                    prefetched[rnum] = []
 
     for round_num in range(1, MAX_SEARCH_ROUNDS + 1):
-        # Query selection: planned first, then gap-targeted model call
+        # Query selection: planned first (use pre-fetched results), then gap-targeted model call
         if planned_queries and round_num <= len(planned_queries):
             query = planned_queries[round_num - 1]
+            results = prefetched.get(round_num) or web_search_raw(query)
             print(f"  [web_search {round_num}] {query}  (planned)")
         else:
             query = plan_query(task, knowledge_state, round_num, producer_model=producer_model, trace=trace)
             suffix = "" if round_num == 1 else "  (gap-targeted)"
             print(f"  [web_search {round_num}] {query}{suffix}")
+            results = web_search_raw(query)
 
-        results = web_search_raw(query)
         trace.log_tool_call("web_search", query, len(format_results(results)))
+
+        # Domain tracking for oversearch detector (cheap — always run)
+        round_domains   = {urlparse(r.get("href", "")).netloc for r in results if r.get("href")}
+        net_new_domains = round_domains - seen_domains
+        seen_domains.update(round_domains)
 
         # Novelty gate — only after minimum rounds have run (skipped when force_deep)
         if round_num > SEARCHES_PER_TASK:
@@ -908,6 +936,18 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             novelty = assess_novelty(results, knowledge_state)
             novelty_scores.append(novelty)
             print(f"  [novelty] round {round_num}: {novelty}/10  (below gate minimum — continuing)")
+
+        # Oversearch detector — domain diversity (no model call, fires after minimum rounds)
+        if round_num > SEARCHES_PER_TASK and not force_deep:
+            if not net_new_domains:
+                consecutive_zero_domain_rounds += 1
+                print(f"  [oversearch] +0 new domains ({consecutive_zero_domain_rounds} consecutive zero-domain rounds)")
+                if consecutive_zero_domain_rounds >= 2:
+                    print("  [oversearch] search saturated — no new sources in 2 consecutive rounds, terminating early")
+                    break
+            else:
+                consecutive_zero_domain_rounds = 0
+                print(f"  [oversearch] +{len(net_new_domains)} new domains ({len(seen_domains)} total seen)")
 
         all_result_sets.append(results)
         queries_used.append(query)
