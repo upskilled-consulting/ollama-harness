@@ -49,7 +49,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from harness.inference import chat as _llm_chat
@@ -65,8 +65,11 @@ def _nullctx():
 TEMPLATES_DIR    = HERE / "templates"
 CHECKPOINT_DIR   = HERE / ".lit_review_cache"
 
-DEFAULT_MAX_FETCH    = 100
-DEFAULT_MAX_ANNOTATE = 20
+DEFAULT_MAX_FETCH      = 100
+DEFAULT_MAX_ANNOTATE   = 20
+DEFAULT_AFTER_YEARS    = 2      # default recency window; pass after="" to disable
+DEFAULT_MAX_KEEP       = 60     # TF-IDF top-N after fetching DEFAULT_MAX_FETCH
+DEFAULT_ANNOTATE_PARALLEL = 2   # match llama-server --parallel N
 DEFAULT_TEMPLATE     = "survey"
 DEFAULT_PRODUCER     = os.environ.get("PRODUCER_MODEL", "pi-qwen-32b")
 DEFAULT_EVALUATOR    = os.environ.get("EVALUATOR_MODEL", "Qwen3-Coder:30b")
@@ -99,9 +102,50 @@ def _arxiv_query(natural: str) -> str:
     return " ".join(keywords[:8])
 
 
-def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None,
-               field: str = "abs", _trace=None) -> list[dict]:
-    from harness.skills.arxiv_fetch import _parse_date, fetch
+def _tfidf_rank(query: str, rows: list[dict], max_keep: int) -> list[dict]:
+    """Return the top-max_keep rows most relevant to query by TF-IDF cosine similarity.
+
+    Scores title (weight 3×) + abstract against the query vector.
+    Falls back to returning rows unchanged if sklearn is unavailable or corpus is tiny.
+    """
+    if len(rows) <= max_keep:
+        return rows
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        import numpy as np
+    except ImportError:
+        return rows[:max_keep]
+
+    corpus = [
+        (r.get("title", "") + " ") * 3 + (r.get("summary", "") or "")
+        for r in rows
+    ]
+    docs = [query] + corpus
+    try:
+        mat   = TfidfVectorizer(stop_words="english", max_features=20_000).fit_transform(docs)
+        sims  = cosine_similarity(mat[0:1], mat[1:]).flatten()
+        top_i = np.argsort(sims)[::-1][:max_keep]
+        kept  = [rows[i] for i in sorted(top_i)]  # preserve original order
+    except Exception:
+        return rows[:max_keep]
+
+    dropped = len(rows) - len(kept)
+    print(f"[lit-review] TF-IDF re-rank: kept {len(kept)}/{len(rows)} papers (dropped {dropped} least relevant)")
+    return kept
+
+
+def step_fetch(
+    query:     str,
+    max_fetch: int,
+    after:     str | None,
+    before:    str | None,
+    field:     str  = "abs",
+    max_keep:  int  = DEFAULT_MAX_KEEP,
+    _trace=None,
+) -> list[dict]:
+    from harness.skills.arxiv_fetch import _parse_date, fetch_cached
+
     arxiv_q = _arxiv_query(query) if len(query.split()) > 5 else query
     if arxiv_q != query:
         print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers")
@@ -109,10 +153,23 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
         print(f"  arxiv : {arxiv_q!r}")
     else:
         print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
-    after_dt  = _parse_date(after)  if after  else None
+
+    # Default recency window: last DEFAULT_AFTER_YEARS years unless caller overrides.
+    # Pass after="all" (or --all-time flag) to fetch across all time.
+    if after is None:
+        cutoff  = datetime.now(UTC) - timedelta(days=DEFAULT_AFTER_YEARS * 365)
+        after_dt: datetime | None = cutoff
+        print(f"  date  : {cutoff.date()} -> now  (default {DEFAULT_AFTER_YEARS}-year window; pass --all-time to disable)")
+    elif after in ("all", "any", "all-time"):
+        after_dt = None
+        print("  date  : all time (no recency filter)")
+    else:
+        after_dt = _parse_date(after)
+
     before_dt = _parse_date(before) if before else None
+
     with (_trace.span("fetch", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
-        rows = fetch(
+        rows = fetch_cached(
             query=arxiv_q,
             max_results=max_fetch,
             batch_size=100,
@@ -122,13 +179,21 @@ def step_fetch(query: str, max_fetch: int, after: str | None, before: str | None
             before=before_dt,
             sleep_s=5.0,
         )
-    # If keyword extraction found nothing, retry with "all" field
+
+    # Retry with field=all when abs search returns nothing
     if not rows and field != "all":
         print("  [lit-review] abs search returned 0 — retrying with field=all")
         with (_trace.span("fetch_retry", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
-            rows = fetch(query=arxiv_q, max_results=max_fetch, batch_size=100,
-                         field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=3.0)
+            rows = fetch_cached(
+                query=arxiv_q, max_results=max_fetch, batch_size=100,
+                field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=5.0,
+            )
+
     print(f"[lit-review] fetched {len(rows)} papers")
+
+    # Re-rank by TF-IDF relevance and trim to max_keep before expensive enrichment
+    rows = _tfidf_rank(query, rows, max_keep)
+
     return rows
 
 
@@ -208,84 +273,93 @@ def _checkpoint_path(arxiv_id: str, checkpoint_dir: Path) -> Path:
     return checkpoint_dir / f"{arxiv_id.replace('/', '_')}.json"
 
 
-def step_annotate(papers: list[dict], producer_model: str, evaluator_model: str,
-                  use_wiggum: bool, checkpoint_dir: Path, _trace=None) -> list[dict]:
-    """
-    Annotate each paper. Checkpoints per paper so crashes are recoverable.
-    Returns list of paper dicts with 'annotation' and 'wiggum_score' added.
-    """
+def step_annotate(
+    papers:          list[dict],
+    producer_model:  str,
+    evaluator_model: str,
+    use_wiggum:      bool,
+    checkpoint_dir:  Path,
+    parallel:        int  = DEFAULT_ANNOTATE_PARALLEL,
+    _trace=None,
+) -> list[dict]:
+    """Annotate each paper in parallel. Checkpoints per paper so crashes are recoverable."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from harness.logger import RunTrace
     from harness.skills import run_annotate_standalone
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    annotated = []
+    total   = len(papers)
+    _lock   = threading.Lock()   # guards _trace rollup + progress counter
+    _done   = [0]
 
-    print(f"\n[lit-review] Step 4: annotating {len(papers)} papers"
-          f"  (wiggum={'on' if use_wiggum else 'off'})...")
+    print(f"\n[lit-review] Step 4: annotating {total} papers"
+          f"  (parallel={parallel}, wiggum={'on' if use_wiggum else 'off'})...")
 
-    _ann_ctx = _trace.span("annotate", papers=len(papers)) if _trace else _nullctx()
-    with _ann_ctx:
-        for i, paper in enumerate(papers):
-            aid   = paper.get("arxiv_id", f"paper-{i}")
-            title = paper.get("title", "")
-            cp    = _checkpoint_path(aid, checkpoint_dir)
+    def _annotate_one(i: int, paper: dict) -> dict:
+        aid   = paper.get("arxiv_id", f"paper-{i}")
+        title = paper.get("title", "")
+        cp    = _checkpoint_path(aid, checkpoint_dir)
 
-            # Resume from checkpoint if available
-            if cp.exists():
-                try:
-                    cached = json.loads(cp.read_text(encoding="utf-8"))
-                    paper.update(cached)
-                    annotated.append(paper)
-                    print(f"  [{i+1}/{len(papers)}] {aid} (from checkpoint)")
-                    continue
-                except Exception:
-                    pass
+        if cp.exists():
+            try:
+                cached = json.loads(cp.read_text(encoding="utf-8"))
+                paper  = {**paper, **cached}
+                with _lock:
+                    _done[0] += 1
+                    print(f"  [{_done[0]}/{total}] {aid} (checkpoint)", flush=True)
+                return paper
+            except Exception:
+                pass
 
-            print(f"  [{i+1}/{len(papers)}] annotating {aid}: {title}")
-            context = f"# {title}\n\n{paper.get('summary', '')}"
+        context = f"# {title}\n\n{paper.get('summary', '')}"
+        sub_trace = RunTrace(
+            task=f"/lit-review /annotate {aid}",
+            producer_model=producer_model,
+            evaluator_model=evaluator_model,
+            _is_sub=True,
+        )
+        sub_trace.data["task_type"] = "annotate"
 
-            sub_trace = RunTrace(
-                task=f"/lit-review /annotate {aid}",
-                producer_model=producer_model,
-                evaluator_model=evaluator_model,
-                _is_sub=True,
-            )
-            sub_trace.data["task_type"] = "annotate"
+        with _lock:
+            _done[0] += 1
+            print(f"  [{_done[0]}/{total}] annotating {aid}: {title[:60]}", flush=True)
 
-            annotation_text = run_annotate_standalone(
-                paper_context=context,
-                producer_model=producer_model,
-                max_retries=3,
-                _trace=sub_trace,
-            )
+        annotation_text = run_annotate_standalone(
+            paper_context=context,
+            producer_model=producer_model,
+            max_retries=3,
+            _trace=sub_trace,
+        )
 
-            wiggum_score = None
-            if use_wiggum and annotation_text:
-                from harness.wiggum import loop_annotate as wiggum_annotate_loop
-                tmp = checkpoint_dir / f"{aid}_ann.md"
-                tmp.write_text(annotation_text, encoding="utf-8")
-                try:
-                    w_result = wiggum_annotate_loop(
-                        task=f"Annotate paper: {title}",
-                        output_path=str(tmp),
-                        paper_context=context,
-                        producer_model=producer_model,
-                        evaluator_model=evaluator_model,
-                    )
-                    sub_trace.log_wiggum(w_result)
-                    wiggum_score = w_result.get("rounds", [{}])[-1].get("score")
-                    annotation_text = tmp.read_text(encoding="utf-8")
-                except Exception as e:
-                    print(f"    [warn] wiggum failed for {aid}: {e}")
-                finally:
-                    if tmp.exists():
-                        tmp.unlink()
+        wiggum_score = None
+        if use_wiggum and annotation_text:
+            from harness.wiggum import loop_annotate as wiggum_annotate_loop
+            tmp = checkpoint_dir / f"{aid}_ann.md"
+            tmp.write_text(annotation_text, encoding="utf-8")
+            try:
+                w_result = wiggum_annotate_loop(
+                    task=f"Annotate paper: {title}",
+                    output_path=str(tmp),
+                    paper_context=context,
+                    producer_model=producer_model,
+                    evaluator_model=evaluator_model,
+                )
+                sub_trace.log_wiggum(w_result)
+                wiggum_score = w_result.get("rounds", [{}])[-1].get("score")
+                annotation_text = tmp.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"    [warn] wiggum failed for {aid}: {e}", flush=True)
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
 
-            sub_trace.data["output_bytes"] = len(annotation_text.encode())
-            sub_trace.finish("PASS" if annotation_text else "FAIL")
+        sub_trace.data["output_bytes"] = len(annotation_text.encode())
+        sub_trace.finish("PASS" if annotation_text else "FAIL")
 
-            # Roll sub-trace token counts into main trace
-            if _trace is not None:
+        # Roll sub-trace tokens into main trace (lock required — concurrent writes)
+        if _trace is not None:
+            with _lock:
                 _trace.data["input_tokens"]  += sub_trace.data["input_tokens"]
                 _trace.data["output_tokens"] += sub_trace.data["output_tokens"]
                 for stage, vals in sub_trace.data.get("tokens_by_stage", {}).items():
@@ -295,24 +369,36 @@ def step_annotate(papers: list[dict], producer_model: str, evaluator_model: str,
                     for k in ("input", "output", "thinking_chars", "calls",
                               "total_ms", "eval_ms", "prompt_ms"):
                         s[k] = s.get(k, 0) + vals.get(k, 0)
-                # Merge sub-trace events into main trace, correcting timestamp origin
                 offset = sub_trace._t0_us - _trace._t0_us
                 _trace._events.extend(
                     {**ev, "ts": ev["ts"] + offset} if "ts" in ev else ev
                     for ev in sub_trace._events
                 )
 
-            annotation = _parse_annotation_sections(annotation_text)
-            checkpoint_data = {
-                "annotation":     annotation,
-                "annotation_raw": annotation_text,
-                "wiggum_score":   wiggum_score,
-            }
-            cp.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
-            paper.update(checkpoint_data)
-            annotated.append(paper)
+        annotation      = _parse_annotation_sections(annotation_text)
+        checkpoint_data = {
+            "annotation":     annotation,
+            "annotation_raw": annotation_text,
+            "wiggum_score":   wiggum_score,
+        }
+        cp.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
+        return {**paper, **checkpoint_data}
 
-    print(f"[lit-review] annotated {len(annotated)} papers")
+    results: list[dict | None] = [None] * total
+    _ann_ctx = _trace.span("annotate", papers=total) if _trace else _nullctx()
+    with _ann_ctx:
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(_annotate_one, i, p): i for i, p in enumerate(papers)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as e:
+                    aid = papers[idx].get("arxiv_id", f"paper-{idx}")
+                    print(f"  [error] annotation failed for {aid}: {e}", flush=True)
+
+    annotated = [r for r in results if r is not None]
+    print(f"[lit-review] annotated {len(annotated)}/{total} papers")
     return annotated
 
 
@@ -619,6 +705,7 @@ def run_lit_review(
     producer_model: str  = DEFAULT_PRODUCER,
     evaluator_model: str = DEFAULT_EVALUATOR,
     checkpoint_dir: Path = CHECKPOINT_DIR,
+    parallel:       int  = DEFAULT_ANNOTATE_PARALLEL,
     _trace=None,
 ) -> dict:
     t0 = time.monotonic()
@@ -654,7 +741,8 @@ def run_lit_review(
     _stage("synth")
     papers = step_annotate(papers, producer_model, evaluator_model,
                            use_wiggum=(not no_wiggum),
-                           checkpoint_dir=checkpoint_dir, _trace=_trace)
+                           checkpoint_dir=checkpoint_dir,
+                           parallel=parallel, _trace=_trace)
 
     # 5. Cluster + 6. Synthesize
     _stage("eval")
@@ -696,7 +784,8 @@ def main() -> None:
     ap.add_argument("query",          nargs="?",   help="Search query")
     ap.add_argument("--max-fetch",    type=int,    default=DEFAULT_MAX_FETCH)
     ap.add_argument("--max-annotate", type=int,    default=DEFAULT_MAX_ANNOTATE)
-    ap.add_argument("--after",        default=None)
+    ap.add_argument("--after",        default=None, help="Only papers on/after YYYY-MM-DD (default: last 2 years)")
+    ap.add_argument("--all-time",     action="store_true", help="Disable default 2-year recency filter")
     ap.add_argument("--before",       default=None)
     ap.add_argument("--csv",          default=None, help="Existing CSV (skip fetch)")
     ap.add_argument("--no-fetch",     action="store_true")
@@ -725,7 +814,7 @@ def main() -> None:
         out_path=out_path,
         max_fetch=args.max_fetch,
         max_annotate=args.max_annotate,
-        after=args.after,
+        after="all" if args.all_time else args.after,
         before=args.before,
         csv_path=csv_path,
         no_curate=args.no_curate,

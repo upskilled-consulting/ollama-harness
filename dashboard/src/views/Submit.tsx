@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Play } from "lucide-react";
+import { Play, Square } from "lucide-react";
 import { clsx } from "clsx";
-import { useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
+import { useCancelTask, useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
 
 function ActiveRuns() {
   const { data } = useRuns();
@@ -26,6 +26,7 @@ function ActiveRuns() {
 
 function QueueTable() {
   const { data } = useQueue();
+  const cancel = useCancelTask();
   const items = data?.items ?? [];
   if (items.length === 0) return <div className="empty-state">No pending tasks.</div>;
   return (
@@ -36,6 +37,7 @@ function QueueTable() {
           <th>Task</th>
           <th>Status</th>
           <th>Queued</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -45,15 +47,28 @@ function QueueTable() {
             <td className="task-cell">{item.task.slice(0, 80)}</td>
             <td>
               <span className={clsx("badge",
-                item.status === "done"    ? "pass" :
-                item.status === "error"   ? "error" :
-                item.status === "running" ? "running" : "running"
+                item.status === "done"      ? "pass" :
+                item.status === "error"     ? "error" :
+                item.status === "cancelled" ? "error" : "running"
               )}>
                 {item.status}
               </span>
             </td>
             <td className="dim mono" style={{ fontSize: 11 }}>
               {item.queued_at?.slice(11, 19) ?? "—"}
+            </td>
+            <td>
+              {(item.status === "running" || item.status === "pending") && (
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: "2px 6px", color: "var(--error)" }}
+                  title="Terminate run"
+                  onClick={() => void cancel.mutateAsync(item.item_id)}
+                  disabled={cancel.isPending}
+                >
+                  <Square size={12} />
+                </button>
+              )}
             </td>
           </tr>
         ))}

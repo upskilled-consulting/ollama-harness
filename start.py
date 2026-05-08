@@ -14,7 +14,7 @@ Differences from honcho:
 """
 
 from __future__ import annotations
-import argparse, socket, subprocess, sys, time
+import argparse, os, socket, subprocess, sys, time
 from threading import Thread
 
 SERVICES: dict[str, str] = {
@@ -76,10 +76,13 @@ def _stream(name: str, proc: subprocess.Popen) -> None:
 
 
 def _start(name: str, cmd: str) -> None:
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"]       = "1"
     proc = subprocess.Popen(
         cmd, shell=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        text=True, bufsize=1, encoding="utf-8", env=env,
     )
     _procs[name] = proc
     Thread(target=_stream, args=(name, proc), daemon=True).start()

@@ -19,7 +19,7 @@ export function useLiveRun() {
   return useQuery<LiveRun | null>({
     queryKey:       ["live_run"],
     queryFn:        api.live_run,
-    refetchInterval: 1_500,
+    refetchInterval: (query) => (query.state.data ? 2_000 : 10_000),
     staleTime:      0,
   });
 }
@@ -66,6 +66,17 @@ export function useSubmitTask() {
   return useMutation({
     mutationFn: (args: { task: string; producer_model?: string; no_wiggum?: boolean }) =>
       api.submit(args.task, { producer_model: args.producer_model, no_wiggum: args.no_wiggum }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+export function useCancelTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (item_id: string) => api.cancel(item_id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });

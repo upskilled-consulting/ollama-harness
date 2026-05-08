@@ -358,6 +358,7 @@ class WiggumDim(BaseModel):
     relevance:    float
     completeness: float
     depth:        float
+    grounded:     float | None = None
     specificity:  float
     structure:    float
 

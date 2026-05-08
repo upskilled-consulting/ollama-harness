@@ -105,7 +105,7 @@ export interface DashboardData {
 export interface QueueItem {
   item_id:    string;
   task:       string;
-  status:     "pending" | "running" | "done" | "error";
+  status:     "pending" | "running" | "done" | "error" | "cancelled";
   queued_at?: string;
 }
 

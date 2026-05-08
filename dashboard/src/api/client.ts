@@ -30,6 +30,8 @@ export const api = {
   curation:  ()                             => get<CurationEntry[]>("/curation"),
   submit:    (task: string, opts?: { producer_model?: string; no_wiggum?: boolean }) =>
     post<{ item_id: string }>("/tasks", { task, ...opts }),
+  cancel:    (item_id: string) =>
+    fetch(`${BASE}/tasks/${item_id}`, { method: "DELETE" }).then((r) => r.json()),
   feedback:        (run_id: string) => get<FeedbackRecord[]>(`/feedback/${run_id}`),
   submit_feedback: (body: { run_id: string; node_id: string; rating: number; comment: string }) =>
     post<FeedbackRecord>("/feedback", body),

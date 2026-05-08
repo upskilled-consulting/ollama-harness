@@ -133,6 +133,15 @@ If 4+ consecutive autoresearch experiments are discarded, inject into `PROPOSE_P
 "The last 4 variations were all discarded — propose a fundamentally different framing."
 Mirrors MagenticOne's replan trigger. Low effort, high impact on proposer local minima.
 
+### Oversearch detector
+Track unique-domain coverage across search rounds: after each round, count net-new domains
+vs. rounds already seen. If 2+ consecutive rounds add zero net-new domains — or new snippets
+overlap >85% with already-retrieved content (cosine sim on embeddings) — terminate early and
+proceed to synthesis. Dual signal: domain diversity (cheap, no model call) + semantic overlap
+(accurate, uses existing `nomic-embed-text` embed path). Prevents the model from spending
+tokens re-fetching the same sources under different query phrasings. Estimated 20-40% token
+reduction on tasks where the top-5 sources answer the question fully.
+
 ### Search result cache
 SQLite-backed cache keyed on normalized query fingerprint (24h TTL). Wire into
 `web_search_raw()` — transparent to the pipeline. Eliminates DDGS rate-limit risk
@@ -153,6 +162,110 @@ After fine-tune v2 completes:
 `build_dpo_dataset.py` exports cross-run preference pairs. When N ≥ 50 pairs:
 `trl dpo --model <sft-checkpoint> --dataset hf_datasets/dpo.jsonl`
 Re-import via Ollama Modelfile and benchmark against base producer.
+
+### Leverage as RLHF reward signal
+Current reward signal is Wiggum score — a quality proxy, but blind to human-time cost.
+Leverage = (task_value × automation_fraction) / human_time_saved. Concretely:
+`leverage = wiggum_score × output_lines / (run_duration_s / 3600)` as a first proxy.
+This is already derivable from `runs.jsonl` fields (`wiggum_scores`, `output_lines`,
+`run_duration_s`). Compute and log `leverage` on every run; expose in `RunRecord` and
+the Runs dashboard. Use as secondary reward in DPO preference pairs: prefer runs with
+higher leverage over runs with the same Wiggum score but slower execution or shorter
+output. Connects the multiplicative capability model (pipeline value = ∏ stage_factors)
+to the fine-tuning loop — a producer that oversearches or over-generates burns leverage
+and will be down-ranked even if its raw quality score is acceptable.
+
+---
+
+## 0.3.5 — Multi-agent patterns
+
+Four patterns ordered by orchestration complexity. Start with Pattern 1 (already in place);
+each step up requires a more capable orchestrating model.
+
+### Pattern 2 — Fan-out annotation loop ← next
+The annotation loop in `lit_review_skill.py` calls the LLM once per paper, sequentially.
+60 papers × ~15s each = ~15 minutes. Papers are fully independent — embarrassingly parallel.
+
+Concretely: wrap `step_annotate` with `ThreadPoolExecutor(max_workers=N)` where N matches
+`llama-server --parallel N`. A threading lock guards the `RunTrace` token rollup. Paper
+order is preserved via indexed futures. Expected wall time: ~15 min → ~7 min at parallel=2,
+~4 min at parallel=4.
+
+```python
+with ThreadPoolExecutor(max_workers=parallel) as pool:
+    futures = {pool.submit(_annotate_one, i, paper): i for i, paper in enumerate(papers)}
+    for fut in as_completed(futures):
+        results[futures[fut]] = fut.result()
+```
+
+### Pattern 2 — Fan-out web search
+`gather_research()` runs search rounds sequentially. Each query is independent. Fan-out
+the search round loop: spawn N query threads, collect with `as_completed`, merge results.
+Reduces research wall time by 3-4× on tasks with ≥5 search queries.
+
+### Pattern 3 — Agent pool for orchestrator subtasks
+`orchestrator.py` spawns subtasks via `ThreadPoolExecutor` already, but subtasks are
+fire-and-forget with no inter-agent messaging. Upgrade to Pattern 3: give each subtask
+agent a `send_message(to="parent")` tool so it can report intermediate results, request
+clarification, or surface blockers before finishing.
+
+### Git as state layer
+Auto-commit after each PASS run so `runs.jsonl` and output files become a replayable,
+diffable experiment history — not just an append-only log.
+
+Concretely: in `RunTrace.finish("PASS")`, after writing to `runs.jsonl`, stage and commit:
+```python
+subprocess.run(["git", "add", str(RUNS_FILE), str(output_path)])
+subprocess.run(["git", "commit", "-m", f"run: {run_id} {task[:60]}"])
+```
+This unlocks:
+- `git diff <run_a> <run_b>` to compare two lit-review outputs or synthesis passes
+- `git bisect` to locate when a quality regression was introduced
+- `git log --oneline data/lit_reviews/` as a structured experiment ledger
+
+Deliberately scoped to data files only (`data/`, output `.md`s). Harness source stays
+on its own commit cadence — the two histories don't mix.
+
+### Pattern 4 — Teams (Stage 4 prerequisite)
+Full peer-to-peer agent messaging. Prerequisite for the autonomous swarm — the
+Proposer/Executor/Critic loop requires agents to coordinate directly without a central
+bottleneck. Blocked on: cycle detection, shared file conflict resolution, distributed
+trace reconstruction across agent conversation histories.
+
+---
+
+## 0.4.0 — Personal TTS model
+
+Fine-tune `microsoft/speecht5_tts` on local voice recordings to produce a personalized
+speech model that feeds back into the harness voice interface.
+
+### Data pipeline
+Timestamped transcripts (`data/transcripts/*-transcript.md`) are paired with matching WAVs
+(`notes/*.wav`). `my_utils.py` parses each transcript line into a manifest row with
+`audio_filepath`, `start`, `end`, `duration`, and `text`. Segments are filtered by duration
+(1.5–10s) and word count (≥4 words), and short-circuit endings (`"...and"`, `"...of"`, etc.)
+are dropped. The `reading_scripts.md` file at repo root contains prepared passages to record
+as additional op-notes — targeting 200+ clean utterances before a first training run.
+
+### Speaker embeddings
+512-dim x-vector embeddings via `speechbrain/spkrec-xvect-voxceleb`. Each segment's audio
+is sliced to its exact timestamp window and resampled to 16kHz before embedding extraction.
+Inference uses an average embedding across all training clips for a stable identity vector.
+
+### Training
+`Seq2SeqTrainer` on `SpeechT5ForTextToSpeech`, 500 steps, batch 2 + gradient accumulation 4,
+`lr=1e-5`, fp16. Processed dataset saved to `data/tts_dataset/processed/` (Arrow format) so
+re-runs skip audio preprocessing. Checkpoint saved to `speecht5_nicho/final/`.
+
+### Integration target
+Swap the voice FAB's synthesis backend from an external API to the local fine-tuned checkpoint.
+The `/transcribe` skill already handles audio input; TTS closes the other direction.
+
+### Iterative improvement
+Each new op-note recording expands the training set. Once the dataset reaches ~500 utterances,
+run a second fine-tuning pass on top of the first checkpoint (continued training, not from base).
+Wiggum-style eval for voice: MOS proxy via a discriminator or preference comparison against the
+base SpeechT5 voice.
 
 ---
 

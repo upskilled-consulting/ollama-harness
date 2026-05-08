@@ -33,6 +33,7 @@ MEMORY_DB                 = DATA_DIR / "memory.db"
 SEARCH_CACHE_DB           = DATA_DIR / "search_cache.db"
 SEMANTIC_SCHOLAR_CACHE_DB = DATA_DIR / "semantic_scholar_cache.db"
 TRACES_DIR                = DATA_DIR / "traces"
+ARXIV_CACHE_DIR           = DATA_DIR / "arxiv_cache"
 LIT_REVIEWS_DIR           = DATA_DIR / "lit_reviews"
 CHROMA_DIR                = DATA_DIR / "chroma_memory"
 EMAIL_DRAFTS_DIR          = DATA_DIR / "email_drafts"
@@ -104,5 +105,5 @@ settings = Settings()
 
 def ensure_dirs() -> None:
     """Create all runtime directories if they don't exist."""
-    for d in (DATA_DIR, TRACES_DIR, LIT_REVIEWS_DIR, CHROMA_DIR, EMAIL_DRAFTS_DIR, SCREENSHOTS_DIR, TRANSCRIPTS_DIR):
+    for d in (DATA_DIR, TRACES_DIR, ARXIV_CACHE_DIR, LIT_REVIEWS_DIR, CHROMA_DIR, EMAIL_DRAFTS_DIR, SCREENSHOTS_DIR, TRANSCRIPTS_DIR):
         d.mkdir(parents=True, exist_ok=True)

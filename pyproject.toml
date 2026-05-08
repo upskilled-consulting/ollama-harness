@@ -51,6 +51,7 @@ dependencies = [
     # CLI
     "pyfiglet>=1.0",
     "rich>=13.0",
+    "feedparser>=6.0.12",
 ]
 
 [project.urls]

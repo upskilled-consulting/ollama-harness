@@ -30,6 +30,8 @@ Options:
 
 import argparse
 import csv
+import hashlib
+import json
 import re
 import sys
 import time
@@ -151,14 +153,18 @@ def fetch(
         feed = feedparser.parse(url)
         _status = getattr(feed, "status", 200)
         if _status == 429:
+            _gave_up = True
             for _wait in (30, 60, 120):
-                print(f"429 rate-limited — waiting {_wait}s")
+                print(f"429 rate-limited — waiting {_wait}s", flush=True)
                 time.sleep(_wait)
                 feed = feedparser.parse(url)
                 if getattr(feed, "status", 200) != 429:
+                    # Recovered — slow down future batches to avoid immediate re-limit
+                    sleep_s = max(sleep_s, _wait)
+                    _gave_up = False
                     break
-            else:
-                print("[arxiv] still rate-limited after retries — stopping")
+            if _gave_up:
+                print(f"[arxiv] still rate-limited after retries — returning {len(rows)} rows collected so far", flush=True)
                 break
 
         entries = feed.entries
@@ -207,6 +213,75 @@ def fetch(
         print(f"[arxiv] skipped {skipped_dup} duplicates")
     if skipped_date:
         print(f"[arxiv] skipped {skipped_date} outside date range")
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Disk cache
+# ---------------------------------------------------------------------------
+
+DEFAULT_CACHE_TTL_H = 24.0
+
+
+def fetch_cached(
+    query:      str,
+    max_results: int            = DEFAULT_MAX,
+    batch_size:  int            = DEFAULT_BATCH,
+    field:       str            = "all",
+    sort_by:     bool           = False,
+    after:       datetime | None = None,
+    before:      datetime | None = None,
+    sleep_s:     float          = DEFAULT_SLEEP,
+    existing_ids: set[str] | None = None,
+    cache_dir:   Path | None    = None,
+    cache_ttl_h: float          = DEFAULT_CACHE_TTL_H,
+) -> list[dict]:
+    """fetch() with a 24-hour disk cache keyed on query + params.
+
+    Prevents hammering arXiv during repeated runs of the same lit-review query,
+    which triggers IP-based 429 rate limits.
+    """
+    if cache_dir is None:
+        from harness.config import ARXIV_CACHE_DIR
+        cache_dir = ARXIV_CACHE_DIR
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    key_data = json.dumps({
+        "query":       query,
+        "max_results": max_results,
+        "field":       field,
+        "sort_by":     sort_by,
+        "after":       after.date().isoformat() if after else None,
+        "before":      before.date().isoformat() if before else None,
+    }, sort_keys=True)
+    cache_key  = hashlib.sha256(key_data.encode()).hexdigest()[:20]
+    cache_file = cache_dir / f"{cache_key}.json"
+
+    if cache_file.exists():
+        age_h = (time.time() - cache_file.stat().st_mtime) / 3600
+        if age_h < cache_ttl_h:
+            rows = json.loads(cache_file.read_text(encoding="utf-8"))
+            print(f"[arxiv] cache hit ({age_h:.1f}h old) — {len(rows)} rows for {query!r}")
+            return rows
+        print(f"[arxiv] cache stale ({age_h:.1f}h > {cache_ttl_h}h) — refetching")
+
+    rows = fetch(
+        query=query,
+        max_results=max_results,
+        batch_size=batch_size,
+        field=field,
+        sort_by=sort_by,
+        after=after,
+        before=before,
+        sleep_s=sleep_s,
+        existing_ids=existing_ids,
+    )
+
+    if rows:
+        cache_file.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+        print(f"[arxiv] cached {len(rows)} rows -> {cache_file.name}")
 
     return rows
 

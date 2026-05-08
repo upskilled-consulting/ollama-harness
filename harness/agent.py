@@ -1564,7 +1564,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             max_f_m    = _re.search(r"--max-fetch\s+(\d+)",    task)
             max_a_m    = _re.search(r"--max-annotate\s+(\d+)", task)
             tmpl_m     = _re.search(r"--template\s+(\S+)",     task)
-            after      = after_m.group(1)  if after_m  else None
+            all_time   = "--all-time" in task
+            after      = "all" if all_time else (after_m.group(1) if after_m else None)
             before     = before_m.group(1) if before_m else None
             csv_path   = Path(csv_m.group(1)) if csv_m else None
             max_fetch  = int(max_f_m.group(1)) if max_f_m else 100
@@ -1585,7 +1586,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                     max_ann = int(_nl_a.group(1))
             # Strip known flags and save instructions to get the research query
             query = _re.sub(
-                r"(/lit-review|--no-fetch|--no-curate|--no-wiggum|--no-s2"
+                r"(/lit-review|--no-fetch|--no-curate|--no-wiggum|--no-s2|--all-time"
                 r"|--after\s+\S+|--before\s+\S+|--csv\s+\S+"
                 r"|--max-fetch\s+\d+|--max-annotate\s+\d+"
                 r"|--template\s+\S+"
