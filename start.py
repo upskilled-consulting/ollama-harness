@@ -14,7 +14,7 @@ Differences from honcho:
 """
 
 from __future__ import annotations
-import argparse, subprocess, sys, time
+import argparse, socket, subprocess, sys, time
 from threading import Thread
 
 SERVICES: dict[str, str] = {
@@ -55,6 +55,18 @@ def _kill_port(port: int) -> None:
         if not _port_listening(port):
             return
         time.sleep(0.5)
+
+
+def _wait_ready(port: int, timeout: int = 20) -> bool:
+    """Return True once a TCP connection to localhost:port succeeds."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
 
 
 def _stream(name: str, proc: subprocess.Popen) -> None:
@@ -122,6 +134,13 @@ def main() -> None:
 
     for name in chosen:
         _start(name, SERVICES[name])
+        # Wait for API to be ready before starting the dashboard so the Vite
+        # proxy doesn't flood the console with ECONNREFUSED errors on startup.
+        if name == "api" and "dashboard" in chosen:
+            if _wait_ready(PORT_MAP["api"]):
+                print("[start] api ready", flush=True)
+            else:
+                print("[start] api did not respond within 20s — starting dashboard anyway", flush=True)
 
     print("[start] all services started. Ctrl+C to stop.", flush=True)
     try:

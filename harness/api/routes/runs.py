@@ -11,25 +11,27 @@ from harness.config import LEGACY_RUNS_FILE, LIVE_RUN_FILE, RUNS_FILE
 
 router = APIRouter(tags=["runs"])
 
-_MAX_RECENT = 200
-
+_MAX_RECENT = 100
 
 _STRIP_FROM_LIST = {"final_content"}
 
 
-def _load_runs(n: int = _MAX_RECENT, *, full: bool = False) -> list[dict]:
-    """Load runs from both current and legacy JSONL, deduped by run_id, newest first.
+def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
+    """Load the most recent N runs, newest-first.
 
-    Set full=True to include heavy inline fields (final_content) for single-run lookups.
+    Reads JSONL from the end so it stops after N records without scanning
+    the entire file — keeps response times fast even with thousands of runs.
     """
     seen: set[str] = set()
-    all_records: list[dict] = []
+    records: list[dict] = []
 
     for path in (RUNS_FILE, LEGACY_RUNS_FILE):
-        if not path.exists():
+        if not path.exists() or len(records) >= n:
             continue
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        for line in lines:
+        for line in reversed(lines):
+            if len(records) >= n:
+                break
             line = line.strip()
             if not line:
                 continue
@@ -42,12 +44,10 @@ def _load_runs(n: int = _MAX_RECENT, *, full: bool = False) -> list[dict]:
                 r["run_id"] = rid
             if rid and rid not in seen:
                 seen.add(rid)
-                if not full:
-                    r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
-                all_records.append(r)
+                r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
+                records.append(r)
 
-    all_records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-    return all_records[:n]
+    return records  # already newest-first from reversed iteration
 
 
 @router.get("/runs/live")
@@ -63,15 +63,15 @@ async def get_live_run():
 
 @router.get("/runs")
 async def get_runs():
-    recent = _load_runs()
+    recent = await asyncio.to_thread(_load_runs)
     active = [r for r in recent if r.get("final") is None]
     return {"active": active, "recent": recent}
 
 
 @router.get("/runs/all")
 async def get_all_runs():
-    """Full run list for Explorer — no cap."""
-    return _load_runs(n=10_000)
+    """Run list for Explorer — capped at 100 newest."""
+    return await asyncio.to_thread(_load_runs)
 
 
 def _find_run_by_id(run_id: str) -> dict | None:
@@ -125,7 +125,7 @@ async def get_run_content(run_id: str):
 
 @router.get("/data")
 async def get_dashboard_data():
-    runs = _load_runs(n=10_000)
+    runs = await asyncio.to_thread(_load_runs)
     passes    = [r for r in runs if r.get("final") == "PASS"]
     scores    = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
     durations = [r["run_duration_s"] for r in runs if r.get("run_duration_s")]
@@ -162,7 +162,7 @@ async def get_dashboard_data():
 
 @router.get("/analytics")
 async def get_analytics():
-    runs = _load_runs(n=10_000)
+    runs = await asyncio.to_thread(_load_runs)
 
     # Daily aggregation
     daily: dict[str, dict] = defaultdict(lambda: {
