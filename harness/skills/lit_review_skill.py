@@ -111,9 +111,9 @@ def _tfidf_rank(query: str, rows: list[dict], max_keep: int) -> list[dict]:
     if len(rows) <= max_keep:
         return rows
     try:
+        import numpy as np
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity
-        import numpy as np
     except ImportError:
         return rows[:max_keep]
 
@@ -285,6 +285,7 @@ def step_annotate(
     """Annotate each paper in parallel. Checkpoints per paper so crashes are recoverable."""
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from harness.logger import RunTrace
     from harness.skills import run_annotate_standalone
 
