@@ -822,14 +822,19 @@ def compress_knowledge(current_state: str, new_results: list[dict],
         new_results=new_text[:800],
         max_chars=KNOWLEDGE_MAX_CHARS,
     )
-    response = ollama.chat(
-        model=COMPRESS_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.1, "num_predict": 400},
-    )
-    if trace is not None:
-        trace.log_usage(response, stage="compress_knowledge")
-    return response["message"]["content"].strip()[:KNOWLEDGE_MAX_CHARS]
+    try:
+        response = ollama.chat(
+            model=COMPRESS_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.1, "num_predict": 400},
+        )
+        if trace is not None:
+            trace.log_usage(response, stage="compress_knowledge")
+        return response["message"]["content"].strip()[:KNOWLEDGE_MAX_CHARS]
+    except Exception as _ce:
+        print(f"  [compress] model call failed ({_ce!s:.80}) — falling back to truncation")
+        combined = current_state + " " + new_text
+        return combined[:KNOWLEDGE_MAX_CHARS]
 
 
 def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: str = MODEL, trace=None) -> str:
