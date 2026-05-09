@@ -347,10 +347,15 @@ def _chat_vllm(
             _is_disconnect = (
                 "Server disconnected" in exc_str
                 or "RemoteProtocolError" in exc_str
-                or ("Connection error" in exc_str and attempt == 0)
+                or "Connection error" in exc_str
+                or "ConnectError" in exc_str
             )
             if (_is_ctx_err or _is_disconnect) and attempt < 2:
                 reason = "context too long" if _is_ctx_err else "server disconnect (OOM)"
+                if _is_disconnect:
+                    _wait = 20 * (attempt + 1)
+                    print(f"  [inference] waiting {_wait}s for vLLM to recover…")
+                    time.sleep(_wait)
                 candidates = [
                     (i, len(str(_messages[i].get("content", "") or "")))
                     for i, m in enumerate(_messages)
