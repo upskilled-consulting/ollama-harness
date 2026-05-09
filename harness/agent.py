@@ -853,18 +853,22 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
         "Generate ONE search query to find important information about the task NOT yet covered above. "
         "Output ONLY the query string, nothing else."
     )
-    response = ollama.chat(
-        model=COMPRESS_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.3},
-    )
-    query_out = response["message"]["content"].strip().strip('"')
-    if trace is not None:
-        trace.log_usage(response, stage="search_query")
-        thinking = getattr(getattr(response, "message", None), "thinking", None) or ""
-        if thinking:
-            trace.log_step("search_query", thinking=thinking, tool="web_search", query=query_out)
-    return query_out
+    try:
+        response = ollama.chat(
+            model=COMPRESS_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.3},
+        )
+        query_out = response["message"]["content"].strip().strip('"')
+        if trace is not None:
+            trace.log_usage(response, stage="search_query")
+            thinking = getattr(getattr(response, "message", None), "thinking", None) or ""
+            if thinking:
+                trace.log_step("search_query", thinking=thinking, tool="web_search", query=query_out)
+        return query_out
+    except Exception as _qe:
+        print(f"  [plan_query] model call failed ({_qe!s:.80}) — falling back to task-derived query")
+        return re.sub(r"(?i)^search\s+(for\s+)?", "", task.split("save to")[0].strip()).strip().rstrip("and ,.")
 
 
 def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = None, producer_model: str = MODEL, force_deep: bool = False, task_type: str = "") -> str:
