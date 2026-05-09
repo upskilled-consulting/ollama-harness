@@ -42,8 +42,9 @@ from pathlib import Path
 
 from experiment_panel import ExperimentSpec
 
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AGENT_SCRIPT = os.path.join(_BASE_DIR, "agent.py")
+_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+_REPO_DIR    = os.path.dirname(_BASE_DIR)
+AGENT_SCRIPT = os.path.join(_REPO_DIR, "harness", "agent.py")
 EXPERIMENTS_DIR = os.path.join(_BASE_DIR, "experiments")
 
 
@@ -214,7 +215,7 @@ def run_one(
     t0 = time.time()
     result = subprocess.run(
         [sys.executable, AGENT_SCRIPT, task_str],
-        cwd=_BASE_DIR,
+        cwd=_REPO_DIR,
         env=env,
     )
     elapsed = round(time.time() - t0, 1)
