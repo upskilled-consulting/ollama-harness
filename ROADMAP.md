@@ -116,10 +116,17 @@ well-sourced tasks.
 Stall replan injection into `PROPOSE_PROMPT` after 4+ consecutive discarded experiments.
 Already in place.
 
-### `/plan` interactive approval
-Show gap analysis and proposed search queries before any search runs. Terminal path:
-`input()` prompt with editable query list. Dashboard path: SSE plan event → editable
-plan card with Approve button → `POST /api/runs/{run_id}/approve-plan` → agent continues.
+### ✓ `/plan` interactive approval (Submit view only)
+Agent pauses after `make_plan()` when `use_plan=True` in the task request. A
+`threading.Event` gate blocks `gather_research()` until the user approves via
+`POST /api/tasks/{id}/approve-plan`. The Submit view renders an `ApprovePlanCard`
+with an editable query textarea; approving POSTs the (possibly edited) queries and
+unblocks the agent. 10-minute timeout auto-approves with original queries.
+
+**Scope note:** approval is only surfaced in the Submit view (the one path where
+`use_plan` can be set). The Runs view and floating terminal do not show approval UI —
+tasks submitted there without the Submit form will auto-approve after timeout. Extending
+approval to those surfaces is deferred; see 0.4.0 below.
 
 ### ✓ Search result cache
 `search_cache.py` — SQLite-backed, keyed on normalized query fingerprint, 24h TTL.
@@ -392,6 +399,21 @@ architecture family (Google vs Alibaba), fits alongside pi-qwen-32b without full
 Test protocol: `EVALUATOR_MODEL=gemma4:26b python eval_suite.py --tasks T_D,T_E --score`.
 If scores diverge significantly → rotate evaluators across autoresearch sessions or add
 Gemma 4 as a 4th panel persona. If scores converge → rubric is robust.
+
+### Plan approval — surface extensions (deferred)
+The `/plan` gate is currently Submit-view-only. Two natural extensions, in priority order:
+
+**Active-run card in Runs view** — when a run has a pending gate, `GET /api/runs/live`
+or a new `GET /api/tasks/{id}/gate-status` endpoint exposes `waiting_for_plan: true`.
+The Runs view can poll this and render an inline `ApprovePlanCard` without needing a
+full EventSource subscription.
+
+**Floating terminal** — the `oh >` REPL submits tasks via `POST /api/tasks`. After
+submission it could open the EventSource stream, watch for `plan_gate` events, and
+render a blocking `input()` prompt — mirroring the originally-planned terminal path.
+
+Neither is blocked on infrastructure; both are purely additive UI. Implement whichever
+gets asked for first.
 
 ---
 
