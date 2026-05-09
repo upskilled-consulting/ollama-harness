@@ -329,7 +329,7 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
-function CommitDetailDrawer({ sha, onClose }: { sha: string; onClose: () => void }) {
+function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: string | null; onClose: () => void }) {
   const { data, isLoading } = useQuery<GhCommitDetail>({
     queryKey:  ["commit_detail", sha],
     queryFn:   () => api.github_commit_detail(sha),
@@ -367,6 +367,22 @@ function CommitDetailDrawer({ sha, onClose }: { sha: string; onClose: () => void
           background: "var(--bg)", flexShrink: 0,
         }}>
           <code style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--accent)", flex: 1 }}>{sha.slice(0, 12)}</code>
+          {repoUrl && (
+            <a
+              href={`${repoUrl}/commit/${sha}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                fontSize: 11, color: "var(--dim)", textDecoration: "none",
+                border: "1px solid var(--border)", borderRadius: 4,
+                padding: "2px 8px", flexShrink: 0,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
+            >
+              View on GitHub ↗
+            </a>
+          )}
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", padding: 2 }}>
             <X size={16} />
           </button>
@@ -493,7 +509,8 @@ function DayPopup({ date, commits, anchor, onClose, onSelectCommit }: {
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
 function CommitHeatmap() {
-  const { commits } = useGithub();
+  const { commits, repo } = useGithub();
+  const repoUrl = repo.data?.meta?.url ?? null;
   const list = commits.data ?? [];
 
   const [popup, setPopup]         = useState<{ date: string; x: number; y: number } | null>(null);
@@ -612,7 +629,7 @@ function CommitHeatmap() {
 
       {/* Commit detail drawer */}
       {detailSha && (
-        <CommitDetailDrawer sha={detailSha} onClose={() => setDetailSha(null)} />
+        <CommitDetailDrawer sha={detailSha} repoUrl={repoUrl} onClose={() => setDetailSha(null)} />
       )}
     </>
   );

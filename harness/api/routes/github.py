@@ -155,8 +155,8 @@ async def github_commit_detail(sha: str):
             files.append({"status": parts[0].strip(), "file": parts[1].strip()})
 
     diff = await _git("show", "--unified=3", "--no-color", sha)
-    if len(diff) > 16_000:
-        diff = diff[:16_000] + "\n\n… diff truncated"
+    if len(diff) > 4_000:
+        diff = diff[:4_000] + "\n\n… diff truncated — open on GitHub for full diff"
 
     return _set_cache(cache_key, {
         "sha":     sha,
