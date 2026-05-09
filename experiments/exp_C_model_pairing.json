@@ -1,0 +1,77 @@
+{
+  "title": "Model Pairing for DPO Signal Quality",
+  "id": "exp_C_model_pairing",
+  "question": "Do cross-model DPO pairs (pi-qwen-32b vs. qwen2.5-coder-14b) produce sharper preference signal than same-model temperature-varied pairs from Exp A?",
+  "hypothesis": "Cross-model pairs on coding tasks have mean score_delta >= 1.5x the mean score_delta from same-model temperature rollouts on the same tasks.",
+  "falsified_if": "Cross-model mean_delta < 1.2x same-model mean_delta, OR cross-model pairs fail build_dpo_dataset.py --min-delta 1.0 filter at rate >= 40% (i.e., models too similar to generate training signal).",
+  "decision_rule": {
+    "use_cross_model_pairing": "cross_delta / temp_delta >= 1.5 AND pass_rate(min_delta=1.0) >= 70% — cross-model pairs are worth the inference cost",
+    "use_temperature_variation": "cross_delta / temp_delta < 1.2 — models produce similar outputs; temperature variation is cheaper and sufficient",
+    "use_both": "cross_delta / temp_delta in [1.2, 1.5] — combine both sources; filter by delta >= 1.0 to deduplicate"
+  },
+  "method": {
+    "tool": "experiment_runner.py",
+    "spec_format": "ExperimentSpec — factor is producer_model with 2 levels",
+    "factor": {
+      "name": "producer_model",
+      "levels": ["pi", "coder"],
+      "mutable_scope": {
+        "type": "env",
+        "var": "HARNESS_PRODUCER_MODEL",
+        "levels": {
+          "pi":    "pi-qwen-32b",
+          "coder": "qwen2.5-coder-14b"
+        }
+      }
+    },
+    "tasks": {
+      "coding": [
+        "chunk_doc_segments",
+        "async_sqlite_wrapper",
+        "token_rate_limiter",
+        "fastapi_trace_middleware",
+        "runs_dataframe_summary"
+      ],
+      "research": [
+        "speculative_decoding_survey",
+        "rlhf_dpo_grpo_compare",
+        "fine_tuning_best_practices",
+        "agentic_ai_best_practices",
+        "embedding_model_survey"
+      ],
+      "note": "coding tasks defined in tasks/rl_bank.jsonl (task_type=coding); research tasks are rl_bank rows 3,12,5,9,14 (0-indexed)"
+    },
+    "env": {
+      "WIGGUM_MAX_ROUNDS": "1",
+      "note": "Score-only evaluation to preserve variance; same as Exp A --score-only"
+    },
+    "run_command": "python scripts/experiment_runner.py experiments/exp_C_model_pairing_spec.json",
+    "runner_note": "experiment_runner.py calls agent.py as subprocess with env-var override; 10 tasks × 2 levels × 2 reps = 40 runs"
+  },
+  "post_collection": {
+    "dpo_build": "python scripts/build_dpo_dataset.py --cross-model --min-delta 1.0 --stats",
+    "note": "--cross-model removes the same-producer filter in build_cross_run_pairs(), pairing pi vs coder outputs on the same task"
+  },
+  "analysis": {
+    "script": "python scripts/analyze_exp_C.py",
+    "baseline": "grpo.jsonl from Exp A — extract same 10 tasks, compute same-model temp delta",
+    "outputs": [
+      "cross_vs_temp_delta_comparison.json — mean/median delta by source and task_type",
+      "dpo_pass_rate.json — fraction of cross-model pairs passing min_delta thresholds 0.5, 1.0, 1.5",
+      "score_distribution_by_model.json — score distributions per model per task",
+      "recommendation.json — final decision based on decision_rule above"
+    ]
+  },
+  "controlled": {
+    "evaluator_model": "Qwen3-Coder:30b",
+    "wiggum_rounds": 1,
+    "tasks": "5 coding + 5 research — same prompts for both model levels"
+  },
+  "replications": 2,
+  "requires": [
+    "build_dpo_dataset.py: --cross-model flag to allow cross-producer pairs",
+    "tasks/rl_bank.jsonl: 5 coding tasks added with task_type=coding",
+    "exp_C_model_pairing_spec.json: ExperimentSpec JSON for experiment_runner.py",
+    "analyze_exp_C.py must exist"
+  ]
+}

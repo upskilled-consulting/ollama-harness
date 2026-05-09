@@ -85,6 +85,7 @@ class ExperimentSpec:
     controlled_variables: dict         # {"producer": ..., "evaluator": ...}
     mutable_scope:       dict          # {"file": ..., "function": ..., "change": ...}
     notes:               str = ""
+    task_defs:           dict = None   # optional inline task definitions keyed by task_id
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)

@@ -1,0 +1,40 @@
+{
+  "title": "Reward Signal Richness: Per-Dimension vs. Scalar",
+  "id": "exp_A_reward_dims",
+  "question": "Do per-dimension wiggum scores provide meaningful reward signal beyond the composite scalar for GRPO, or does the scalar capture enough?",
+  "hypothesis": "depth and grounded together explain >85% of composite score variance across rollouts; the remaining four dimensions add <0.05 Kendall-tau lift over the scalar ranking.",
+  "falsified_if": "Any single non-depth/grounded dimension has Kendall-tau > 0.25 against a ranking that disagrees with the scalar ranking on >15% of rollout pairs.",
+  "decision_rule": {
+    "use_scalar_only": "top-2 dims explain >=85% of composite variance AND Kendall-tau(scalar_rank, composite_rank) >= 0.90 across tasks",
+    "use_dim_weighted_reward": "any dim has per-task variance >1.5 AND disagrees with scalar ranking on >20% of pairs — build reward as weighted sum matching _DIM_WEIGHTS in wiggum.py",
+    "use_top2_dims": "top-2 dims explain >=85% but scalar ranking diverges on 10-20% of pairs — use reduced reward = 0.55*depth + 0.30*grounded"
+  },
+  "method": {
+    "script": "python scripts/collect_rl_data.py",
+    "flags": "--bank tasks/rl_bank.jsonl --rollouts 4 --score-only --limit 20",
+    "note": "--score-only disables wiggum revision (1 eval pass only); preserves score variance needed for ranking analysis. --limit 20 selects first 20 tasks from bank.",
+    "env": {}
+  },
+  "analysis": {
+    "script": "python scripts/analyze_exp_A.py",
+    "inputs": ["data/rl_dataset/grpo.jsonl", "data/runs.jsonl"],
+    "outputs": [
+      "dim_correlation_matrix.json — Kendall-tau between each dim and composite across all rollouts",
+      "dim_variance_by_task.json — per-task std dev for each dimension across 4 rollouts",
+      "pca_explained_variance.json — cumulative variance explained by top-K dim components",
+      "scalar_vs_dim_disagreement.json — fraction of rollout pairs where scalar rank != dim-weighted rank"
+    ]
+  },
+  "controlled": {
+    "producer_model": "pi-qwen-32b",
+    "evaluator_model": "Qwen3-Coder:30b",
+    "tasks": "first 20 entries from tasks/rl_bank.jsonl (all research, hard/medium)",
+    "temperature_schedule": "[0.1, 0.5, 0.8, 0.3] — 4 rollouts per task"
+  },
+  "replications": 4,
+  "requires": [
+    "collect_rl_data.py: emit chosen_dims/rejected_dims in grpo.jsonl records (see code note)",
+    "analyze_exp_A.py must exist (written alongside this spec)"
+  ],
+  "code_note": "collect_rl_data.py emit_grpo() must add 'dims' field per completion, sourced from run_data.get('wiggum_dims', [])[-1] or {}."
+}

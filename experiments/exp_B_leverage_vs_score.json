@@ -1,0 +1,41 @@
+{
+  "title": "Primary GRPO Reward: Leverage vs. Wiggum Scalar",
+  "id": "exp_B_leverage_vs_score",
+  "question": "Does leverage (score × output_lines / runtime_hours) capture quality that the wiggum scalar misses — specifically, does it penalize verbose but shallow runs that score well?",
+  "hypothesis": "Kendall-tau(leverage_rank, score_rank) > 0.80 across rollouts, meaning they agree on most ranking decisions; but leverage identifies 10-20% of rollouts as over-verbose where score > 7.0 and output_lines > 300.",
+  "falsified_if": "Kendall-tau < 0.65 (systematic disagreement too large to ignore) OR no runs found where score >= 7.0 and leverage is bottom-quartile (leverage penalty never fires meaningfully).",
+  "decision_rule": {
+    "use_score_only": "Kendall-tau >= 0.85 AND verbose_outliers < 5% of rollouts — leverage adds noise, not signal",
+    "use_combined_reward": "Kendall-tau in [0.65, 0.85] AND verbose_outliers >= 10% — reward = 0.7*score_norm + 0.3*leverage_norm",
+    "use_leverage_only": "Kendall-tau < 0.65 — systematic disagreement; inspect manually before deciding"
+  },
+  "method": {
+    "script": "python scripts/collect_rl_data.py",
+    "flags": "--bank tasks/rl_bank.jsonl --rollouts 4 --limit 20",
+    "note": "Full wiggum revision enabled (NOT --score-only). Leverage computed from runs.jsonl: score * output_lines / (run_duration_s / 3600). Reuses checkpoint from Exp A if tasks overlap; only re-runs if checkpoint missing.",
+    "env": {}
+  },
+  "analysis": {
+    "script": "python scripts/analyze_exp_B.py",
+    "inputs": ["data/rl_dataset/grpo.jsonl", "data/runs.jsonl"],
+    "outputs": [
+      "leverage_vs_score_scatter.json — (score, leverage_norm) per rollout",
+      "kendall_tau_overall.json — single tau across all rollout pairs",
+      "verbose_outliers.json — rollouts where score>=7.0 and leverage in bottom 25%",
+      "reward_ranking_comparison.json — rank order diff between score-only and combined reward per task"
+    ]
+  },
+  "controlled": {
+    "producer_model": "pi-qwen-32b",
+    "evaluator_model": "Qwen3-Coder:30b",
+    "tasks": "same 20 tasks as Exp A — shared checkpoint DB",
+    "temperature_schedule": "[0.1, 0.5, 0.8, 0.3]"
+  },
+  "replications": 4,
+  "requires": [
+    "collect_rl_data.py: emit leverage per completion in grpo.jsonl (score * output_lines / runtime_hours)",
+    "analyze_exp_B.py must exist",
+    "leverage field must be sourced from runs.jsonl run_duration_s + final_content line count"
+  ],
+  "code_note": "In emit_grpo(), for each rollout compute: lines = len(content.splitlines()); runtime_h = run_data.get('run_duration_s', 1) / 3600; leverage = score * lines / max(runtime_h, 0.001). Add to completion dict."
+}

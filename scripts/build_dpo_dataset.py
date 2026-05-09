@@ -102,7 +102,7 @@ def _final_dims(run: dict) -> dict:
 # Source 1: cross-run pairs
 # ---------------------------------------------------------------------------
 
-def build_cross_run_pairs(runs: list[dict], min_delta: float) -> list[dict]:
+def build_cross_run_pairs(runs: list[dict], min_delta: float, cross_model: bool = False) -> list[dict]:
     """
     Group runs by normalized task.  For each group with >= 2 runs that have
     final_content and a wiggum score, emit chosen/rejected pairs.
@@ -137,8 +137,9 @@ def build_cross_run_pairs(runs: list[dict], min_delta: float) -> list[dict]:
             if delta < min_delta:
                 continue
 
-            # Prefer runs from same producer_model for cleaner signal
-            if best.get("producer_model") != worse.get("producer_model"):
+            # By default require same producer_model for cleaner signal.
+            # --cross-model allows cross-producer pairs (Exp C: model comparison).
+            if not cross_model and best.get("producer_model") != worse.get("producer_model"):
                 continue
 
             pairs.append({
@@ -281,6 +282,8 @@ def main() -> None:
                     help=f"Minimum score gap to qualify as a preference pair (default {_DEFAULT_MIN_DELTA})")
     ap.add_argument("--source",     choices=["all", "cross", "revision"], default="all",
                     help="Which signal sources to include (default: all)")
+    ap.add_argument("--cross-model", action="store_true",
+                    help="Allow cross-producer pairs in cross-run source (default: same-producer only)")
     ap.add_argument("--stats",      action="store_true",
                     help="Print stats only — do not write output file")
     ap.add_argument("--runs",       default=str(RUNS_FILE),
@@ -301,7 +304,7 @@ def main() -> None:
     pairs: list[dict] = []
 
     if args.source in ("all", "cross"):
-        cross = build_cross_run_pairs(runs, args.min_delta)
+        cross = build_cross_run_pairs(runs, args.min_delta, cross_model=args.cross_model)
         print(f"[dpo] cross-run pairs: {len(cross)}")
         pairs.extend(cross)
 

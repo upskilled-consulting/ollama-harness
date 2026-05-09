@@ -235,17 +235,29 @@ def emit_dpo(prompt: str, task_type: str, results: list[dict],
     return True
 
 
+def _leverage(score: float, content: str, run_data: dict) -> float:
+    lines       = len(content.splitlines()) if content else 1
+    runtime_h   = (run_data.get("run_duration_s") or 1) / 3600
+    return round(score * lines / max(runtime_h, 1e-4), 2)
+
+
 def emit_grpo(prompt: str, task_type: str, results: list[dict], f) -> bool:
-    completions = [
-        {
+    completions = []
+    for r in results:
+        if not r.get("content"):
+            continue
+        run_data = _get_run(r["run_id"])
+        dims     = (run_data.get("wiggum_dims") or [{}])[-1]
+        lev      = _leverage(r["score"], r["content"], run_data)
+        completions.append({
             "content":    r["content"],
             "reward":     r["score"],
+            "leverage":   lev,
+            "dims":       dims,
             "trajectory": r["trajectory"],
             "run_id":     r["run_id"],
             "temp":       r["temp"],
-        }
-        for r in results if r.get("content")
-    ]
+        })
     if not completions:
         return False
     rewards = [c["reward"] for c in completions]

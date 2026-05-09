@@ -1,0 +1,79 @@
+{
+  "title": "Model Pairing for DPO Signal Quality",
+  "hypothesis": "Cross-model pairs (pi-qwen-32b vs qwen2.5-coder-14b) on coding tasks produce mean score_delta >= 1.5x that of same-model temperature rollouts on identical prompts.",
+  "falsified_if": "cross_model_mean_delta / temp_rollout_mean_delta < 1.2 across the 5 coding tasks",
+  "factor": {
+    "name": "producer_model",
+    "levels": ["pi", "coder"]
+  },
+  "tasks": [
+    "chunk_doc_segments",
+    "async_sqlite_wrapper",
+    "token_rate_limiter",
+    "fastapi_trace_middleware",
+    "runs_dataframe_summary",
+    "speculative_decoding_survey",
+    "rlhf_dpo_grpo_compare",
+    "fine_tuning_best_practices",
+    "agentic_ai_best_practices",
+    "embedding_model_survey"
+  ],
+  "replications": 2,
+  "response_variables": ["wiggum_score", "score_delta_vs_other_level"],
+  "controlled_variables": {
+    "evaluator_model": "Qwen3-Coder:30b",
+    "wiggum_max_rounds": 1,
+    "temperature": "default (not varied — temperature is controlled here)"
+  },
+  "mutable_scope": {
+    "type": "env",
+    "var": "HARNESS_PRODUCER_MODEL",
+    "levels": {
+      "pi":    "pi-qwen-32b",
+      "coder": "qwen2.5-coder-14b"
+    }
+  },
+  "task_defs": {
+    "chunk_doc_segments": {
+      "task": "Implement a Python class for chunking long documents into overlapping segments with configurable window size and step, returning segment text and character offsets. save to ~/Desktop/harness-refactor/data/eval/exp_C_chunk_doc_segments-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_chunk_doc_segments-TREATMENT.md"
+    },
+    "async_sqlite_wrapper": {
+      "task": "Write a production-ready async SQLite wrapper in Python using aiosqlite, with connection pooling, prepared statement caching, and context manager support. save to ~/Desktop/harness-refactor/data/eval/exp_C_async_sqlite_wrapper-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_async_sqlite_wrapper-TREATMENT.md"
+    },
+    "token_rate_limiter": {
+      "task": "Implement a streaming token counter for Ollama chat completions in Python that tracks input/output tokens per request and maintains a rolling 60-second rate limit, raising an error when exceeded. save to ~/Desktop/harness-refactor/data/eval/exp_C_token_rate_limiter-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_token_rate_limiter-TREATMENT.md"
+    },
+    "fastapi_trace_middleware": {
+      "task": "Write a FastAPI middleware that logs structured JSON request/response traces including latency, status code, and truncated request body without blocking the async event loop. save to ~/Desktop/harness-refactor/data/eval/exp_C_fastapi_trace_middleware-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_fastapi_trace_middleware-TREATMENT.md"
+    },
+    "runs_dataframe_summary": {
+      "task": "Write a Python script that reads a JSONL file of LLM run records and produces a pandas DataFrame with task, wiggum_score, run_duration_s, producer_model, input_tokens, output_tokens, then outputs summary statistics grouped by task_type. save to ~/Desktop/harness-refactor/data/eval/exp_C_runs_dataframe_summary-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_runs_dataframe_summary-TREATMENT.md"
+    },
+    "speculative_decoding_survey": {
+      "task": "Survey recent advances in speculative decoding for large language model inference, including key papers and practical implementation tradeoffs. save to ~/Desktop/harness-refactor/data/eval/exp_C_speculative_decoding_survey-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_speculative_decoding_survey-TREATMENT.md"
+    },
+    "rlhf_dpo_grpo_compare": {
+      "task": "Compare RLHF, DPO, and GRPO for preference alignment of language models — covering data requirements, training stability, and downstream quality. save to ~/Desktop/harness-refactor/data/eval/exp_C_rlhf_dpo_grpo_compare-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_rlhf_dpo_grpo_compare-TREATMENT.md"
+    },
+    "fine_tuning_best_practices": {
+      "task": "Investigate best practices for fine-tuning open-source LLMs on domain-specific datasets, covering data preparation, LoRA vs full fine-tuning, and evaluation. save to ~/Desktop/harness-refactor/data/eval/exp_C_fine_tuning_best_practices-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_fine_tuning_best_practices-TREATMENT.md"
+    },
+    "agentic_ai_best_practices": {
+      "task": "Research best practices for building agentic AI systems that use tool calls, focusing on reliability, error recovery, and output verification. save to ~/Desktop/harness-refactor/data/eval/exp_C_agentic_ai_best_practices-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_agentic_ai_best_practices-TREATMENT.md"
+    },
+    "embedding_model_survey": {
+      "task": "Survey open-source embedding models under 500M parameters, including MTEB benchmark results and inference speed comparisons. save to ~/Desktop/harness-refactor/data/eval/exp_C_embedding_model_survey-TREATMENT.md",
+      "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_embedding_model_survey-TREATMENT.md"
+    }
+  },
+  "notes": "TREATMENT placeholder in output paths is replaced by experiment_runner.py with the level name (pi or coder). Run with: python scripts/experiment_runner.py experiments/exp_C_model_pairing_spec.json --dry-run first."
+}
