@@ -214,7 +214,7 @@ def run_one(
     env = _build_env(spec, treatment, task_id=task_id)
     t0 = time.time()
     result = subprocess.run(
-        [sys.executable, AGENT_SCRIPT, task_str],
+        [sys.executable, AGENT_SCRIPT, "--no-onboard", task_str],
         cwd=_REPO_DIR,
         env=env,
     )
