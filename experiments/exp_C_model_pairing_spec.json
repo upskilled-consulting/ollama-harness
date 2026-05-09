@@ -76,7 +76,7 @@
     }
   },
   "fixed_env": {
-    "COMPRESS_MODEL": "qwen2.5-coder-14b"
+    "COMPRESS_MODEL": "qwen3-8b"
   },
   "notes": "TREATMENT placeholder in output paths is replaced by experiment_runner.py with the level name (pi or coder). Run with: python scripts/experiment_runner.py experiments/exp_C_model_pairing_spec.json --dry-run first."
 }
