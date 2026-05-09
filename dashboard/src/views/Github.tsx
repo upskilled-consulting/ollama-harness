@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useGithub } from "@/hooks/useRuns";
 import { api } from "@/api/client";
+import { MdView } from "@/components/MdView";
 import type { GhCommit, GhCommitDetail, GhFileContent, GhIssue, GhPr, GhRun, GhTreeEntry } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -439,18 +440,22 @@ function TreeBrowser({ sha, repoUrl }: { sha: string; repoUrl: string | null }) 
                 Binary file — <a href={ghBlobUrl ?? "#"} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>view on GitHub</a>
               </div>
             )}
-            {file && !file.binary && (
-              <div style={{ background: "#0a0c12", margin: "12px 16px", borderRadius: 6, border: "1px solid var(--border)", overflowX: "auto" }}>
-                {file.truncated && (
-                  <div style={{ padding: "4px 12px", fontSize: 10, color: "var(--warn)", borderBottom: "1px solid var(--border)" }}>
-                    Showing first 50 KB — <a href={ghBlobUrl ?? "#"} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>view full file on GitHub</a>
-                  </div>
-                )}
-                <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.55, color: "var(--text)", padding: "10px 12px", margin: 0, whiteSpace: "pre" }}>
-                  {file.content}
-                </pre>
-              </div>
-            )}
+            {file && !file.binary && (() => {
+              const isMd = (filePath ?? "").match(/\.mdx?$/i);
+              return (
+                <div style={{ background: isMd ? "transparent" : "#0a0c12", margin: "12px 16px", borderRadius: 6, border: "1px solid var(--border)", overflowX: isMd ? "visible" : "auto" }}>
+                  {file.truncated && (
+                    <div style={{ padding: "4px 12px", fontSize: 10, color: "var(--warn)", borderBottom: "1px solid var(--border)" }}>
+                      Showing first 50 KB — <a href={ghBlobUrl ?? "#"} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>view full file on GitHub</a>
+                    </div>
+                  )}
+                  {isMd
+                    ? <div style={{ padding: "10px 16px" }}><MdView content={file.content} /></div>
+                    : <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.55, color: "var(--text)", padding: "10px 12px", margin: 0, whiteSpace: "pre" }}>{file.content}</pre>
+                  }
+                </div>
+              );
+            })()}
           </>
         )}
 
@@ -511,11 +516,10 @@ function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: s
     <button
       onClick={() => setTab(t)}
       style={{
-        background: "none", border: "none", cursor: "pointer", padding: "2px 8px",
+        background: tab === t ? "rgba(129,140,248,0.12)" : "none", border: "none", cursor: "pointer", padding: "2px 8px",
         fontSize: 11, borderRadius: 4,
-        color:       tab === t ? "var(--text)"    : "var(--dim)",
-        background:  tab === t ? "rgba(129,140,248,0.12)" : "none" as string,
-        fontWeight:  tab === t ? 600 : 400,
+        color:      tab === t ? "var(--text)" : "var(--dim)",
+        fontWeight: tab === t ? 600 : 400,
       }}
     >
       {label}
