@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re as _re
 import time
 
 from fastapi import APIRouter
@@ -131,7 +132,6 @@ async def github_commits():
     return _set_cache("commits", commits)
 
 
-import re as _re
 _SHA_RE = _re.compile(r"^[0-9a-f]{4,64}$")
 
 

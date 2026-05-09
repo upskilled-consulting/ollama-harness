@@ -1352,7 +1352,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             print("oh > No user profile found. Running /onboarding (~2 min). Skip with --no-onboard.")
             try:
                 from harness.skills.onboarding_skill import run_onboarding
-                run_onboarding(lambda q: input(f"\n[onboarding] > "), producer_model, trace)
+                run_onboarding(lambda q: input("\n[onboarding] > "), producer_model, trace)
             except Exception as _ob_err:
                 print(f"[warn] onboarding failed: {_ob_err}")
     task = task.replace("--no-onboard", "").strip()
@@ -3211,7 +3211,8 @@ Rules:
         def _handle_grill_me():
             trace.data["task_type"] = "grill-me"
             from harness.skills.grill_me_skill import run_grill_me
-            ask_fn = lambda q: input(f"\n[grill-me] {q}\n> ")
+            def ask_fn(q):
+                return input(f"\n[grill-me] {q}\n> ")
             brief_path = run_grill_me(task, producer_model, ask_fn, trace)
             trace.finish("PASS")
             write_output(f"Brief saved to: {brief_path}", path, trace)
@@ -3223,7 +3224,8 @@ Rules:
                 print("[onboarding] stdin is not a terminal — run /onboarding from the oh CLI")
                 trace.finish("PASS")
                 return
-            ask_fn = lambda q: input(f"\n[onboarding] > ")
+            def ask_fn(q):
+                return input("\n[onboarding] > ")
             run_onboarding(ask_fn, producer_model, trace)
             trace.finish("PASS")
 

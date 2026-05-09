@@ -141,10 +141,10 @@ def main():
         "rationale":                   rationale,
     }
 
-    print(f"\n── Kendall-τ(leverage, score) ──")
+    print("\n── Kendall-τ(leverage, score) ──")
     print(f"  mean: {mean_tau:+.4f}")
     print(f"  per-task: {[round(t, 3) for t in all_taus]}")
-    print(f"\n── Verbose outliers (score>=7.0, leverage in bottom Q1) ──")
+    print("\n── Verbose outliers (score>=7.0, leverage in bottom Q1) ──")
     print(f"  count: {len(all_verbose)}  rate: {verbose_rate:.2%}")
     print(f"\n── Combined vs. score rank disagreement: {mean_disagree:.2%} of rollouts reranked ──")
     print(f"\n→ Decision: {decision}")

@@ -18,12 +18,9 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 import harness.skills.onboarding_skill as mod
-
 
 # ---------------------------------------------------------------------------
 # Shared stubs

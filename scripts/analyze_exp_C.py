@@ -155,18 +155,18 @@ def main():
         "rationale":            rationale,
     }
 
-    print(f"\n── Cross-model DPO delta ──")
+    print("\n── Cross-model DPO delta ──")
     print(f"  mean={mean_cross:.3f}  n={len(cross_all)}")
     for ttype, deltas in cross_deltas.items():
         print(f"  [{ttype}] mean={mean(deltas):.3f}  n={len(deltas)}")
-    print(f"\n── Same-model temperature baseline delta ──")
+    print("\n── Same-model temperature baseline delta ──")
     print(f"  mean={mean_temp:.3f}  n={len(temp_deltas)}")
     print(f"\n── Cross/temp ratio: {ratio:.2f} ──")
-    print(f"\n── DPO pass rates ──")
+    print("\n── DPO pass rates ──")
     for thresh, pct in pass_pct.items():
         print(f"  min_delta={thresh}: {pct:.0%}  ({pass_rates[thresh]}/{total_dpo})")
     if scores_by_model:
-        print(f"\n── Score by model ──")
+        print("\n── Score by model ──")
         for m, s in scores_by_model.items():
             print(f"  {m}: mean={mean(s):.3f}  n={len(s)}")
     print(f"\n→ Decision: {decision}")

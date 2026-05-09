@@ -183,7 +183,7 @@ def main():
     print("\n── Dimension Kendall-τ vs. composite ──")
     for d, tau in sorted(dim_tau_summary.items(), key=lambda x: -x[1]):
         print(f"  {d:15s}  tau={tau:+.4f}  var={dim_var_summary[d]:.3f}")
-    print(f"\n── PCA cumulative variance ──")
+    print("\n── PCA cumulative variance ──")
     for i, v in enumerate(pca_cumvar, 1):
         print(f"  top-{i}: {v:.2%}")
     print(f"\n── Scalar vs. dim-weighted rank disagreement: {mean_disagreement:.2%} ──")

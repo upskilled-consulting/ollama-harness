@@ -23,11 +23,8 @@ Plan gate (4 tests):
 
 from __future__ import annotations
 
-import sys
 import threading
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from harness.api.main import app
@@ -333,6 +330,7 @@ class TestPlanGate:
     def test_gate_emits_plan_gate_event(self, tmp_path, monkeypatch):
         import json
         import time
+
         import harness.api.routes.tasks as mod
         monkeypatch.setattr(mod, "TASK_LOGS_DIR", tmp_path)
 

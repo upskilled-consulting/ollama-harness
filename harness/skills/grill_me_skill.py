@@ -15,8 +15,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 MIN_INTERVIEW_ROUNDS = 3
 MAX_INTERVIEW_ROUNDS = 8

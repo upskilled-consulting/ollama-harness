@@ -12,12 +12,11 @@ Question cap is 6 (3 fixed + 3 free-form) — respects that the user is new to t
 
 from __future__ import annotations
 
-import os
 import re
 import time
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 MAX_ONBOARDING_ROUNDS = 6   # 3 fixed + up to 3 free-form novelty-gated
 MIN_FREE_ROUNDS       = 1   # minimum free-form rounds after the scaffold
@@ -109,6 +108,7 @@ def _seed_memory(knowledge_state: str, producer_model: str) -> None:
     """Embed key user-context chunks into ChromaDB user_context collection."""
     try:
         import chromadb
+
         from harness.memory import CHROMA_PATH, _get_chroma_ef
 
         ef = _get_chroma_ef()
