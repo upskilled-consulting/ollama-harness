@@ -167,6 +167,61 @@ async def github_commit_detail(sha: str):
     })
 
 
+@router.get("/github/commits/{sha}/tree")
+async def github_commit_tree(sha: str, path: str = ""):
+    if not _SHA_RE.match(sha):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid SHA")
+    cache_key = f"tree_{sha}_{path}"
+    if (cached := _get_cache(cache_key, ttl=3600)) is not None:
+        return cached
+
+    tree_ref = sha if not path else f"{sha}:{path}"
+    raw = await _git("ls-tree", "--long", tree_ref)
+
+    entries = []
+    for line in raw.splitlines():
+        try:
+            meta, name = line.split("\t", 1)
+            parts = meta.split()
+            if len(parts) >= 3:
+                entries.append({
+                    "mode":   parts[0],
+                    "type":   parts[1],       # "blob" or "tree"
+                    "object": parts[2],
+                    "size":   int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None,
+                    "name":   name.strip(),
+                })
+        except Exception:
+            pass
+
+    entries.sort(key=lambda e: (0 if e["type"] == "tree" else 1, e["name"].lower()))
+    return _set_cache(cache_key, entries)
+
+
+@router.get("/github/commits/{sha}/file")
+async def github_commit_file(sha: str, path: str = ""):
+    if not _SHA_RE.match(sha):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid SHA")
+    if not path:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="path required")
+    cache_key = f"file_{sha}_{path}"
+    if (cached := _get_cache(cache_key, ttl=3600)) is not None:
+        return cached
+
+    content = await _git("show", f"{sha}:{path}")
+    binary = "\x00" in content
+    if binary:
+        return _set_cache(cache_key, {"path": path, "content": "", "binary": True, "truncated": False})
+
+    truncated = len(content) > 50_000
+    if truncated:
+        content = content[:50_000]
+    return _set_cache(cache_key, {"path": path, "content": content, "binary": False, "truncated": truncated})
+
+
 @router.post("/github/refresh")
 async def github_refresh():
     _CACHE.clear()

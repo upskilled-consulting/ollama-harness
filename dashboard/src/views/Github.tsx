@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useGithub } from "@/hooks/useRuns";
 import { api } from "@/api/client";
-import type { GhCommit, GhCommitDetail, GhIssue, GhPr, GhRun } from "@/types";
+import type { GhCommit, GhCommitDetail, GhFileContent, GhIssue, GhPr, GhRun, GhTreeEntry } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -329,7 +329,172 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
+// ── File browser (used in Tree tab) ────────────────────────────────────────
+
+function fmt_size(n: number | null): string {
+  if (n === null) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileIcon({ type, name }: { type: "blob" | "tree"; name: string }) {
+  if (type === "tree") return <span style={{ color: "var(--warn)", fontSize: 13 }}>📁</span>;
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const code = ["py","ts","tsx","js","jsx","rs","go","c","cpp","h","java","sh","yaml","yml","toml","json","md","html","css"].includes(ext);
+  return <span style={{ fontSize: 13 }}>{code ? "📄" : "🗎"}</span>;
+}
+
+function TreeBrowser({ sha, repoUrl }: { sha: string; repoUrl: string | null }) {
+  const [path, setPath]         = useState("");
+  const [filePath, setFilePath] = useState<string | null>(null);
+
+  const { data: entries, isLoading: treeLoading } = useQuery<GhTreeEntry[]>({
+    queryKey:  ["commit_tree", sha, path],
+    queryFn:   () => api.github_commit_tree(sha, path),
+    enabled:   !filePath,
+    staleTime: Infinity,
+  });
+
+  const { data: file, isLoading: fileLoading } = useQuery<GhFileContent>({
+    queryKey:  ["commit_file", sha, filePath],
+    queryFn:   () => api.github_commit_file(sha, filePath!),
+    enabled:   !!filePath,
+    staleTime: Infinity,
+  });
+
+  const breadcrumbs = path ? path.split("/") : [];
+
+  function navigateTo(idx: number) {
+    setFilePath(null);
+    setPath(breadcrumbs.slice(0, idx + 1).join("/"));
+  }
+
+  function openEntry(entry: GhTreeEntry) {
+    const fullPath = path ? `${path}/${entry.name}` : entry.name;
+    if (entry.type === "tree") { setFilePath(null); setPath(fullPath); }
+    else                        { setFilePath(fullPath); }
+  }
+
+  const ghTreeUrl  = repoUrl ? `${repoUrl}/tree/${sha}${path ? `/${path}` : ""}` : null;
+  const ghBlobUrl  = repoUrl && filePath ? `${repoUrl}/blob/${sha}/${filePath}` : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* breadcrumb */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap",
+        padding: "8px 16px", borderBottom: "1px solid var(--border)",
+        fontSize: 12, fontFamily: "var(--font-mono)", flexShrink: 0,
+        background: "var(--bg)",
+      }}>
+        <span
+          onClick={() => { setFilePath(null); setPath(""); }}
+          style={{ color: path || filePath ? "var(--accent)" : "var(--text)", cursor: path || filePath ? "pointer" : "default" }}
+        >
+          /
+        </span>
+        {breadcrumbs.map((seg, i) => (
+          <span key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ color: "var(--dim)" }}>›</span>
+            <span
+              onClick={() => !filePath ? navigateTo(i) : (setFilePath(null))}
+              style={{ color: (i === breadcrumbs.length - 1 && !filePath) ? "var(--text)" : "var(--accent)", cursor: "pointer" }}
+            >
+              {seg}
+            </span>
+          </span>
+        ))}
+        {filePath && (
+          <>
+            <span style={{ color: "var(--dim)" }}>›</span>
+            <span style={{ color: "var(--text)" }}>{filePath.split("/").pop()}</span>
+          </>
+        )}
+        <div style={{ marginLeft: "auto" }}>
+          {(ghBlobUrl ?? ghTreeUrl) && (
+            <a href={ghBlobUrl ?? ghTreeUrl!} target="_blank" rel="noreferrer"
+              style={{ fontSize: 10, color: "var(--dim)", textDecoration: "none" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
+            >↗ GitHub</a>
+          )}
+        </div>
+      </div>
+
+      {/* content */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {/* file view */}
+        {filePath && (
+          <>
+            <div
+              onClick={() => setFilePath(null)}
+              style={{ padding: "6px 16px", fontSize: 11, color: "var(--accent)", cursor: "pointer", borderBottom: "1px solid var(--border)" }}
+            >
+              ← back to tree
+            </div>
+            {fileLoading && <div style={{ padding: 16, color: "var(--dim)", fontSize: 12 }}>Loading…</div>}
+            {file && file.binary && (
+              <div style={{ padding: 16, color: "var(--dim)", fontSize: 12 }}>
+                Binary file — <a href={ghBlobUrl ?? "#"} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>view on GitHub</a>
+              </div>
+            )}
+            {file && !file.binary && (
+              <div style={{ background: "#0a0c12", margin: "12px 16px", borderRadius: 6, border: "1px solid var(--border)", overflowX: "auto" }}>
+                {file.truncated && (
+                  <div style={{ padding: "4px 12px", fontSize: 10, color: "var(--warn)", borderBottom: "1px solid var(--border)" }}>
+                    Showing first 50 KB — <a href={ghBlobUrl ?? "#"} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>view full file on GitHub</a>
+                  </div>
+                )}
+                <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.55, color: "var(--text)", padding: "10px 12px", margin: 0, whiteSpace: "pre" }}>
+                  {file.content}
+                </pre>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* tree view */}
+        {!filePath && (
+          <>
+            {treeLoading && <div style={{ padding: 16, color: "var(--dim)", fontSize: 12 }}>Loading…</div>}
+            {!treeLoading && entries?.length === 0 && <div style={{ padding: 16, color: "var(--dim)", fontSize: 12 }}>Empty directory.</div>}
+            {entries?.map((entry) => (
+              <div
+                key={entry.object}
+                onClick={() => openEntry(entry)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "6px 16px", cursor: "pointer",
+                  borderBottom: "1px solid rgba(42,45,58,0.4)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(129,140,248,0.06)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+              >
+                <FileIcon type={entry.type} name={entry.name} />
+                <span style={{
+                  flex: 1, fontFamily: "var(--font-mono)", fontSize: 12,
+                  color: entry.type === "tree" ? "var(--text)" : "var(--dim)",
+                }}>
+                  {entry.name}{entry.type === "tree" ? "/" : ""}
+                </span>
+                {entry.size !== null && (
+                  <span style={{ fontSize: 10, color: "var(--dim)", flexShrink: 0 }}>{fmt_size(entry.size)}</span>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Commit detail drawer ────────────────────────────────────────────────────
+
 function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: string | null; onClose: () => void }) {
+  const [tab, setTab] = useState<"diff" | "tree">("diff");
+
   const { data, isLoading } = useQuery<GhCommitDetail>({
     queryKey:  ["commit_detail", sha],
     queryFn:   () => api.github_commit_detail(sha),
@@ -342,6 +507,21 @@ function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: s
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  const tabBtn = (t: "diff" | "tree", label: string) => (
+    <button
+      onClick={() => setTab(t)}
+      style={{
+        background: "none", border: "none", cursor: "pointer", padding: "2px 8px",
+        fontSize: 11, borderRadius: 4,
+        color:       tab === t ? "var(--text)"    : "var(--dim)",
+        background:  tab === t ? "rgba(129,140,248,0.12)" : "none" as string,
+        fontWeight:  tab === t ? 600 : 400,
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 800,
@@ -349,10 +529,8 @@ function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: s
     }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      {/* scrim */}
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} onClick={onClose} />
 
-      {/* drawer */}
       <div style={{
         position: "relative", width: "min(680px, 92vw)", height: "100%",
         background: "var(--surface)", borderLeft: "1px solid var(--border)",
@@ -362,75 +540,75 @@ function CommitDetailDrawer({ sha, repoUrl, onClose }: { sha: string; repoUrl: s
       }}>
         {/* header */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 10,
-          padding: "12px 16px", borderBottom: "1px solid var(--border)",
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "10px 16px", borderBottom: "1px solid var(--border)",
           background: "var(--bg)", flexShrink: 0,
         }}>
-          <code style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--accent)", flex: 1 }}>{sha.slice(0, 12)}</code>
+          <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)", flexShrink: 0 }}>
+            {sha.slice(0, 12)}
+          </code>
+          <div style={{ display: "flex", gap: 2, background: "var(--surface)", borderRadius: 5, padding: 2 }}>
+            {tabBtn("diff", "Changes")}
+            {tabBtn("tree", "Tree")}
+          </div>
+          <div style={{ flex: 1 }} />
           {repoUrl && (
             <a
               href={`${repoUrl}/commit/${sha}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                fontSize: 11, color: "var(--dim)", textDecoration: "none",
-                border: "1px solid var(--border)", borderRadius: 4,
-                padding: "2px 8px", flexShrink: 0,
-              }}
+              target="_blank" rel="noreferrer"
+              style={{ fontSize: 11, color: "var(--dim)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
             >
               View on GitHub ↗
             </a>
           )}
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", padding: 2 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", padding: 2, flexShrink: 0 }}>
             <X size={16} />
           </button>
         </div>
 
-        {isLoading && <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>Loading diff…</div>}
-
-        {data && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* commit message */}
-            <div>
-              <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Message</div>
-              <pre style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", margin: 0 }}>{data.message}</pre>
-            </div>
-
-            {/* files changed */}
-            {data.files.length > 0 && (
-              <div>
-                <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
-                  Files changed ({data.files.length})
+        {/* diff tab */}
+        {tab === "diff" && (
+          <>
+            {isLoading && <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>Loading…</div>}
+            {data && (
+              <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Message</div>
+                  <pre style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", margin: 0 }}>{data.message}</pre>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  {data.files.map((f, i) => {
-                    const color = f.status === "A" ? "var(--pass)" : f.status === "D" ? "var(--fail)" : f.status === "M" ? "var(--warn)" : "var(--dim)";
-                    const label = f.status === "A" ? "A" : f.status === "D" ? "D" : f.status === "M" ? "M" : f.status;
-                    return (
-                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color, width: 14, textAlign: "center", flexShrink: 0 }}>{label}</span>
-                        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{f.file}</span>
-                      </div>
-                    );
-                  })}
+                {data.files.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+                      Files changed ({data.files.length})
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      {data.files.map((f, i) => {
+                        const color = f.status === "A" ? "var(--pass)" : f.status === "D" ? "var(--fail)" : f.status === "M" ? "var(--warn)" : "var(--dim)";
+                        return (
+                          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                            <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color, width: 14, textAlign: "center", flexShrink: 0 }}>{f.status}</span>
+                            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{f.file}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Diff</div>
+                  <div style={{ background: "#0a0c12", border: "1px solid var(--border)", borderRadius: 6, padding: "10px 12px", overflowX: "auto" }}>
+                    <DiffView diff={data.diff} />
+                  </div>
                 </div>
               </div>
             )}
-
-            {/* diff */}
-            <div>
-              <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Diff</div>
-              <div style={{
-                background: "#0a0c12", border: "1px solid var(--border)", borderRadius: 6,
-                padding: "10px 12px", overflowX: "auto",
-              }}>
-                <DiffView diff={data.diff} />
-              </div>
-            </div>
-          </div>
+          </>
         )}
+
+        {/* tree tab */}
+        {tab === "tree" && <TreeBrowser sha={sha} repoUrl={repoUrl} />}
       </div>
     </div>
   );

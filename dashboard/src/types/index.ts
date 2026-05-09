@@ -301,6 +301,21 @@ export interface GhCommitDetail {
   diff:    string;
 }
 
+export interface GhTreeEntry {
+  mode:   string;
+  type:   "blob" | "tree";
+  object: string;
+  size:   number | null;
+  name:   string;
+}
+
+export interface GhFileContent {
+  path:      string;
+  content:   string;
+  binary:    boolean;
+  truncated: boolean;
+}
+
 export interface McpTool {
   name:        string;
   description: string;

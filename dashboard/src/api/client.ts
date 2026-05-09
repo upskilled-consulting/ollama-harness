@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhCommitDetail, GhIssue, GhPr, GhRepo, GhRun, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhCommitDetail, GhFileContent, GhIssue, GhPr, GhRepo, GhRun, GhTreeEntry, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -55,6 +55,10 @@ export const api = {
   github_runs:    () => get<GhRun[]>("/github/runs"),
   github_commits:       () => get<GhCommit[]>("/github/commits"),
   github_commit_detail: (sha: string) => get<GhCommitDetail>(`/github/commits/${sha}/detail`),
+  github_commit_tree:   (sha: string, path = "") =>
+    get<GhTreeEntry[]>(`/github/commits/${sha}/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  github_commit_file:   (sha: string, path: string) =>
+    get<GhFileContent>(`/github/commits/${sha}/file?path=${encodeURIComponent(path)}`),
   github_refresh: () =>
     fetch(`${BASE}/github/refresh`, { method: "POST" }).then((r) => r.json()),
 };
