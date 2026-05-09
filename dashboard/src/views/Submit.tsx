@@ -1,8 +1,218 @@
-import { useEffect, useState } from "react";
-import { Play, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Play, Square, Search, Brain, Zap } from "lucide-react";
 import { clsx } from "clsx";
 import { useCancelTask, useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
 import type { RunRecord } from "@/types";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type EventLine =
+  | { kind: "log";    text: string }
+  | { kind: "plan";   queries: string[]; complexity: string; task_type: string; notes?: string }
+  | { kind: "search"; round: number; query: string; hits: number }
+  | { kind: "synth";  stage: string; tokens_in?: number }
+  | { kind: "wiggum"; round: number; score: number; passed: boolean };
+
+function parseLine(raw: string): EventLine {
+  if (raw.startsWith("[EVENT]")) {
+    try {
+      const ev = JSON.parse(raw.slice(7)) as { type: string; data: Record<string, unknown> };
+      if (ev.type === "plan") {
+        return {
+          kind: "plan",
+          queries:   (ev.data.queries   as string[]) ?? [],
+          complexity:(ev.data.complexity as string)  ?? "",
+          task_type: (ev.data.task_type  as string)  ?? "",
+          notes:     ev.data.notes as string | undefined,
+        };
+      }
+      if (ev.type === "search") {
+        return {
+          kind: "search",
+          round: (ev.data.round as number) ?? 0,
+          query: (ev.data.query as string) ?? "",
+          hits:  (ev.data.hits  as number) ?? 0,
+        };
+      }
+      if (ev.type === "synth") {
+        return {
+          kind: "synth",
+          stage:     (ev.data.stage     as string)  ?? "",
+          tokens_in: ev.data.tokens_in as number | undefined,
+        };
+      }
+      if (ev.type === "wiggum") {
+        return {
+          kind: "wiggum",
+          round:  (ev.data.round  as number)  ?? 0,
+          score:  (ev.data.score  as number)  ?? 0,
+          passed: (ev.data.passed as boolean) ?? false,
+        };
+      }
+    } catch { /* fall through */ }
+  }
+  return { kind: "log", text: raw };
+}
+
+// ---------------------------------------------------------------------------
+// Event card renderers
+// ---------------------------------------------------------------------------
+
+function PlanCard({ e }: { e: Extract<EventLine, { kind: "plan" }> }) {
+  return (
+    <div className="event-card event-plan">
+      <div className="event-header">
+        <Brain size={13} />
+        <span>Plan</span>
+        {e.task_type && <span className="badge">{e.task_type}</span>}
+        {e.complexity && <span className="badge dim">{e.complexity}</span>}
+      </div>
+      {e.queries.length > 0 && (
+        <ul className="event-list">
+          {e.queries.map((q, i) => <li key={i}>{q}</li>)}
+        </ul>
+      )}
+      {e.notes && <p className="event-notes">{e.notes}</p>}
+    </div>
+  );
+}
+
+function SearchCard({ e }: { e: Extract<EventLine, { kind: "search" }> }) {
+  return (
+    <div className="event-card event-search">
+      <div className="event-header">
+        <Search size={13} />
+        <span>Round {e.round}</span>
+        <span className="dim" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {e.query}
+        </span>
+        <span className="mono dim" style={{ fontSize: 11 }}>{e.hits} hits</span>
+      </div>
+    </div>
+  );
+}
+
+function SynthCard({ e }: { e: Extract<EventLine, { kind: "synth" }> }) {
+  return (
+    <div className="event-card event-synth">
+      <div className="event-header">
+        <Zap size={13} />
+        <span>Synthesis {e.stage === "start" ? "started" : "done"}</span>
+        {e.tokens_in != null && (
+          <span className="mono dim" style={{ fontSize: 11 }}>{e.tokens_in.toLocaleString()} ctx tokens</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WiggumCard({ e }: { e: Extract<EventLine, { kind: "wiggum" }> }) {
+  const pct = Math.min(100, (e.score / 10) * 100);
+  return (
+    <div className="event-card event-wiggum">
+      <div className="event-header">
+        <span className={clsx("badge", e.passed ? "pass" : "error")}>
+          Wiggum {e.passed ? "PASS" : "FAIL"}
+        </span>
+        <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
+          {e.score.toFixed(1)}
+        </span>
+        <span className="dim" style={{ fontSize: 11 }}>round {e.round}</span>
+      </div>
+      <div style={{ marginTop: 4, height: 4, background: "var(--bg-surface)", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{
+          height: "100%", width: `${pct}%`,
+          background: e.passed ? "var(--pass, #34d399)" : "var(--error, #f87171)",
+          borderRadius: 2, transition: "width 0.4s",
+        }} />
+      </div>
+    </div>
+  );
+}
+
+function EventCard({ e }: { e: EventLine }) {
+  if (e.kind === "plan")   return <PlanCard   e={e} />;
+  if (e.kind === "search") return <SearchCard e={e} />;
+  if (e.kind === "synth")  return <SynthCard  e={e} />;
+  if (e.kind === "wiggum") return <WiggumCard e={e} />;
+  return null; // log lines go into the pre block below
+}
+
+// ---------------------------------------------------------------------------
+// Live log panel
+// ---------------------------------------------------------------------------
+
+function LiveLog({ itemId, onDone }: { itemId: string; onDone: () => void }) {
+  const [events, setEvents]     = useState<EventLine[]>([]);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [done, setDone]         = useState(false);
+  const logRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const es = new EventSource(`/api/tasks/${itemId}/stream`);
+    es.onmessage = (msg) => {
+      const raw = msg.data as string;
+      if (raw === "[DONE]") {
+        setDone(true);
+        es.close();
+        onDone();
+        return;
+      }
+      const parsed = parseLine(raw);
+      if (parsed.kind === "log") {
+        setLogLines((prev) => [...prev, parsed.text]);
+      } else {
+        setEvents((prev) => [...prev, parsed]);
+      }
+    };
+    es.onerror = () => { es.close(); setDone(true); onDone(); };
+    return () => es.close();
+  }, [itemId, onDone]);
+
+  // Auto-scroll log
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logLines]);
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        {!done && <span className="pulse-dot" />}
+        <span className="section-title" style={{ margin: 0 }}>
+          {done ? "Completed" : "Running"}
+        </span>
+      </div>
+
+      {events.map((e, i) => <EventCard key={i} e={e} />)}
+
+      {logLines.length > 0 && (
+        <pre ref={logRef} style={{
+          fontSize: 11,
+          color: "var(--dim)",
+          background: "var(--bg-surface)",
+          borderRadius: 6,
+          padding: "10px 12px",
+          maxHeight: 240,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          lineHeight: 1.6,
+          marginTop: 8,
+        }}>
+          {logLines.join("\n")}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Existing sub-components
+// ---------------------------------------------------------------------------
 
 function ActiveRuns() {
   const { data } = useRuns();
@@ -109,13 +319,18 @@ function ResultCard({ run }: { run: RunRecord }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main view
+// ---------------------------------------------------------------------------
+
 export function Submit() {
   const [task, setTask]         = useState("");
   const [model, setModel]       = useState("");
   const [noWiggum, setNoWiggum] = useState(false);
   const [msg, setMsg]           = useState<{ ok: boolean; text: string } | null>(null);
-  const [pendingTask, setPendingTask] = useState<{ text: string; since: string } | null>(null);
-  const [lastResult, setLastResult]   = useState<RunRecord | null>(null);
+  const [streamingId, setStreamingId]       = useState<string | null>(null);
+  const [pendingTask, setPendingTask]       = useState<{ text: string; since: string } | null>(null);
+  const [lastResult, setLastResult]         = useState<RunRecord | null>(null);
   const submit = useSubmitTask();
   const { data: runsData } = useRuns();
 
@@ -136,19 +351,26 @@ export function Submit() {
     if (!task.trim()) return;
     setMsg(null);
     setLastResult(null);
+    setStreamingId(null);
     try {
       const since = new Date().toISOString();
-      await submit.mutateAsync({
+      const res = await submit.mutateAsync({
         task: task.trim(),
         producer_model: model.trim() || undefined,
         no_wiggum: noWiggum,
       });
+      setStreamingId(res.item_id);
       setPendingTask({ text: task.trim(), since });
-      setMsg({ ok: true, text: "Task queued — waiting for result…" });
+      setMsg({ ok: true, text: "Task running…" });
       setTask("");
     } catch (e) {
       setMsg({ ok: false, text: String(e) });
     }
+  };
+
+  const handleStreamDone = () => {
+    setStreamingId(null);
+    if (msg?.ok) setMsg({ ok: true, text: "Task queued — waiting for result…" });
   };
 
   return (
@@ -198,7 +420,7 @@ export function Submit() {
           </button>
           {msg && (
             <span className={clsx("status-msg", msg.ok ? "status-ok" : "status-err")}>
-              {pendingTask && <span className="pulse-dot" style={{ marginRight: 6 }} />}
+              {(streamingId || pendingTask) && <span className="pulse-dot" style={{ marginRight: 6 }} />}
               {msg.text}
             </span>
           )}
@@ -208,6 +430,10 @@ export function Submit() {
           Ctrl+Enter to submit
         </p>
       </div>
+
+      {streamingId && (
+        <LiveLog itemId={streamingId} onDone={handleStreamDone} />
+      )}
 
       {lastResult && <ResultCard run={lastResult} />}
 

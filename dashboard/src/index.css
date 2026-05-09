@@ -206,6 +206,32 @@ input.voice-filename:focus { border-color: var(--accent); }
 .chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 @media (max-width: 800px) { .chart-grid-2 { grid-template-columns: 1fr; } }
 
+/* ── Live event cards (Submit view) ── */
+.event-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 500;
+}
+.event-header svg { flex-shrink: 0; color: var(--dim); }
+.event-plan   { border-left: 3px solid var(--accent); background: rgba(129,140,248,0.04); }
+.event-search { border-left: 3px solid var(--blue, #60a5fa); background: rgba(96,165,250,0.04); }
+.event-synth  { border-left: 3px solid var(--warn, #fbbf24); background: rgba(251,191,36,0.04); }
+.event-wiggum { border-left: 3px solid var(--pass, #34d399); background: rgba(52,211,153,0.04); }
+.event-wiggum:has(.badge.error) { border-left-color: var(--error, #f87171); background: rgba(248,113,113,0.04); }
+.event-list   { margin: 6px 0 0 0; padding-left: 18px; color: var(--dim); line-height: 1.6; }
+.event-list li { margin-bottom: 2px; }
+.event-notes  { margin: 4px 0 0; color: var(--dim); font-size: 11px; font-style: italic; }
+.badge.dim    { background: var(--surface); color: var(--dim); }
+
 /* ── Misc ── */
 .loading, .page-error { padding: 48px; text-align: center; color: var(--dim); }
 .empty-state     { padding: 28px; text-align: center; color: var(--dim); font-size: 13px; }
