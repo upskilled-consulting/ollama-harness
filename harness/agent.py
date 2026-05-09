@@ -121,7 +121,7 @@ def _estimate_keep_alive(task_type: str, explicit_skills: set, use_wiggum: bool)
 
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from harness.logger import RunTrace
 from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
