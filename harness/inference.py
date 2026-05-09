@@ -353,9 +353,19 @@ def _chat_vllm(
             if (_is_ctx_err or _is_disconnect) and attempt < 2:
                 reason = "context too long" if _is_ctx_err else "server disconnect (OOM)"
                 if _is_disconnect:
-                    _wait = 20 * (attempt + 1)
-                    print(f"  [inference] waiting {_wait}s for vLLM to recover…")
-                    time.sleep(_wait)
+                    print(f"  [inference] waiting for vLLM to recover (up to 120s)…")
+                    _t0 = time.monotonic()
+                    _recovered = False
+                    while time.monotonic() - _t0 < 120:
+                        try:
+                            import httpx as _httpx
+                            _httpx.get(f"{base_url}/health", timeout=4)
+                            _recovered = True
+                            break
+                        except Exception:
+                            time.sleep(5)
+                    if not _recovered:
+                        print("  [inference] vLLM health check timed out — retrying anyway")
                 candidates = [
                     (i, len(str(_messages[i].get("content", "") or "")))
                     for i, m in enumerate(_messages)
