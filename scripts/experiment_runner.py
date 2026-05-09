@@ -160,6 +160,9 @@ def _build_env(spec: ExperimentSpec, treatment: str, task_id: str = "") -> dict:
             env[var] = val
         elif var in env:
             del env[var]
+    # Apply fixed env overrides (e.g. COMPRESS_MODEL pinned to a lighter model)
+    if spec.fixed_env:
+        env.update(spec.fixed_env)
     # Always tag the run
     env["HARNESS_EXPERIMENT_ID"]   = spec.title.lower().replace(" ", "-")[:40]
     env["HARNESS_TREATMENT_LEVEL"] = treatment

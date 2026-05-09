@@ -75,5 +75,8 @@
       "output": "C:/Users/nicho/Desktop/harness-refactor/data/eval/exp_C_embedding_model_survey-TREATMENT.md"
     }
   },
+  "fixed_env": {
+    "COMPRESS_MODEL": "qwen2.5-coder-14b"
+  },
   "notes": "TREATMENT placeholder in output paths is replaced by experiment_runner.py with the level name (pi or coder). Run with: python scripts/experiment_runner.py experiments/exp_C_model_pairing_spec.json --dry-run first."
 }

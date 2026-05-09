@@ -86,6 +86,7 @@ class ExperimentSpec:
     mutable_scope:       dict          # {"file": ..., "function": ..., "change": ...}
     notes:               str = ""
     task_defs:           dict = None   # optional inline task definitions keyed by task_id
+    fixed_env:           dict = None   # env vars applied to every run regardless of treatment
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
