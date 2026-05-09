@@ -3,6 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, createRunsSocket } from "@/api/client";
 import type { FeedbackRecord, LiveRun, RunRecord } from "@/types";
 
+export function useGithub() {
+  const POLL = 60_000;
+  return {
+    repo:    useQuery({ queryKey: ["gh_repo"],    queryFn: api.github_repo,    refetchInterval: POLL, retry: false }),
+    prs:     useQuery({ queryKey: ["gh_prs"],     queryFn: api.github_prs,     refetchInterval: POLL, retry: false }),
+    issues:  useQuery({ queryKey: ["gh_issues"],  queryFn: api.github_issues,  refetchInterval: POLL, retry: false }),
+    runs:    useQuery({ queryKey: ["gh_runs"],     queryFn: api.github_runs,    refetchInterval: 30_000, retry: false }),
+    commits: useQuery({ queryKey: ["gh_commits"], queryFn: api.github_commits, refetchInterval: POLL, retry: false }),
+  };
+}
+
 export function useSessions() {
   return useQuery({ queryKey: ["sessions"], queryFn: api.sessions, staleTime: 30_000 });
 }

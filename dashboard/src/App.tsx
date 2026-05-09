@@ -11,6 +11,7 @@ import { Mcp }       from "@/views/Mcp";
 import { Sessions }  from "@/views/Sessions";
 import { Artifacts }       from "@/views/Artifacts";
 import { Finetune }        from "@/views/Finetune";
+import { Github }          from "@/views/Github";
 import { FloatingPanels }  from "@/components/FloatingPanels";
 
 const qc = new QueryClient();
@@ -25,6 +26,7 @@ const VIEWS: Record<View, React.ReactNode> = {
   finetune:  <Finetune />,
   voice:     <Voice />,
   mcp:       <Mcp />,
+  github:    <Github />,
 };
 
 function App() {

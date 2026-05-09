@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhIssue, GhPr, GhRepo, GhRun, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -43,6 +43,13 @@ export const api = {
     get<ArtifactContent>(`/artifacts/${artifact_id}/content`),
   live_run: () =>
     fetch(`${BASE}/runs/live`).then((r) => r.ok ? r.json() as Promise<LiveRun | null> : Promise.resolve(null)).catch(() => null),
+  github_repo:    () => get<GhRepo>("/github/repo"),
+  github_prs:     () => get<GhPr[]>("/github/prs"),
+  github_issues:  () => get<GhIssue[]>("/github/issues"),
+  github_runs:    () => get<GhRun[]>("/github/runs"),
+  github_commits: () => get<GhCommit[]>("/github/commits"),
+  github_refresh: () =>
+    fetch(`${BASE}/github/refresh`, { method: "POST" }).then((r) => r.json()),
 };
 
 export function createRunsSocket(onMessage: (run: RunRecord) => void): WebSocket {

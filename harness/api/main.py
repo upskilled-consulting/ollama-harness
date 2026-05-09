@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from harness.api.routes import data, feedback, history, mcp, queue, runs, tasks, voice
+from harness.api.routes import data, feedback, github, history, mcp, queue, runs, tasks, voice
 from harness.api.ws import router as ws_router
 from harness.config import ROOT, ensure_dirs, settings
 
@@ -48,6 +48,7 @@ app.include_router(mcp.router,      prefix="/api/mcp")
 app.include_router(history.router,  prefix="/api")
 app.include_router(feedback.router, prefix="/api")
 app.include_router(voice.router,    prefix="/api")
+app.include_router(github.router,   prefix="/api")
 app.include_router(ws_router)
 
 # Serve compiled dashboard at root (production)

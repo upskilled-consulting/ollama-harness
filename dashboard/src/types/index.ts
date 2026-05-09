@@ -228,6 +228,70 @@ export interface McpToolParam {
   required: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// GitHub panel
+// ---------------------------------------------------------------------------
+
+export interface GhRepoMeta {
+  name:             string;
+  owner:            { login: string };
+  description:      string | null;
+  url:              string;
+  defaultBranchRef: { name: string } | null;
+  isPrivate:        boolean;
+  stargazerCount:   number;
+  forkCount:        number;
+  pushedAt:         string | null;
+}
+
+export interface GhRepo {
+  branch:      string;
+  dirty_files: number;
+  ahead:       number;
+  behind:      number;
+  meta:        GhRepoMeta | null;
+}
+
+export interface GhPr {
+  number:         number;
+  title:          string;
+  state:          string;
+  author:         { login: string };
+  createdAt:      string;
+  headRefName:    string;
+  isDraft:        boolean;
+  reviewDecision: string | null;
+}
+
+export interface GhIssue {
+  number:    number;
+  title:     string;
+  state:     string;
+  author:    { login: string };
+  createdAt: string;
+  labels:    { name: string; color: string }[];
+  assignees: { login: string }[];
+}
+
+export interface GhRun {
+  databaseId: number;
+  name:       string;
+  status:     string;
+  conclusion: string | null;
+  createdAt:  string;
+  headBranch: string;
+  url:        string;
+  event:      string;
+}
+
+export interface GhCommit {
+  sha:     string;
+  short:   string;
+  message: string;
+  author:  string;
+  ago:     string;
+}
+
 export interface McpTool {
   name:        string;
   description: string;
