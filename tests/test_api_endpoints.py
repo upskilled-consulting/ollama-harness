@@ -3,6 +3,8 @@ Verify all FastAPI endpoints return correct status codes and response shapes.
 Uses fastapi.testclient.TestClient — no subprocess spawned, no LLM calls.
 """
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 from harness.api.main import app
@@ -72,7 +74,10 @@ class TestTasksEndpoint:
         assert resp.status_code in (400, 422)
 
     def test_submit_valid_task_returns_item_id(self):
-        resp = client.post("/api/tasks", json={"task": "test task"})
+        # Patch agent.run so the background task completes without LLM calls.
+        # Starlette's TestClient waits for background tasks before returning.
+        with patch("harness.agent.run"):
+            resp = client.post("/api/tasks", json={"task": "test task"})
         assert resp.status_code == 202
         data = resp.json()
         assert "item_id" in data
