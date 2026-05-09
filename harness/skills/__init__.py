@@ -375,6 +375,17 @@ REGISTRY: dict[str, dict] = {
         "auto":   None,
     },
 
+    "test-harness": {
+        "description": (
+            "Run the harness test suite and save output to agent-workspace/test-results/latest.txt. "
+            "Default: fast suite (skips the ~14-min Ollama integration test). "
+            "Invocation: /test-harness [--full] [-k <keyword>]"
+        ),
+        "hook":   "standalone",
+        "prompt": None,
+        "auto":   None,   # explicit only
+    },
+
     "scratchpad": {
         "description": (
             "Pre-synthesis: run Python code to compute exact values before writing. "

@@ -3174,6 +3174,16 @@ Rules:
             )
             print(f"\n  [deck] → {out_path}")
 
+        def _handle_test_harness():
+            from harness.skills.test_harness_skill import run_test_harness_standalone
+            result = run_test_harness_standalone(task)
+            if path:
+                write_output(result["output"], path, trace)
+            trace.data["task_type"] = "test-harness"
+            trace.data["passed"]    = result["passed"]
+            trace.data["failed"]    = result["failed"]
+            trace.finish("PASS" if result["returncode"] == 0 else "FAIL")
+
         _STANDALONE = {
             "annotate":     _handle_annotate,
             "email":        _handle_email,
@@ -3199,6 +3209,7 @@ Rules:
             "build-page":   _handle_site,
             "site":         _handle_site,
             "deck":         _handle_deck,
+            "test-harness": _handle_test_harness,
         }
 
         for _skill in explicit_skills:
