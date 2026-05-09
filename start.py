@@ -24,7 +24,8 @@ SERVICES: dict[str, str] = {
     "ollama":    "ollama serve",
     "llama":     r"llama.cpp\build\bin\llama-server.exe"
                  r" --model models\Qwen3.6-35B-A3B-UD-IQ3_S.gguf"
-                 r" --ctx-size 8192 --parallel 1 --port 8083 -ngl 99 --flash-attn",
+                 r" --ctx-size 4096 --parallel 1 --port 8083 -ngl 99 --flash-attn"
+                 r" -ctk q8_0 -ctv q8_0",
 }
 
 PORT_MAP = {"api": 7860, "mcp": 8766, "dashboard": 5173, "ollama": 11434, "llama": 8083}
