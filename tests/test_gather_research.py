@@ -53,6 +53,7 @@ def _setup_mocks(monkeypatch, *, results_per_round: list[list[dict]], novelty: i
     monkeypatch.setattr("harness.agent.compress_knowledge",   mock_compress)
     monkeypatch.setattr("harness.agent.assess_novelty",       lambda r, s: novelty)
     monkeypatch.setattr("harness.agent.scan_for_injection",   lambda t, source="": (True, []))
+    monkeypatch.setattr("harness.agent.plan_query",           lambda *a, **k: "gap_query")
     monkeypatch.setattr("harness.agent.MARKITDOWN_AVAILABLE", False)
     monkeypatch.setattr("harness.agent.SEARCH_QUALITY_FLOOR", 0)
 
@@ -227,7 +228,9 @@ class TestFanOutPlannedQueries:
         monkeypatch.setattr("harness.agent.compress_knowledge", lambda c, r, **k: "s")
         monkeypatch.setattr("harness.agent.assess_novelty", lambda r, s: 9)
         monkeypatch.setattr("harness.agent.scan_for_injection", lambda t, source="": (True, []))
+        monkeypatch.setattr("harness.agent.plan_query",     lambda *a, **k: "gap_query")
         monkeypatch.setattr("harness.agent.MARKITDOWN_AVAILABLE", False)
+        monkeypatch.setattr("harness.agent.SEARCH_QUALITY_FLOOR", 0)
 
         # Should not raise — the prefetch error is caught and round uses fallback
         result = gather_research(
