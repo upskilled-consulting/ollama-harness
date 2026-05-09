@@ -159,21 +159,10 @@ each step up requires a more capable orchestrating model.
 ### ✓ Pattern 2 — Fan-out web search
 `gather_research()` pre-fetches planned queries in parallel. Implemented in 0.3.0.
 
-### Pattern 2 — Fan-out annotation loop ← next
-The annotation loop in `lit_review_skill.py` calls the LLM once per paper, sequentially.
-60 papers × ~15s each = ~15 minutes. Papers are fully independent — embarrassingly parallel.
-
-Concretely: wrap `step_annotate` with `ThreadPoolExecutor(max_workers=N)` where N matches
-`llama-server --parallel N`. A threading lock guards the `RunTrace` token rollup. Paper
-order is preserved via indexed futures. Expected wall time: ~15 min → ~7 min at parallel=2,
-~4 min at parallel=4.
-
-```python
-with ThreadPoolExecutor(max_workers=parallel) as pool:
-    futures = {pool.submit(_annotate_one, i, paper): i for i, paper in enumerate(papers)}
-    for fut in as_completed(futures):
-        results[futures[fut]] = fut.result()
-```
+### ✓ Pattern 2 — Fan-out annotation loop
+`step_annotate` uses `ThreadPoolExecutor(max_workers=parallel)` (default `parallel=2`).
+Threading lock guards `RunTrace` token rollup; paper order preserved via indexed futures.
+`DEFAULT_ANNOTATE_PARALLEL = 2` — raise to match `llama-server --parallel N`.
 
 ### `/grill-me` — Saturation-driven user interview
 
