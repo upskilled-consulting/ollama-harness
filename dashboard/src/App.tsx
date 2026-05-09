@@ -31,13 +31,17 @@ const VIEWS: Record<View, React.ReactNode> = {
 
 function App() {
   const [view, setView] = useState<View>("home");
+  const [panelOpen, setPanelOpen] = useState<"terminal" | "voice" | null>(null);
   useLiveRuns();
+
+  const togglePanel = (p: "terminal" | "voice") =>
+    setPanelOpen((cur) => (cur === p ? null : p));
 
   return (
     <div id="layout">
-      <Sidebar active={view} onChange={setView} />
+      <Sidebar active={view} onChange={setView} panelOpen={panelOpen} onPanelToggle={togglePanel} />
       <div id="content">{VIEWS[view]}</div>
-      <FloatingPanels />
+      <FloatingPanels open={panelOpen} onClose={() => setPanelOpen(null)} />
     </div>
   );
 }

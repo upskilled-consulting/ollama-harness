@@ -162,6 +162,7 @@ async def _run_task(item: QueueItem, request: TaskRequest) -> None:
                     use_wiggum=not bool(request.no_wiggum),
                     producer_model=request.producer_model or None,
                     plan_gate=gate,
+                    _interactive=False,
                 )
             except SystemExit:
                 pass

@@ -386,6 +386,30 @@ REGISTRY: dict[str, dict] = {
         "auto":   None,   # explicit only
     },
 
+    "onboarding": {
+        "description": (
+            "First-run personalization: guided interview → data/user_profile.md + .harness-user.toml + memory seed. "
+            "3 fixed rounds (role, use cases, output prefs) + up to 3 free-form. "
+            "Auto-triggers when .harness-user.toml is absent. Re-run is additive (merges, not overwrites). "
+            "Invocation: /onboarding"
+        ),
+        "hook":   "standalone",
+        "prompt": None,
+        "auto":   None,
+    },
+
+    "grill-me": {
+        "description": (
+            "Saturation-driven user interview. Asks targeted questions, gates on novelty, "
+            "and synthesizes answers into a structured knowledge brief (data/briefs/). "
+            "Flags: --thorough (disable gate, run all rounds), --for <skill> (tailor to output). "
+            "Invocation: /grill-me [goal] [--thorough] [--for deck|research|email]"
+        ),
+        "hook":   "standalone",
+        "prompt": None,
+        "auto":   None,
+    },
+
     "scratchpad": {
         "description": (
             "Pre-synthesis: run Python code to compute exact values before writing. "

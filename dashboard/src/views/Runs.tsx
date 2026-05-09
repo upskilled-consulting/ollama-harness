@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef, type ReactNode, type CSSProperties } from "react";
+import { Plus, Minus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { useAllRuns, useLiveRun } from "@/hooks/useRuns";
+import { useLiveRun, usePagedRuns } from "@/hooks/useRuns";
 import { MdView } from "@/components/MdView";
 import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage, LiveRun } from "@/types";
 
@@ -535,11 +536,29 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
   const feedback = lastEval?.feedback;
   const issues   = run.wiggum_issues ?? lastEval?.issues ?? [];
 
+  const [cardHeight, setCardHeight] = useState(320);
+
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    const onMove = (ev: MouseEvent) =>
+      setCardHeight(Math.max(120, Math.min(640, startH + ev.clientY - startY)));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <div style={{
       flexShrink: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)",
-      padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10,
+      display: "flex", flexDirection: "column",
+      height: cardHeight, overflow: "hidden", position: "relative",
     }}>
+      <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", flex: 1 }}>
       {/* top row: status + task + close */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
         <span className={clsx("badge", (run.final ?? "running").toLowerCase())} style={{ flexShrink: 0, marginTop: 2 }}>
@@ -584,25 +603,76 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
         <div style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.5, fontStyle: "italic", wordBreak: "break-word" }}>{feedback}</div>
       )}
     </div>
+
+    {/* drag handle */}
+    <div
+      onMouseDown={startDrag}
+      title="Drag to resize"
+      style={{
+        height: 10, flexShrink: 0, cursor: "ns-resize",
+        background: "var(--surface)",
+        borderTop: "1px solid var(--border)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = "rgba(129,140,248,0.12)")}
+      onMouseLeave={e => (e.currentTarget.style.background = "var(--surface)")}
+    >
+      <div style={{ width: 32, height: 2, borderRadius: 2, background: "var(--border)" }} />
+    </div>
+  </div>
   );
 }
 
 // ── DAG canvas ─────────────────────────────────────────────────────────────────
 
 function DagCanvas({ run, selectedNode, onSelectNode }: { run: RunRecord; selectedNode: DagNode | null; onSelectNode: (n: DagNode | null) => void }) {
+  const [scale, setScale] = useState(1);
   const cols  = buildColumns(run);
   const { nodes, width, height } = layoutColumns(cols);
   const edges = buildEdges(cols, nodes);
+
+  const zoomBtn: CSSProperties = {
+    width: 28, height: 28, borderRadius: 6,
+    background: "var(--surface)", border: "1px solid var(--border)",
+    color: "var(--dim)", cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+    transition: "background 0.12s, color 0.12s",
+  };
+
   return (
-    <div style={{ flex: 1, overflow: "auto", background: "var(--bg)", padding: 8 }}
+    <div style={{ flex: 1, overflow: "auto", background: "var(--bg)", padding: 8, position: "relative" }}
       onClick={(e) => { if (e.target === e.currentTarget) onSelectNode(null); }}>
-      <svg width={width} height={height} style={{ display: "block" }}>
-        {edges.map((edge, i) => <SvgEdge key={i} edge={edge} />)}
-        {nodes.map((node) => (
-          <SvgNode key={node.id} node={node} selected={selectedNode?.id === node.id}
-            onClick={() => onSelectNode(selectedNode?.id === node.id ? null : node)} />
-        ))}
-      </svg>
+      {/* Zoom controls */}
+      <div style={{
+        position: "absolute", top: 10, right: 10,
+        display: "flex", flexDirection: "column", gap: 4, zIndex: 10,
+      }}>
+        <button
+          style={zoomBtn}
+          title="Zoom in"
+          onClick={(e) => { e.stopPropagation(); setScale((s) => Math.min(2, +(s + 0.25).toFixed(2))); }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(129,140,248,0.15)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--surface)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--dim)"; }}
+        ><Plus size={14} /></button>
+        <button
+          style={zoomBtn}
+          title="Zoom out"
+          onClick={(e) => { e.stopPropagation(); setScale((s) => Math.max(0.25, +(s - 0.25).toFixed(2))); }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(129,140,248,0.15)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--surface)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--dim)"; }}
+        ><Minus size={14} /></button>
+      </div>
+      <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", display: "inline-block" }}>
+        <svg width={width} height={height} style={{ display: "block" }}>
+          {edges.map((edge, i) => <SvgEdge key={i} edge={edge} />)}
+          {nodes.map((node) => (
+            <SvgNode key={node.id} node={node} selected={selectedNode?.id === node.id}
+              onClick={() => onSelectNode(selectedNode?.id === node.id ? null : node)} />
+          ))}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -723,9 +793,11 @@ function LiveRunCard({ liveRun, isSelected, onSelect }: { liveRun: LiveRun; isSe
   );
 }
 
-function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLive }: {
+function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLive,
+  total, page, pages, onPage }: {
   runs: RunRecord[]; selected: RunRecord | null; onSelect: (r: RunRecord) => void;
   liveRun: LiveRun | null; liveSelected: boolean; onSelectLive: () => void;
+  total: number; page: number; pages: number; onPage: (p: number) => void;
 }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -765,7 +837,10 @@ function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLi
           ))}
         </div>
         <span style={{ fontSize: 10, color: "var(--dim)" }}>
-          {filtered.length === runs.length ? `${runs.length} runs` : `${filtered.length} / ${runs.length}`}
+          {filtered.length < runs.length
+            ? `${filtered.length} / ${runs.length} on page`
+            : `${runs.length} on page`}
+          {total > runs.length && <span style={{ color: "var(--accent)", marginLeft: 4 }}>{total} total</span>}
         </span>
       </div>
 
@@ -809,6 +884,34 @@ function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLi
           );
         })}
       </div>
+
+      {/* pagination controls */}
+      {pages > 1 && (
+        <div style={{
+          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "6px 10px", borderTop: "1px solid var(--border)", background: "var(--surface)",
+        }}>
+          <button
+            onClick={() => onPage(page - 1)} disabled={page <= 1}
+            style={{
+              background: "none", border: "1px solid var(--border)", borderRadius: 5,
+              color: page <= 1 ? "var(--border)" : "var(--dim)", cursor: page <= 1 ? "default" : "pointer",
+              fontSize: 11, padding: "2px 8px",
+            }}
+          >‹</button>
+          <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+            {page} / {pages}
+          </span>
+          <button
+            onClick={() => onPage(page + 1)} disabled={page >= pages}
+            style={{
+              background: "none", border: "1px solid var(--border)", borderRadius: 5,
+              color: page >= pages ? "var(--border)" : "var(--dim)", cursor: page >= pages ? "default" : "pointer",
+              fontSize: 11, padding: "2px 8px",
+            }}
+          >›</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1053,7 +1156,12 @@ function ContextTreemap({ run }: { run: RunRecord }) {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export function Runs() {
-  const { data: runs = [], isLoading, error } = useAllRuns();
+  const [page, setPage] = useState(1);
+  const { data: paged, isLoading, error } = usePagedRuns(page);
+  const runs  = paged?.runs  ?? [];
+  const total = paged?.total ?? 0;
+  const pages = paged?.pages ?? 1;
+
   const { data: liveRun = null }              = useLiveRun();
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
@@ -1082,13 +1190,15 @@ export function Runs() {
   const handleViewMode = (m: ViewMode) => { setViewMode(m); if (m !== "dag") setSelectedNode(null); };
   const handleSelectLive = () => { setLiveSelected(true); setSelectedRun(null); setSelectedNode(null); };
 
-  if (isLoading) return <div className="loading">Loading…</div>;
-  if (error)     return <div className="page-error">Failed to load runs.</div>;
+  if (isLoading && !paged) return <div className="loading">Loading…</div>;
+  if (error)               return <div className="page-error">Failed to load runs.</div>;
 
   return (
     <div style={{ margin: "-28px", height: "100vh", display: "flex", overflow: "hidden" }}>
       <LeftPanel runs={runs} selected={activeRun} onSelect={handleSelectRun}
-        liveRun={liveRun} liveSelected={liveSelected} onSelectLive={handleSelectLive} />
+        liveRun={liveRun} liveSelected={liveSelected} onSelectLive={handleSelectLive}
+        total={total} page={page} pages={pages}
+        onPage={(p) => { setPage(p); setSelectedRun(null); setSelectedNode(null); }} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {liveSelected && liveRun ? (

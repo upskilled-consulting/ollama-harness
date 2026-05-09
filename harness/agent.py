@@ -196,13 +196,22 @@ def _synth_options(producer_model: str) -> dict:
 # ---------------------------------------------------------------------------
 # AUTORESEARCH:SYNTH_INSTRUCTION:BEGIN
 SYNTH_INSTRUCTION = (
-    "output ONLY the markdown starting with #  Generate 5 best practices for designing effective prompts for large language models, presented as a concise narrative flow. Each practice should be explained in 1-2 sentences, focusing on how it improves model performance or output quality. Avoid listing or numbered formats; instead, connect the practices logically to show their cumulative impact on prompt engineering."
+    "output ONLY the markdown starting with # "
+    "Synthesize the research findings into a comprehensive, well-structured answer to the task. "
+    "Directly address the task using specific evidence, techniques, tools, and data from the research above. "
+    "Use ## sections to organise key themes. Include concrete implementation details, benchmarks, "
+    "or examples wherever the research provides them. "
+    "Every claim must be grounded in the research findings — do not add generic filler content."
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION:END
 
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:BEGIN
 SYNTH_INSTRUCTION_COUNT = (
-    "output ONLY the markdown starting with #  Specify exactly 5 best practices for prompt design in large language models. These should be distinct, actionable techniques that can be applied by practitioners to improve output quality and model alignment."
+    "output ONLY the markdown starting with # "
+    "Synthesize the research findings into a structured answer to the task. "
+    "Each numbered section must be grounded in specific evidence from the research above. "
+    "Include concrete tools, techniques, benchmarks, and data points found in the research. "
+    "Do not add content that is not supported by the research findings."
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:END
 
@@ -210,7 +219,10 @@ SYNTH_INSTRUCTION_COUNT = (
 # Used when _is_technical_task() returns False so the model doesn't hallucinate code blocks.
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:BEGIN
 SYNTH_INSTRUCTION_PROSE = (
-    "output ONLY the markdown starting with #  Write a single cohesive paragraph of 200-300 words that explains the core principles of effective prompt engineering for large language models. Structure the explanation as a logical narrative that builds from foundational concepts to advanced techniques, showing how each element contributes to better model performance. Use clear, accessible language without technical jargon."
+    "output ONLY the markdown starting with # "
+    "Write a comprehensive, well-organised answer to the task based on the research findings above. "
+    "Directly address the task using specific facts, examples, and sources found in the research. "
+    "Do not generate generic content — ground every claim in the research findings above."
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:END
 
@@ -1305,7 +1317,7 @@ _LIT_REVIEW_NL_RE = re.compile(
 )
 
 
-def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None, plan_gate=None):
+def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None, plan_gate=None, _interactive: bool = True):
     global _KEEP_ALIVE
     from harness.wiggum import EVALUATOR_MODEL, ANNOTATE_EVALUATOR_MODEL
     if producer_model is None:
@@ -1332,6 +1344,18 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
     )
     os.environ["HARNESS_RUN_ID"] = trace.run_id
     memory = MemoryStore()
+
+    # Auto-onboarding — terminal only (_interactive=False when called from the API)
+    if "--no-onboard" not in task and _interactive:
+        from harness.config import USER_CONFIG_TOML
+        if not USER_CONFIG_TOML.exists() and not re.match(r"\s*/onboarding\b", task, re.IGNORECASE):
+            print("oh > No user profile found. Running /onboarding (~2 min). Skip with --no-onboard.")
+            try:
+                from harness.skills.onboarding_skill import run_onboarding
+                run_onboarding(lambda q: input(f"\n[onboarding] > "), producer_model, trace)
+            except Exception as _ob_err:
+                print(f"[warn] onboarding failed: {_ob_err}")
+    task = task.replace("--no-onboard", "").strip()
 
     # Load plugins — must happen before parse_skills() so plugin commands are in REGISTRY
     try:
@@ -3184,6 +3208,25 @@ Rules:
             trace.data["failed"]    = result["failed"]
             trace.finish("PASS" if result["returncode"] == 0 else "FAIL")
 
+        def _handle_grill_me():
+            trace.data["task_type"] = "grill-me"
+            from harness.skills.grill_me_skill import run_grill_me
+            ask_fn = lambda q: input(f"\n[grill-me] {q}\n> ")
+            brief_path = run_grill_me(task, producer_model, ask_fn, trace)
+            trace.finish("PASS")
+            write_output(f"Brief saved to: {brief_path}", path, trace)
+
+        def _handle_onboarding():
+            trace.data["task_type"] = "onboarding"
+            from harness.skills.onboarding_skill import run_onboarding
+            if not sys.stdin.isatty():
+                print("[onboarding] stdin is not a terminal — run /onboarding from the oh CLI")
+                trace.finish("PASS")
+                return
+            ask_fn = lambda q: input(f"\n[onboarding] > ")
+            run_onboarding(ask_fn, producer_model, trace)
+            trace.finish("PASS")
+
         _STANDALONE = {
             "annotate":     _handle_annotate,
             "email":        _handle_email,
@@ -3210,6 +3253,8 @@ Rules:
             "site":         _handle_site,
             "deck":         _handle_deck,
             "test-harness": _handle_test_harness,
+            "grill-me":     _handle_grill_me,
+            "onboarding":   _handle_onboarding,
         }
 
         for _skill in explicit_skills:

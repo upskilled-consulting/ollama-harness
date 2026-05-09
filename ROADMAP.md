@@ -33,18 +33,23 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 - OCR cascade (`ocr.py`) — PyMuPDF → llama-server GLM-OCR → llama3.2-vision fallback ✓
 - Perfetto trace instrumentation — Chrome Trace Event JSON per run, loadable at ui.perfetto.dev ✓
 - Curator (`curator.py`) — 5-persona LLM paper scoring with veto floor; filters annotation corpus ✓
+- Git state auto-commit (`GIT_STATE=1`) — `RunTrace.finish()` stages `runs.jsonl` + output file and commits on every PASS ✓
+- Synthesis instruction fix — `SYNTH_INSTRUCTION*` constants are task-agnostic; sentinel comments (`AUTORESEARCH:SYNTH_INSTRUCTION:*`) allow autoresearch to rewrite them ✓
+- Paginated runs API — `GET /api/runs/paged` with 30s in-memory cache; `GET /api/data` uncapped ✓
+- GitHub commit detail API — `GET /api/github/commits/{sha}/detail` (message, stat, file list, 16KB-capped diff); `github_repo` parallelized via `asyncio.gather` ✓
 
 ### Dashboard views
-- **Home** — KPI cards (total runs, pass rate, avg score, token spend) + activity feed
-- **Runs** — merged Runs + Explorer: compact run list + DAG inspector (pipeline graph, per-stage tokens, output preview, Wiggum scores + dim bars, evaluator feedback, RLHF panel, leverage chip)
+- **Home** — KPI cards (total runs, pass rate, avg score, token spend) + activity feed; uncapped (all runs, not just last 100)
+- **Runs** — merged Runs + Explorer: compact run list + DAG inspector (pipeline graph, per-stage tokens, output preview, Wiggum scores + dim bars, evaluator feedback, RLHF panel, leverage chip); server-side pagination (25/page, total count); DAG zoom controls (+/− buttons, 0.25×–2.0× scale)
 - **Submit** — fire a task from the browser; live pulse dot while in flight, `ResultCard` on completion ✓
 - **Sessions** — grouped by `session_id`, per-session pass rate / wall time / token spend ✓
 - **Analytics** — time-series charts: run volume, pass rate by day, score distribution, token trend ✓
 - **Artifacts** — browse output files with markdown preview and download ✓
 - **Fine-tune** — training metrics charts (loss, accuracy, lr) + RL dataset browser (preference pairs, reward feedback, GRPO rollouts, DPO with evaluator feedback)
+- **GitHub** — repo health (branch, dirty count, ahead/behind); GitHub-style commit activity heatmap (52×7 grid, 5-level intensity); clickable day cells → commit popup; commit clickable → detail drawer with full diff, stat, and changed-files list; PRs, issues, CI runs panels; parallelized repo endpoint ✓
 - **MCP** — registered tool inspector: tool cards with name, description, required/optional param badges ✓
-- **Floating terminal** — `oh >` REPL with input history, live run-status badges
-- **Voice FAB** — voice input panel
+- **Sidebar terminal** — `oh >` REPL with input history, live run-status badges (button in sidebar nav)
+- **Sidebar voice** — voice input panel (button in sidebar nav)
 
 ### Skills
 | Skill | Status |
@@ -66,8 +71,8 @@ This is achievable on a single RTX 5000 Ada (63.8GB VRAM). The scaffolding — o
 | `/sync-wiki` | ✓ deterministic wiki sync |
 | `/panel` | ✓ 3-persona wiggum review panel |
 | `/curate` | ✓ 5-persona LLM paper scoring + veto-floor corpus filter |
-| `/grill-me [domain]` | → 0.3.5 saturation-driven user interview |
-| `/onboarding` | → 0.3.5 first-run personalization via /grill-me |
+| `/grill-me [domain]` | ✓ saturation-driven user interview; brief → `data/briefs/` |
+| `/onboarding` | ✓ first-run personalization; profile + TOML config + memory seed |
 
 ---
 
@@ -290,9 +295,9 @@ fire-and-forget with no inter-agent messaging. Upgrade to Pattern 3: give each s
 agent a `send_message(to="parent")` tool so it can report intermediate results, request
 clarification, or surface blockers before finishing.
 
-### Git as state layer
+### ✓ Git as state layer
 Auto-commit after each PASS run so `runs.jsonl` and output files become a replayable,
-diffable experiment history — not just an append-only log.
+diffable experiment history — not just an append-only log. Opt-in via `GIT_STATE=1`.
 
 Concretely: in `RunTrace.finish("PASS")`, after writing to `runs.jsonl`, stage and commit:
 ```python
@@ -476,13 +481,107 @@ When a fine-tuned checkpoint is promoted:
 - Enables A/B serving: base + adapter simultaneously for the Critic to compare
 
 ### A2A protocol foundation
+
 The harness's producer→evaluator→wiggum loop is already an A2A pattern — agents
 negotiating over shared task state across multiple turns. The gap is that it's
 in-process rather than networked.
 
-Near-term: expose the harness as an A2A peer agent via an Agent Card so external
-orchestrators can delegate research, lit-review, and evaluation tasks to it.
-Each individual skill continues to use MCP for tool calls (web search, browser, file I/O).
+#### Multi-agent file architecture
+
+Each specialized agent lives in its own file (`researcher_agent.py`, `coder_agent.py`,
+`critic_agent.py`, …) with distinct system instructions, skill registries, and model
+routing. This is a natural extension of the existing `agent.py` structure — no new
+abstractions needed, just multiple instances of the same scaffold configured differently.
+
+The key design constraint: **agents must not import from each other**. All coordination
+happens over the wire. A `researcher_agent.py` that deep-imports from `coder_agent.py`
+defeats isolation and reintroduces the in-process coupling A2A is meant to eliminate.
+
+#### Wire protocol
+
+Each agent exposes two A2A-standard HTTP endpoints:
+
+```
+GET  /.well-known/agent.json   → Agent Card (capabilities, skills, model, version)
+POST /                         → Task endpoint (receives A2A Task object, returns result)
+```
+
+The Agent Card is a JSON document declaring what the agent can do:
+```json
+{
+  "name":        "researcher",
+  "description": "Multi-round web research, lit-review, and synthesis",
+  "skills":      ["research", "lit-review", "annotate", "recall"],
+  "model":       "pi-qwen-32b",
+  "endpoint":    "http://localhost:7861"
+}
+```
+
+The orchestrating `agent.py` (or a dedicated coordinator) discovers peers at startup by
+reading a `agents.toml` registry, fetches their cards, and routes subtasks to them via
+standard A2A `Task` objects over `httpx`.
+
+#### Routing in the planner
+
+The planner's `make_plan()` step gains a `delegate_to` field per query:
+```python
+# planner output (extended)
+{"query": "survey RLHF papers", "delegate_to": "researcher"}
+{"query": "write tokenizer utility", "delegate_to": "coder"}
+```
+
+`gather_research()` checks `delegate_to`: local skill → existing path; named agent →
+`httpx.post(peer_url, json=a2a_task)`. The rest of the pipeline (compression, wiggum,
+leverage) is unchanged — the delegated result arrives as a normal search result.
+
+#### Tradeoffs vs. current in-process model
+
+| | In-process (current) | A2A (networked) |
+|---|---|---|
+| Latency | ~0ms | HTTP round-trip per delegation |
+| Isolation | None — shared `_queue`, `_TaskTee`, `_plan_gates` | Full process isolation |
+| Model per agent | Shared backend | Each agent can run a different model |
+| Distributed | Single machine | Multi-machine / multi-GPU |
+| Third-party agents | No | Any A2A-compliant agent can plug in |
+| State sharing | Direct memory | Must pass context explicitly in task payload |
+
+The in-process shared state that gets severed: `_TaskTee` log tee, `_queue` list,
+`_plan_gates` threading events. Each agent's task log becomes its own SSE stream;
+the orchestrator correlates them by `run_id` in `runs.jsonl`.
+
+#### Implementation path
+
+1. **`a2a_server.py`** — thin wrapper that mounts the existing FastAPI `router` plus a
+   `/agent.json` card endpoint. Any `*_agent.py` imports it to become an A2A peer:
+   ```python
+   from harness.a2a_server import serve
+   serve(agent_card=MY_CARD, port=7861)
+   ```
+
+2. **`agents.toml`** — registry of known peers:
+   ```toml
+   [[agents]]
+   name     = "researcher"
+   endpoint = "http://localhost:7861"
+
+   [[agents]]
+   name     = "coder"
+   endpoint = "http://localhost:7862"
+   ```
+
+3. **Planner routing** — add `delegate_to` to `make_plan()` prompt and parse it in
+   `gather_research()`. Two-line change: check `delegate_to`, call `httpx.post` if set.
+
+4. **Log correlation** — orchestrator attaches `parent_run_id` to each delegated task;
+   delegated agents include it in their `runs.jsonl` entries. Dashboard groups by
+   `parent_run_id` for a unified run tree view.
+
+Existing skill/queue/log machinery is untouched. The near-term goal is exposing the
+harness as an A2A peer so external orchestrators can delegate to it; the long-term goal
+is the full swarm where every agent is an A2A node.
+
+Each individual skill continues to use MCP for tool calls (web search, browser, file I/O) —
+MCP and A2A are complementary layers: MCP for tools, A2A for agent-to-agent delegation.
 
 ### Docker sandbox for run_python
 When `run_python` scope expands beyond model-generated code to untrusted sources

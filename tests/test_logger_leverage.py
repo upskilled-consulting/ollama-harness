@@ -1,10 +1,15 @@
 """
-Tests for leverage metric computation in RunTrace.finish().
+Tests for leverage metric computation in RunTrace.finish()
+and git-state-layer auto-commit in RunTrace._git_commit_run().
 
 Covers:
 - Proxy formula (score × output_lines / runtime_hours) fires on every run
 - Not set when wiggum_scores or output_lines are absent
 - tac_hours formula takes precedence when available
+- GIT_STATE=1 calls git add + git commit on PASS
+- GIT_STATE unset → no git calls
+- FAIL result → no git calls
+- git failure is swallowed (no exception propagates)
 """
 
 from __future__ import annotations
@@ -102,3 +107,111 @@ class TestLeverageProxy:
 
         out = capsys.readouterr().out
         assert "leverage=" in out
+
+
+# ---------------------------------------------------------------------------
+# Git state layer — _git_commit_run()
+# ---------------------------------------------------------------------------
+
+class TestGitCommitRun:
+    """Tests for _git_commit_run() — called directly to avoid file-I/O in finish()."""
+
+    def _make_trace_with_data(self, monkeypatch, run_id="abc12345", task="test task", out_path=None):
+        from harness.logger import RunTrace
+        trace = RunTrace(task=task, producer_model="m", evaluator_model="e", _is_sub=True)
+        trace.data["run_id"]      = run_id
+        trace.data["task"]        = task
+        trace.data["final"]       = "PASS"
+        trace.data["output_path"] = out_path
+        return trace
+
+    def test_git_called_when_git_state_is_1(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GIT_STATE", "1")
+        calls = []
+
+        def fake_run(cmd, **_):
+            calls.append(cmd)
+            class R: returncode = 0
+            return R()
+
+        monkeypatch.setattr(_logger_mod.subprocess, "run", fake_run)
+        trace = self._make_trace_with_data(monkeypatch)
+        trace._git_commit_run()
+
+        add_call    = next((c for c in calls if "add" in c), None)
+        commit_call = next((c for c in calls if "commit" in c), None)
+        assert add_call    is not None, "git add not called"
+        assert commit_call is not None, "git commit not called"
+
+    def test_commit_message_contains_run_id_and_task(self, monkeypatch):
+        monkeypatch.setenv("GIT_STATE", "1")
+        commit_msgs = []
+
+        def fake_run(cmd, **_):
+            if "commit" in cmd:
+                commit_msgs.append(cmd[-1])  # last arg is the -m message
+            class R: returncode = 0
+            return R()
+
+        monkeypatch.setattr(_logger_mod.subprocess, "run", fake_run)
+        trace = self._make_trace_with_data(monkeypatch, run_id="deadbeef1234", task="synthesize rag paper")
+        trace._git_commit_run()
+
+        assert commit_msgs, "git commit not called"
+        msg = commit_msgs[0]
+        assert "deadbeef" in msg
+        assert "synthesize rag paper" in msg
+
+    def test_output_path_added_when_present(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GIT_STATE", "1")
+        out_file = tmp_path / "output.md"
+        added_paths = []
+
+        def fake_run(cmd, **_):
+            if "add" in cmd:
+                added_paths.extend(cmd[cmd.index("--") + 1:])
+            class R: returncode = 0
+            return R()
+
+        monkeypatch.setattr(_logger_mod.subprocess, "run", fake_run)
+        trace = self._make_trace_with_data(monkeypatch, out_path=str(out_file))
+        trace._git_commit_run()
+
+        assert any(str(out_file) in p for p in added_paths), \
+            f"output_path not staged; staged: {added_paths}"
+
+    def test_no_git_when_git_state_not_set(self, monkeypatch):
+        monkeypatch.delenv("GIT_STATE", raising=False)
+        calls = []
+
+        def fake_run(cmd, **_):
+            calls.append(cmd)
+            class R: returncode = 0
+            return R()
+
+        monkeypatch.setattr(_logger_mod.subprocess, "run", fake_run)
+        trace = self._make_trace_with_data(monkeypatch)
+        trace._git_commit_run()
+
+        assert not calls, "subprocess.run called when GIT_STATE not set"
+
+    def test_no_git_when_git_state_is_0(self, monkeypatch):
+        monkeypatch.setenv("GIT_STATE", "0")
+        calls = []
+        monkeypatch.setattr(_logger_mod.subprocess, "run", lambda *a, **kw: calls.append(a))
+        trace = self._make_trace_with_data(monkeypatch)
+        trace._git_commit_run()
+        assert not calls
+
+    def test_git_failure_is_swallowed(self, monkeypatch, capsys):
+        monkeypatch.setenv("GIT_STATE", "1")
+
+        def fake_run(cmd, **_):
+            raise OSError("git not found")
+
+        monkeypatch.setattr(_logger_mod.subprocess, "run", fake_run)
+        trace = self._make_trace_with_data(monkeypatch)
+        trace._git_commit_run()  # must not raise
+
+        out = capsys.readouterr().out
+        assert "skipped" in out or "git" in out

@@ -35,7 +35,7 @@ async def _gh(*args: str) -> dict | list | None:
             stderr=asyncio.subprocess.DEVNULL,
             cwd=str(ROOT),
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
         return json.loads(stdout.decode("utf-8", errors="replace"))
     except Exception:
         return None
@@ -59,13 +59,15 @@ async def _git(*args: str) -> str:
 async def github_repo():
     if (cached := _get_cache("repo", 30)) is not None:
         return cached
-    branch = await _git("rev-parse", "--abbrev-ref", "HEAD")
-    dirty  = await _git("status", "--porcelain")
+    branch, dirty, ahead, behind, meta = await asyncio.gather(
+        _git("rev-parse", "--abbrev-ref", "HEAD"),
+        _git("status", "--porcelain"),
+        _git("rev-list", "--count", "@{u}..HEAD"),
+        _git("rev-list", "--count", "HEAD..@{u}"),
+        _gh("repo", "view", "--json",
+            "name,owner,description,url,defaultBranchRef,isPrivate,stargazerCount,forkCount,pushedAt"),
+    )
     dirty_count = len([ln for ln in dirty.splitlines() if ln.strip()])
-    ahead  = await _git("rev-list", "--count", "@{u}..HEAD")
-    behind = await _git("rev-list", "--count", "HEAD..@{u}")
-    meta   = await _gh("repo", "view", "--json",
-                       "name,owner,description,url,defaultBranchRef,isPrivate,stargazerCount,forkCount,pushedAt")
     return _set_cache("repo", {
         "branch":      branch or "unknown",
         "dirty_files": dirty_count,
@@ -111,16 +113,58 @@ async def github_commits():
         return cached
     raw = await _git(
         "log", "--no-decorate",
-        "--pretty=format:%H\x1f%h\x1f%s\x1f%an\x1f%ar",
-        "-15",
+        "--pretty=format:%H\x1f%h\x1f%s\x1f%an\x1f%ar\x1f%aI",
+        "-365",
     )
     commits = []
     for line in raw.splitlines():
         parts = line.split("\x1f")
-        if len(parts) == 5:
-            commits.append({"sha": parts[0], "short": parts[1],
-                            "message": parts[2], "author": parts[3], "ago": parts[4]})
+        if len(parts) == 6:
+            commits.append({
+                "sha":     parts[0],
+                "short":   parts[1],
+                "message": parts[2],
+                "author":  parts[3],
+                "ago":     parts[4],
+                "date":    parts[5][:10],  # YYYY-MM-DD only
+            })
     return _set_cache("commits", commits)
+
+
+import re as _re
+_SHA_RE = _re.compile(r"^[0-9a-f]{4,64}$")
+
+
+@router.get("/github/commits/{sha}/detail")
+async def github_commit_detail(sha: str):
+    if not _SHA_RE.match(sha):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid SHA")
+    cache_key = f"commit_detail_{sha}"
+    if (cached := _get_cache(cache_key, ttl=3600)) is not None:
+        return cached
+
+    msg   = await _git("show", "--no-patch", "--pretty=format:%B", sha)
+    stat  = await _git("show", "--stat", "--no-patch", sha)
+
+    files_raw = await _git("diff-tree", "--no-commit-id", "-r", "--name-status", sha)
+    files: list[dict] = []
+    for ln in files_raw.splitlines():
+        parts = ln.split("\t", 1)
+        if len(parts) == 2:
+            files.append({"status": parts[0].strip(), "file": parts[1].strip()})
+
+    diff = await _git("show", "--unified=3", "--no-color", sha)
+    if len(diff) > 16_000:
+        diff = diff[:16_000] + "\n\n… diff truncated"
+
+    return _set_cache(cache_key, {
+        "sha":     sha,
+        "message": msg.strip(),
+        "stat":    stat,
+        "files":   files,
+        "diff":    diff,
+    })
 
 
 @router.post("/github/refresh")

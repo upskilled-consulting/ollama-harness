@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhIssue, GhPr, GhRepo, GhRun, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhCommitDetail, GhIssue, GhPr, GhRepo, GhRun, LiveRun, McpLogEntry, McpTool, PlanRecord, QueueItem, RunRecord, Session } from "@/types";
 
 const BASE = "/api";
 
@@ -22,6 +22,10 @@ export const api = {
   data:      ()                             => get<DashboardData>("/data"),
   runs:      ()                             => get<{ active: RunRecord[]; recent: RunRecord[] }>("/runs"),
   all_runs:  ()                             => get<RunRecord[]>("/runs/all"),
+  paged_runs: (page: number, per_page = 25) =>
+    get<{ runs: RunRecord[]; total: number; page: number; per_page: number; pages: number }>(
+      `/runs/paged?page=${page}&per_page=${per_page}`
+    ),
   queue:     ()                             => get<{ pending: number; items: QueueItem[] }>("/queue"),
   mcp_log:   (limit = 200)                 => get<McpLogEntry[]>(`/mcp/log?limit=${limit}`),
   mcp_tools: ()                             => get<McpTool[]>("/mcp/tools"),
@@ -49,7 +53,8 @@ export const api = {
   github_prs:     () => get<GhPr[]>("/github/prs"),
   github_issues:  () => get<GhIssue[]>("/github/issues"),
   github_runs:    () => get<GhRun[]>("/github/runs"),
-  github_commits: () => get<GhCommit[]>("/github/commits"),
+  github_commits:       () => get<GhCommit[]>("/github/commits"),
+  github_commit_detail: (sha: string) => get<GhCommitDetail>(`/github/commits/${sha}/detail`),
   github_refresh: () =>
     fetch(`${BASE}/github/refresh`, { method: "POST" }).then((r) => r.json()),
 };

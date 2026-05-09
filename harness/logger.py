@@ -9,6 +9,7 @@ Import and use RunTrace in agent.py and wiggum.py.
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -462,6 +463,32 @@ class RunTrace:
         self.data["input_tokens"]  += wiggum_trace.get("input_tokens", 0)
         self.data["output_tokens"] += wiggum_trace.get("output_tokens", 0)
 
+    def _git_commit_run(self) -> None:
+        """Stage runs.jsonl + output file and commit. Opt-in via GIT_STATE=1. Silent/best-effort."""
+        if os.environ.get("GIT_STATE", "").strip() != "1":
+            return
+        run_id  = self.data.get("run_id", "")[:8]
+        task    = (self.data.get("task") or "")[:60]
+        out_path = self.data.get("output_path")
+        try:
+            repo_root = str(RUNS_FILE.parent.parent)
+            paths = [str(RUNS_FILE)]
+            if out_path:
+                paths.append(str(out_path))
+            subprocess.run(
+                ["git", "add", "--"] + paths,
+                cwd=repo_root, check=True,
+                capture_output=True, timeout=15,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"run: {run_id} {task}"],
+                cwd=repo_root, check=True,
+                capture_output=True, timeout=15,
+            )
+            print(f"  [git] committed run {run_id}")
+        except Exception as e:
+            print(f"  [git] commit skipped: {e}")
+
     def finish(self, final: str = None):
         if final:
             self.data["final"] = final
@@ -500,3 +527,5 @@ class RunTrace:
             print(f"  [log] -> {LOG_PATH}")
             self._write_trace()
             self._fire_webhook()
+            if self.data.get("final") == "PASS":
+                self._git_commit_run()

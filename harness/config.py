@@ -42,6 +42,9 @@ TRANSCRIPTS_DIR           = DATA_DIR / "transcripts"
 MCP_LOG                   = DATA_DIR / "mcp_tasks.jsonl"
 LIVE_RUN_FILE             = DATA_DIR / "live_run.json"
 TASK_LOGS_DIR             = DATA_DIR / "task_logs"
+BRIEFS_DIR                = DATA_DIR / "briefs"
+USER_PROFILE_PATH         = DATA_DIR / "user_profile.md"
+USER_CONFIG_TOML          = ROOT / ".harness-user.toml"
 
 # Legacy data from harness-engineering (sibling repo) — read-only historical source
 LEGACY_ROOT          = ROOT.parent / "harness-engineering"
@@ -106,5 +109,5 @@ settings = Settings()
 
 def ensure_dirs() -> None:
     """Create all runtime directories if they don't exist."""
-    for d in (DATA_DIR, TRACES_DIR, ARXIV_CACHE_DIR, LIT_REVIEWS_DIR, CHROMA_DIR, EMAIL_DRAFTS_DIR, SCREENSHOTS_DIR, TRANSCRIPTS_DIR, TASK_LOGS_DIR):
+    for d in (DATA_DIR, TRACES_DIR, ARXIV_CACHE_DIR, LIT_REVIEWS_DIR, CHROMA_DIR, EMAIL_DRAFTS_DIR, SCREENSHOTS_DIR, TRANSCRIPTS_DIR, TASK_LOGS_DIR, BRIEFS_DIR):
         d.mkdir(parents=True, exist_ok=True)

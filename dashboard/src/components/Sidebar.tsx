@@ -1,4 +1,4 @@
-import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon } from "lucide-react";
+import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon, TerminalSquare, Mic } from "lucide-react";
 import { clsx } from "clsx";
 
 export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp" | "github";
@@ -24,8 +24,10 @@ const TOP_ITEMS: NavItem[] = [
 const BOTTOM_ITEMS: NavItem[] = [];
 
 interface Props {
-  active:   View;
-  onChange: (v: View) => void;
+  active:        View;
+  onChange:      (v: View) => void;
+  panelOpen:     "terminal" | "voice" | null;
+  onPanelToggle: (p: "terminal" | "voice") => void;
 }
 
 function NavBtn({ item, active, onChange }: { item: NavItem; active: View; onChange: (v: View) => void }) {
@@ -41,7 +43,7 @@ function NavBtn({ item, active, onChange }: { item: NavItem; active: View; onCha
   );
 }
 
-export function Sidebar({ active, onChange }: Props) {
+export function Sidebar({ active, onChange, panelOpen, onPanelToggle }: Props) {
   return (
     <nav id="sidebar">
       {TOP_ITEMS.map((item) => (
@@ -51,6 +53,22 @@ export function Sidebar({ active, onChange }: Props) {
       {BOTTOM_ITEMS.map((item) => (
         <NavBtn key={item.id} item={item} active={active} onChange={onChange} />
       ))}
+      <button
+        className={clsx("nav-btn", panelOpen === "terminal" && "active")}
+        onClick={() => onPanelToggle("terminal")}
+        aria-label="Terminal"
+      >
+        <TerminalSquare size={18} />
+        <span className="nav-tooltip">Terminal</span>
+      </button>
+      <button
+        className={clsx("nav-btn", panelOpen === "voice" && "active")}
+        onClick={() => onPanelToggle("voice")}
+        aria-label="Voice"
+      >
+        <Mic size={18} />
+        <span className="nav-tooltip">Voice</span>
+      </button>
     </nav>
   );
 }

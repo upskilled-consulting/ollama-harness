@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import math
 import os
+import time
 from collections import Counter, defaultdict
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +16,45 @@ router = APIRouter(tags=["runs"])
 _MAX_RECENT = 100
 
 _STRIP_FROM_LIST = {"final_content"}
+
+# ── Full-list cache (used by paginated endpoint) ───────────────────────────────
+
+_full_cache: tuple[float, list[dict]] | None = None
+_FULL_CACHE_TTL = 30.0  # seconds
+
+
+def _load_all_runs_uncapped() -> list[dict]:
+    """Load every run from disk, newest-first. Result cached for 30 s."""
+    global _full_cache
+    now = time.monotonic()
+    if _full_cache is not None and now - _full_cache[0] < _FULL_CACHE_TTL:
+        return _full_cache[1]
+
+    seen: set[str] = set()
+    records: list[dict] = []
+
+    for path in (RUNS_FILE, LEGACY_RUNS_FILE):
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rid = r.get("run_id") or r.get("timestamp", "") + r.get("task", "")[:30]
+            if not r.get("run_id"):
+                r["run_id"] = rid
+            if rid and rid not in seen:
+                seen.add(rid)
+                r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
+                records.append(r)
+
+    _full_cache = (now, records)
+    return records
 
 
 def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
@@ -74,6 +115,24 @@ async def get_all_runs():
     return await asyncio.to_thread(_load_runs)
 
 
+@router.get("/runs/paged")
+async def get_paged_runs(page: int = 1, per_page: int = 25):
+    """Paginated run list. Returns total count for display even on page > 1."""
+    per_page = max(1, min(100, per_page))
+    page     = max(1, page)
+    records  = await asyncio.to_thread(_load_all_runs_uncapped)
+    total    = len(records)
+    pages    = math.ceil(total / per_page) if total else 1
+    offset   = (page - 1) * per_page
+    return {
+        "runs":     records[offset : offset + per_page],
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "pages":    pages,
+    }
+
+
 def _find_run_by_id(run_id: str) -> dict | None:
     """Scan JSONL files (newest-first) for a specific run_id without loading everything."""
     for path in (RUNS_FILE, LEGACY_RUNS_FILE):
@@ -125,7 +184,7 @@ async def get_run_content(run_id: str):
 
 @router.get("/data")
 async def get_dashboard_data():
-    runs = await asyncio.to_thread(_load_runs)
+    runs = await asyncio.to_thread(_load_all_runs_uncapped)
     passes    = [r for r in runs if r.get("final") == "PASS"]
     scores    = [r["wiggum_scores"][-1] for r in runs if r.get("wiggum_scores")]
     durations = [r["run_duration_s"] for r in runs if r.get("run_duration_s")]

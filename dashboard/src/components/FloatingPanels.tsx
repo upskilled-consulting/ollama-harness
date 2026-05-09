@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from "react";
-import { TerminalSquare, Mic, X, RotateCcw } from "lucide-react";
+import { X, RotateCcw } from "lucide-react";
 import { Voice } from "@/views/Voice";
 import { useSubmitTask } from "@/hooks/useRuns";
 import { useQueryClient } from "@tanstack/react-query";
@@ -247,67 +247,21 @@ function VoicePanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── FAB button ─────────────────────────────────────────────────────────────────
-
-function Fab({ icon, active, tooltip, onClick }: {
-  icon: React.ReactNode; active: boolean; tooltip: string; onClick: () => void;
-}) {
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        onClick={onClick}
-        title={tooltip}
-        style={{
-          width: 44, height: 44, borderRadius: 12,
-          background: active ? "rgba(129,140,248,0.2)" : "var(--surface)",
-          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-          color: active ? "var(--accent)" : "var(--dim)",
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-          transition: "background 0.15s, border-color 0.15s, color 0.15s",
-        }}
-      >
-        {icon}
-      </button>
-    </div>
-  );
-}
-
 // ── Root export ────────────────────────────────────────────────────────────────
 
-export function FloatingPanels() {
-  const [open, setOpen] = useState<"terminal" | "voice" | null>(null);
-
-  const toggle = (panel: "terminal" | "voice") =>
-    setOpen((cur) => (cur === panel ? null : panel));
-
+export function FloatingPanels({ open, onClose }: {
+  open: "terminal" | "voice" | null;
+  onClose: () => void;
+}) {
+  if (!open) return null;
   return (
     <div style={{
       position: "fixed", bottom: 24, right: 24,
       display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10,
       zIndex: 500,
     }}>
-      {/* panels — rendered above their respective FAB */}
-      {open === "terminal" && (
-        <TerminalPanel onClose={() => setOpen(null)} />
-      )}
-      {open === "voice" && (
-        <VoicePanel onClose={() => setOpen(null)} />
-      )}
-
-      {/* FAB stack */}
-      <Fab
-        icon={<TerminalSquare size={18} />}
-        active={open === "terminal"}
-        tooltip="Terminal"
-        onClick={() => toggle("terminal")}
-      />
-      <Fab
-        icon={<Mic size={18} />}
-        active={open === "voice"}
-        tooltip="Voice"
-        onClick={() => toggle("voice")}
-      />
+      {open === "terminal" && <TerminalPanel onClose={onClose} />}
+      {open === "voice"    && <VoicePanel    onClose={onClose} />}
     </div>
   );
 }

@@ -1,7 +1,9 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import { useGithub } from "@/hooks/useRuns";
 import { api } from "@/api/client";
-import type { GhCommit, GhIssue, GhPr, GhRun } from "@/types";
+import type { GhCommit, GhCommitDetail, GhIssue, GhPr, GhRun } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -249,33 +251,370 @@ function CiSection() {
 }
 
 // ---------------------------------------------------------------------------
-// Section: Commits
+// Section: Commit heatmap
 // ---------------------------------------------------------------------------
 
-function CommitRow({ c }: { c: GhCommit }) {
+const CELL = 11;
+const GAP  = 2;
+const STEP = CELL + GAP;
+
+function cellColor(count: number): string {
+  if (count <= 0) return "rgba(255,255,255,0.05)";
+  if (count === 1) return "rgba(34,211,238,0.22)";
+  if (count === 2) return "rgba(34,211,238,0.45)";
+  if (count === 3) return "rgba(34,211,238,0.65)";
+  return "rgba(34,211,238,0.90)";
+}
+
+type GridCell = { date: string; count: number; future: boolean };
+
+function buildGrid(commits: GhCommit[]): { weeks: GridCell[][]; months: { label: string; col: number }[] } {
+  const countByDate = new Map<string, number>();
+  for (const c of commits) {
+    if (c.date) countByDate.set(c.date, (countByDate.get(c.date) ?? 0) + 1);
+  }
+
+  const today = new Date();
+  // Start on the Sunday 52 weeks ago
+  const start = new Date(today);
+  start.setDate(today.getDate() - 52 * 7 + 1);
+  start.setDate(start.getDate() - start.getDay()); // back to Sunday
+
+  const weeks: GridCell[][] = [];
+  const months: { label: string; col: number }[] = [];
+  const cur = new Date(start);
+  let lastMonth = -1;
+
+  while (cur <= today || weeks[weeks.length - 1]?.length < 7) {
+    if (cur.getDay() === 0) {
+      if (weeks.length >= 53) break;
+      weeks.push([]);
+    }
+    const dateStr = cur.toISOString().slice(0, 10);
+    const future  = cur > today;
+    weeks[weeks.length - 1].push({ date: dateStr, count: future ? 0 : (countByDate.get(dateStr) ?? 0), future });
+
+    if (!future && cur.getDate() <= 7 && cur.getMonth() !== lastMonth) {
+      lastMonth = cur.getMonth();
+      months.push({
+        label: cur.toLocaleString("en-US", { month: "short" }),
+        col:   weeks.length - 1,
+      });
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { weeks, months };
+}
+
+// ── Commit detail drawer ────────────────────────────────────────────────────
+
+function DiffView({ diff }: { diff: string }) {
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-      <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent)", flexShrink: 0, paddingTop: 1 }}>
-        {c.short}
-      </code>
-      <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {c.message}
-      </div>
-      <span style={{ fontSize: 11, color: "var(--dim)", flexShrink: 0, paddingTop: 1 }}>{c.ago}</span>
+    <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.55, overflowX: "auto" }}>
+      {diff.split("\n").map((line, i) => {
+        const color = line.startsWith("+") && !line.startsWith("+++") ? "rgba(63,185,80,0.9)"
+                    : line.startsWith("-") && !line.startsWith("---") ? "rgba(248,81,73,0.9)"
+                    : line.startsWith("@@") ? "rgba(167,139,250,0.9)"
+                    : line.startsWith("diff ") || line.startsWith("index ") ? "var(--accent)"
+                    : "var(--dim)";
+        const bg = line.startsWith("+") && !line.startsWith("+++") ? "rgba(63,185,80,0.06)"
+                 : line.startsWith("-") && !line.startsWith("---") ? "rgba(248,81,73,0.06)"
+                 : "transparent";
+        return (
+          <div key={i} style={{ color, background: bg, whiteSpace: "pre", paddingLeft: 4 }}>{line || " "}</div>
+        );
+      })}
     </div>
   );
 }
 
-function CommitsSection() {
+function CommitDetailDrawer({ sha, onClose }: { sha: string; onClose: () => void }) {
+  const { data, isLoading } = useQuery<GhCommitDetail>({
+    queryKey:  ["commit_detail", sha],
+    queryFn:   () => api.github_commit_detail(sha),
+    staleTime: Infinity,
+  });
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 800,
+      display: "flex", alignItems: "stretch", justifyContent: "flex-end",
+    }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* scrim */}
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} onClick={onClose} />
+
+      {/* drawer */}
+      <div style={{
+        position: "relative", width: "min(680px, 92vw)", height: "100%",
+        background: "var(--surface)", borderLeft: "1px solid var(--border)",
+        display: "flex", flexDirection: "column", overflow: "hidden",
+        boxShadow: "-12px 0 40px rgba(0,0,0,0.5)",
+        animation: "slideInRight 0.18s ease",
+      }}>
+        {/* header */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "12px 16px", borderBottom: "1px solid var(--border)",
+          background: "var(--bg)", flexShrink: 0,
+        }}>
+          <code style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--accent)", flex: 1 }}>{sha.slice(0, 12)}</code>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", padding: 2 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {isLoading && <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>Loading diff…</div>}
+
+        {data && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* commit message */}
+            <div>
+              <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Message</div>
+              <pre style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", margin: 0 }}>{data.message}</pre>
+            </div>
+
+            {/* files changed */}
+            {data.files.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+                  Files changed ({data.files.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {data.files.map((f, i) => {
+                    const color = f.status === "A" ? "var(--pass)" : f.status === "D" ? "var(--fail)" : f.status === "M" ? "var(--warn)" : "var(--dim)";
+                    const label = f.status === "A" ? "A" : f.status === "D" ? "D" : f.status === "M" ? "M" : f.status;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color, width: 14, textAlign: "center", flexShrink: 0 }}>{label}</span>
+                        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{f.file}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* diff */}
+            <div>
+              <div style={{ fontSize: 10, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Diff</div>
+              <div style={{
+                background: "#0a0c12", border: "1px solid var(--border)", borderRadius: 6,
+                padding: "10px 12px", overflowX: "auto",
+              }}>
+                <DiffView diff={data.diff} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Day popup ───────────────────────────────────────────────────────────────
+
+function DayPopup({ date, commits, anchor, onClose, onSelectCommit }: {
+  date: string;
+  commits: GhCommit[];
+  anchor: { x: number; y: number };
+  onClose: () => void;
+  onSelectCommit: (sha: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    // small delay so the click that opened it doesn't immediately close it
+    const t = setTimeout(() => document.addEventListener("mousedown", handler), 80);
+    return () => { clearTimeout(t); document.removeEventListener("mousedown", handler); };
+  }, [onClose]);
+
+  // flip left if too close to right edge
+  const flipLeft = anchor.x > window.innerWidth - 280;
+
+  return (
+    <div ref={ref} style={{
+      position: "fixed",
+      top:  anchor.y + 8,
+      left: flipLeft ? anchor.x - 240 : anchor.x,
+      width: 260,
+      background: "var(--surface)", border: "1px solid var(--border)",
+      borderRadius: 8, boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
+      zIndex: 700, overflow: "hidden",
+    }}>
+      <div style={{
+        padding: "8px 12px", borderBottom: "1px solid var(--border)",
+        fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+      }}>
+        <span>{date}</span>
+        <span style={{ color: "var(--accent)" }}>{commits.length} commit{commits.length !== 1 ? "s" : ""}</span>
+      </div>
+      {commits.length === 0 ? (
+        <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--dim)" }}>No commits this day.</div>
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: "auto" }}>
+          {commits.map((c) => (
+            <div key={c.sha}
+              onClick={() => { onSelectCommit(c.sha); onClose(); }}
+              style={{
+                padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid rgba(42,45,58,0.5)",
+                transition: "background 0.1s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(129,140,248,0.08)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            >
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 2 }}>
+                <code style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--accent)", flexShrink: 0 }}>{c.short}</code>
+                <span style={{ fontSize: 10, color: "var(--dim)", marginLeft: "auto", flexShrink: 0 }}>{c.ago}</span>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.message}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main heatmap component ──────────────────────────────────────────────────
+
+const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+
+function CommitHeatmap() {
   const { commits } = useGithub();
   const list = commits.data ?? [];
+
+  const [popup, setPopup]         = useState<{ date: string; x: number; y: number } | null>(null);
+  const [detailSha, setDetailSha] = useState<string | null>(null);
+
+  const { weeks, months } = useMemo(() => buildGrid(list), [list]);
+
+  const byDate = useMemo(() => {
+    const m = new Map<string, GhCommit[]>();
+    for (const c of list) {
+      if (c.date) {
+        const arr = m.get(c.date) ?? [];
+        arr.push(c);
+        m.set(c.date, arr);
+      }
+    }
+    return m;
+  }, [list]);
+
+  const handleCellClick = useCallback((e: React.MouseEvent, day: GridCell) => {
+    if (day.future || day.count === 0) { setPopup(null); return; }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setPopup({ date: day.date, x: rect.left + rect.width / 2, y: rect.bottom });
+  }, []);
+
   return (
-    <div className="card">
-      <div className="card-title" style={{ marginBottom: 4 }}>Recent commits</div>
-      {commits.isLoading && <div style={{ color: "var(--dim)", fontSize: 12 }}>Loading…</div>}
-      {!commits.isLoading && list.length === 0 && <div style={{ color: "var(--dim)", fontSize: 12 }}>No commits found.</div>}
-      {list.map((c) => <CommitRow key={c.sha} c={c} />)}
-    </div>
+    <>
+      <style>{`@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
+
+      <div className="card" style={{ marginBottom: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <span className="card-title" style={{ margin: 0 }}>
+            Commit activity
+            {commits.isLoading
+              ? <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--dim)", fontSize: 11 }}>loading…</span>
+              : list.length > 0
+                ? <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--dim)", fontSize: 11 }}>{list.length} commits · past year</span>
+                : null}
+          </span>
+          {/* legend */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--dim)" }}>
+            <span>less</span>
+            {[0, 1, 2, 3, 4].map((n) => (
+              <div key={n} style={{
+                width: CELL, height: CELL, borderRadius: 2,
+                background: cellColor(n), border: "1px solid rgba(255,255,255,0.06)",
+              }} />
+            ))}
+            <span>more</span>
+          </div>
+        </div>
+
+        {/* grid always renders; fills in when data arrives */}
+        <div style={{ overflowX: "auto", opacity: commits.isLoading ? 0.35 : 1, transition: "opacity 0.3s" }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            {/* day labels */}
+            <div style={{ display: "flex", flexDirection: "column", gap: GAP, paddingTop: 18, flexShrink: 0 }}>
+              {DAY_LABELS.map((d, i) => (
+                <div key={i} style={{
+                  width: 10, height: CELL, fontSize: 9, color: "var(--dim)",
+                  display: "flex", alignItems: "center", justifyContent: "flex-end",
+                  opacity: i % 2 === 0 ? 0 : 1,
+                }}>{d}</div>
+              ))}
+            </div>
+
+            {/* grid */}
+            <div style={{ position: "relative" }}>
+              {/* month labels */}
+              <div style={{ height: 16, position: "relative", marginBottom: 2 }}>
+                {months.map((m) => (
+                  <span key={`${m.label}-${m.col}`} style={{
+                    position: "absolute", left: m.col * STEP,
+                    fontSize: 9, color: "var(--dim)", whiteSpace: "nowrap",
+                  }}>{m.label}</span>
+                ))}
+              </div>
+
+              {/* week columns */}
+              <div style={{ display: "flex", gap: GAP }}>
+                {weeks.map((week, wi) => (
+                  <div key={wi} style={{ display: "flex", flexDirection: "column", gap: GAP }}>
+                    {week.map((day, di) => (
+                      <div key={di}
+                        title={day.future ? "" : `${day.date}${day.count ? ` · ${day.count} commit${day.count !== 1 ? "s" : ""}` : ""}`}
+                        onClick={(e) => handleCellClick(e, day)}
+                        style={{
+                          width: CELL, height: CELL, borderRadius: 2,
+                          background: day.future ? "transparent" : cellColor(day.count),
+                          border: day.future ? "none" : "1px solid rgba(255,255,255,0.06)",
+                          cursor: (!day.future && day.count > 0) ? "pointer" : "default",
+                          transition: "opacity 0.1s",
+                        }}
+                        onMouseEnter={(e) => { if (!day.future && day.count > 0) (e.currentTarget as HTMLDivElement).style.opacity = "0.75"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = "1"; }}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Day popup */}
+      {popup && (
+        <DayPopup
+          date={popup.date}
+          commits={byDate.get(popup.date) ?? []}
+          anchor={{ x: popup.x, y: popup.y }}
+          onClose={() => setPopup(null)}
+          onSelectCommit={(sha) => setDetailSha(sha)}
+        />
+      )}
+
+      {/* Commit detail drawer */}
+      {detailSha && (
+        <CommitDetailDrawer sha={detailSha} onClose={() => setDetailSha(null)} />
+      )}
+    </>
   );
 }
 
@@ -323,6 +662,10 @@ export function Github() {
 
       <RepoCard />
 
+      <div style={{ marginTop: 16 }}>
+        <CommitHeatmap />
+      </div>
+
       <div className="chart-grid-2" style={{ marginTop: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <PrsSection />
@@ -330,7 +673,6 @@ export function Github() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <IssuesSection />
-          <CommitsSection />
         </div>
       </div>
     </div>

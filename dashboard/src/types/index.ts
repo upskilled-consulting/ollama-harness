@@ -290,6 +290,15 @@ export interface GhCommit {
   message: string;
   author:  string;
   ago:     string;
+  date?:   string;   // YYYY-MM-DD
+}
+
+export interface GhCommitDetail {
+  sha:     string;
+  message: string;
+  stat:    string;
+  files:   { status: string; file: string }[];
+  diff:    string;
 }
 
 export interface McpTool {
