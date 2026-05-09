@@ -13,6 +13,12 @@ Three properties verified for the SSE endpoint:
   7. Each log line becomes a `data: <line>` SSE event.
   8. [EVENT]<json> lines pass through unmodified (parsed only on the frontend).
   9. [DONE] appears as the final data event and the stream closes.
+
+Plan gate (4 tests):
+  10. 404 when no gate is registered for the item.
+  11. Gate unblocks and returns original queries when approved without edits.
+  12. Gate unblocks and returns edited queries when approved with changes.
+  13. plan_gate [EVENT] is emitted to stdout when the gate is waiting.
 """
 
 from __future__ import annotations
@@ -255,3 +261,103 @@ class TestTeeToSseIntegration:
         assert "step 2 complete" in data
         assert "[DONE]"         in data
         assert data[-1] == "[DONE]"
+
+
+# ---------------------------------------------------------------------------
+# Plan gate — approve-plan endpoint + _make_plan_gate helper
+# ---------------------------------------------------------------------------
+
+class TestPlanGate:
+
+    # ------------------------------------------------------------------
+    # 10. 404 when no gate is registered
+    # ------------------------------------------------------------------
+
+    def test_approve_returns_404_when_no_gate(self):
+        resp = _client.post("/api/tasks/nonexistent-gate/approve-plan", json={"queries": []})
+        assert resp.status_code == 404
+
+    # ------------------------------------------------------------------
+    # 11. Gate unblocks and returns original queries when approved without edits
+    # ------------------------------------------------------------------
+
+    def test_gate_unblocks_on_approval_with_original_queries(self):
+        import harness.api.routes.tasks as mod
+
+        gate_fn = mod._make_plan_gate("gate-orig")
+        original = ["query A", "query B"]
+        result: list = []
+
+        def _run_gate():
+            # Replace the blocking print so the test doesn't need a log file
+            result.append(gate_fn(original))
+
+        t = threading.Thread(target=_run_gate)
+        t.start()
+
+        # Approve via HTTP with no query changes
+        resp = _client.post("/api/tasks/gate-orig/approve-plan", json={"queries": original})
+        assert resp.status_code == 200
+        t.join(timeout=5)
+
+        assert result == [original], f"Expected {original}, got {result}"
+
+    # ------------------------------------------------------------------
+    # 12. Gate returns edited queries when the user modifies them
+    # ------------------------------------------------------------------
+
+    def test_gate_returns_edited_queries(self):
+        import harness.api.routes.tasks as mod
+
+        gate_fn = mod._make_plan_gate("gate-edit")
+        original = ["old query"]
+        edited   = ["new query 1", "new query 2"]
+        result: list = []
+
+        def _run_gate():
+            result.append(gate_fn(original))
+
+        t = threading.Thread(target=_run_gate)
+        t.start()
+
+        resp = _client.post("/api/tasks/gate-edit/approve-plan", json={"queries": edited})
+        assert resp.status_code == 200
+        t.join(timeout=5)
+
+        assert result == [edited], f"Expected {edited}, got {result}"
+
+    # ------------------------------------------------------------------
+    # 13. plan_gate [EVENT] is emitted to the log when the gate is waiting
+    # ------------------------------------------------------------------
+
+    def test_gate_emits_plan_gate_event(self, tmp_path, monkeypatch):
+        import json
+        import time
+        import harness.api.routes.tasks as mod
+        monkeypatch.setattr(mod, "TASK_LOGS_DIR", tmp_path)
+
+        gate_fn = mod._make_plan_gate("gate-event2")
+        queries = ["q1", "q2"]
+        log_path = tmp_path / "gate-event2.log"
+
+        def _run_gate():
+            # Open the log IN THIS THREAD — matches production flow where _execute
+            # opens the log before calling agent.run() which eventually calls plan_gate.
+            lp = mod._open_task_log("gate-event2")
+            gate_fn(queries)
+            mod._close_task_log(lp)
+
+        t = threading.Thread(target=_run_gate)
+        t.start()
+        # Give the thread time to open the log and reach event.wait()
+        time.sleep(0.1)
+
+        _client.post("/api/tasks/gate-event2/approve-plan", json={"queries": queries})
+        t.join(timeout=5)
+
+        text = log_path.read_text(encoding="utf-8")
+        event_lines = [l for l in text.splitlines() if l.startswith("[EVENT]")]
+        assert event_lines, "No [EVENT] lines found in log"
+        parsed = json.loads(event_lines[0][len("[EVENT]"):])
+        assert parsed["type"] == "plan_gate"
+        assert parsed["data"]["queries"] == queries

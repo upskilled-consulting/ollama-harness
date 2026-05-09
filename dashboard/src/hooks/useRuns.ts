@@ -79,8 +79,8 @@ export function useMcpTools() {
 export function useSubmitTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { task: string; producer_model?: string; no_wiggum?: boolean }) =>
-      api.submit(args.task, { producer_model: args.producer_model, no_wiggum: args.no_wiggum }),
+    mutationFn: (args: { task: string; producer_model?: string; no_wiggum?: boolean; use_plan?: boolean }) =>
+      api.submit(args.task, { producer_model: args.producer_model, no_wiggum: args.no_wiggum, use_plan: args.use_plan }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });

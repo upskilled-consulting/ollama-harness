@@ -418,6 +418,7 @@ class TaskRequest(BaseModel):
     producer_model: str | None = None
     no_wiggum:      bool       = False
     no_memory:      bool       = False
+    use_plan:       bool       = False
 
 
 class QueueItem(BaseModel):

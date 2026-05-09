@@ -3,6 +3,7 @@
 import asyncio
 import ctypes
 import io
+import json as _json
 import sys
 import threading
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from harness.config import TASK_LOGS_DIR
 from harness.schema import QueueItem, TaskRequest
@@ -22,6 +24,10 @@ _queue_lock = asyncio.Lock()
 
 # Maps item_id -> thread ident while the task is executing
 _running_threads: dict[str, int] = {}
+
+# Plan approval gate state
+_plan_gates: dict[str, threading.Event] = {}
+_plan_approvals: dict[str, list[str]]   = {}
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +110,29 @@ def _close_task_log(log_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Plan gate helpers
+# ---------------------------------------------------------------------------
+
+def _make_plan_gate(item_id: str):
+    """Return a callable that blocks until the user approves the plan via the API."""
+    event = threading.Event()
+    _plan_gates[item_id] = event
+    _plan_approvals[item_id] = []
+
+    def _gate(queries: list[str]) -> list[str]:
+        print(
+            f"[EVENT]{_json.dumps({'type': 'plan_gate', 'data': {'status': 'waiting', 'queries': queries}})}",
+            flush=True,
+        )
+        event.wait(timeout=600)
+        approved = _plan_approvals.pop(item_id, queries) or queries
+        _plan_gates.pop(item_id, None)
+        return approved
+
+    return _gate
+
+
+# ---------------------------------------------------------------------------
 # Task runner
 # ---------------------------------------------------------------------------
 
@@ -126,11 +155,13 @@ async def _run_task(item: QueueItem, request: TaskRequest) -> None:
         _running_threads[item.item_id] = threading.current_thread().ident  # type: ignore[assignment]
         try:
             from harness.agent import run as _agent_run
+            gate = _make_plan_gate(item.item_id) if request.use_plan else None
             try:
                 _agent_run(
                     request.task,
                     use_wiggum=not bool(request.no_wiggum),
                     producer_model=request.producer_model or None,
+                    plan_gate=gate,
                 )
             except SystemExit:
                 pass
@@ -178,6 +209,20 @@ async def cancel_task(item_id: str):
         item.status = "cancelled"
 
     return {"item_id": item_id, "status": "cancelled"}
+
+
+class _PlanApproval(BaseModel):
+    queries: list[str] = []
+
+
+@router.post("/tasks/{item_id}/approve-plan")
+async def approve_plan(item_id: str, body: _PlanApproval):
+    event = _plan_gates.get(item_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="No plan gate active for this task")
+    _plan_approvals[item_id] = body.queries
+    event.set()
+    return {"ok": True}
 
 
 @router.get("/tasks/{item_id}/stream")

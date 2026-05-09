@@ -1305,7 +1305,7 @@ _LIT_REVIEW_NL_RE = re.compile(
 )
 
 
-def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None):
+def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None, plan_gate=None):
     global _KEEP_ALIVE
     from harness.wiggum import EVALUATOR_MODEL, ANNOTATE_EVALUATOR_MODEL
     if producer_model is None:
@@ -3260,6 +3260,10 @@ Rules:
                 "gaps":       plan.knowledge_gaps or [],
                 "notes":      plan.notes or "",
             })
+            # Plan approval gate — blocks until the dashboard user approves or edits queries
+            if plan_gate is not None:
+                approved = plan_gate(plan.search_queries or [])
+                plan.search_queries = approved
             print(f"  [planner] {plan.task_type} / {plan.complexity}"
                   + (f" / {plan.expected_sections} sections" if plan.expected_sections else "")
                   + (f"\n  [planner] note: {plan.notes}" if plan.notes else ""))

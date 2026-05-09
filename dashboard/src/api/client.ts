@@ -29,8 +29,10 @@ export const api = {
   artifacts: ()                             => get<Artifact[]>("/artifacts"),
   plans:     ()                             => get<PlanRecord[]>("/plans"),
   curation:  ()                             => get<CurationEntry[]>("/curation"),
-  submit:    (task: string, opts?: { producer_model?: string; no_wiggum?: boolean }) =>
+  submit:    (task: string, opts?: { producer_model?: string; no_wiggum?: boolean; use_plan?: boolean }) =>
     post<{ item_id: string }>("/tasks", { task, ...opts }),
+  approve_plan: (item_id: string, queries: string[]) =>
+    post<{ ok: boolean }>(`/tasks/${item_id}/approve-plan`, { queries }),
   cancel:    (item_id: string) =>
     fetch(`${BASE}/tasks/${item_id}`, { method: "DELETE" }).then((r) => r.json()),
   feedback:        (run_id: string) => get<FeedbackRecord[]>(`/feedback/${run_id}`),
