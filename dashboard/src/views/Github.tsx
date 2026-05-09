@@ -508,13 +508,11 @@ function DayPopup({ date, commits, anchor, onClose, onSelectCommit }: {
 
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
-function CommitHeatmap() {
-  const { commits, repo } = useGithub();
-  const repoUrl = repo.data?.meta?.url ?? null;
+function CommitHeatmap({ onSelectCommit }: { onSelectCommit: (sha: string) => void }) {
+  const { commits } = useGithub();
   const list = commits.data ?? [];
 
-  const [popup, setPopup]         = useState<{ date: string; x: number; y: number } | null>(null);
-  const [detailSha, setDetailSha] = useState<string | null>(null);
+  const [popup, setPopup] = useState<{ date: string; x: number; y: number } | null>(null);
 
   const { weeks, months } = useMemo(() => buildGrid(list), [list]);
 
@@ -538,8 +536,6 @@ function CommitHeatmap() {
 
   return (
     <>
-      <style>{`@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
-
       <div className="card" style={{ marginBottom: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <span className="card-title" style={{ margin: 0 }}>
@@ -623,15 +619,103 @@ function CommitHeatmap() {
           commits={byDate.get(popup.date) ?? []}
           anchor={{ x: popup.x, y: popup.y }}
           onClose={() => setPopup(null)}
-          onSelectCommit={(sha) => setDetailSha(sha)}
+          onSelectCommit={onSelectCommit}
         />
       )}
-
-      {/* Commit detail drawer */}
-      {detailSha && (
-        <CommitDetailDrawer sha={detailSha} repoUrl={repoUrl} onClose={() => setDetailSha(null)} />
-      )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Commit list with search
+// ---------------------------------------------------------------------------
+
+function CommitList({ onSelectCommit }: { onSelectCommit: (sha: string) => void }) {
+  const { commits } = useGithub();
+  const list = commits.data ?? [];
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((c) =>
+      c.message.toLowerCase().includes(q) ||
+      c.author.toLowerCase().includes(q)  ||
+      c.short.toLowerCase().includes(q)   ||
+      (c.date ?? "").includes(q)          ||
+      c.ago.toLowerCase().includes(q)
+    );
+  }, [list, query]);
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      {/* header + search */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span className="card-title" style={{ margin: 0, flexShrink: 0 }}>
+          Commits
+          <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--dim)", fontSize: 11 }}>
+            {query ? `${filtered.length} of ${list.length}` : list.length}
+          </span>
+        </span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search message, author, SHA, date…"
+          style={{
+            flex: 1, background: "var(--bg)", border: "1px solid var(--border)",
+            borderRadius: 6, padding: "5px 10px", fontSize: 12,
+            color: "var(--text)", outline: "none",
+            fontFamily: "inherit",
+          }}
+          onFocus={(e)  => (e.currentTarget.style.borderColor = "var(--accent)")}
+          onBlur={(e)   => (e.currentTarget.style.borderColor = "var(--border)")}
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", fontSize: 13, padding: "0 2px", flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* list */}
+      {commits.isLoading ? (
+        <div style={{ color: "var(--dim)", fontSize: 12 }}>Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ color: "var(--dim)", fontSize: 12 }}>No commits match.</div>
+      ) : (
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          {filtered.map((c) => (
+            <div
+              key={c.sha}
+              onClick={() => onSelectCommit(c.sha)}
+              style={{
+                display: "flex", gap: 10, alignItems: "flex-start",
+                padding: "7px 0", borderBottom: "1px solid rgba(42,45,58,0.5)",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(129,140,248,0.06)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            >
+              <code style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--accent)", flexShrink: 0, paddingTop: 2 }}>
+                {c.short}
+              </code>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.message}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
+                  {c.author} · {c.date ?? c.ago}
+                </div>
+              </div>
+              <span style={{ fontSize: 10, color: "var(--dim)", flexShrink: 0, paddingTop: 2, whiteSpace: "nowrap" }}>{c.ago}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -641,6 +725,10 @@ function CommitHeatmap() {
 
 export function Github() {
   const qc = useQueryClient();
+  const { repo } = useGithub();
+  const repoUrl  = repo.data?.meta?.url ?? null;
+
+  const [detailSha, setDetailSha] = useState<string | null>(null);
 
   async function refresh() {
     await api.github_refresh();
@@ -654,10 +742,8 @@ export function Github() {
   return (
     <div>
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.3; }
-        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
       `}</style>
 
       <div className="view-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -679,9 +765,14 @@ export function Github() {
 
       <RepoCard />
 
-      <div style={{ marginTop: 16 }}>
-        <CommitHeatmap />
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+        <CommitHeatmap onSelectCommit={setDetailSha} />
+        <CommitList    onSelectCommit={setDetailSha} />
       </div>
+
+      {detailSha && (
+        <CommitDetailDrawer sha={detailSha} repoUrl={repoUrl} onClose={() => setDetailSha(null)} />
+      )}
 
       <div className="chart-grid-2" style={{ marginTop: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
