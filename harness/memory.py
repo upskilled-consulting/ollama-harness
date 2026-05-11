@@ -21,6 +21,7 @@ Usage:
 """
 
 import json
+import os
 import re
 import sqlite3
 from datetime import UTC, datetime
@@ -44,7 +45,7 @@ def _scan_obs(title: str, narrative: str, facts: list[str] | None) -> bool:
         return False
     return True
 
-COMPRESSION_MODEL   = "glm4:9b"
+COMPRESSION_MODEL   = os.environ.get("COMPRESS_MODEL", "qwen3-8b")
 DB_PATH             = str(MEMORY_DB)
 CHROMA_PATH         = str(CHROMA_DIR)
 CHROMA_COLLECTION   = "observations_vec"

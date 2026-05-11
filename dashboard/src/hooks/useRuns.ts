@@ -26,10 +26,10 @@ export function useAllRuns() {
   return useQuery({ queryKey: ["all_runs"], queryFn: api.all_runs, staleTime: 10_000 });
 }
 
-export function usePagedRuns(page: number, perPage = 25) {
+export function usePagedRuns(page: number, perPage = 25, status = "", search = "") {
   return useQuery({
-    queryKey:        ["paged_runs", page, perPage],
-    queryFn:         () => api.paged_runs(page, perPage),
+    queryKey:        ["paged_runs", page, perPage, status, search],
+    queryFn:         () => api.paged_runs(page, perPage, status, search),
     staleTime:       15_000,
     placeholderData: (prev) => prev,
   });

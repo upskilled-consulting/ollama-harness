@@ -1,7 +1,7 @@
 {
   "title": "Model Pairing for DPO Signal Quality",
-  "hypothesis": "Cross-model pairs (pi-qwen-32b vs qwen2.5-coder-14b) on coding tasks produce mean score_delta >= 1.5x that of same-model temperature rollouts on identical prompts.",
-  "falsified_if": "cross_model_mean_delta / temp_rollout_mean_delta < 1.2 across the 5 coding tasks",
+  "hypothesis": "Larger model (qwen3.6-35b, 35B llamacpp) produces higher wiggum_score than smaller model (qwen3-8b, 8B llamacpp) on the same coding and research tasks.",
+  "falsified_if": "mean wiggum_score for pi <= mean wiggum_score for coder across all tasks",
   "factor": {
     "name": "producer_model",
     "levels": ["pi", "coder"]
@@ -29,8 +29,8 @@
     "type": "env",
     "var": "HARNESS_PRODUCER_MODEL",
     "levels": {
-      "pi":    "pi-qwen-32b",
-      "coder": "qwen2.5-coder-14b"
+      "pi":    "qwen3.6-35b",
+      "coder": "qwen3-8b"
     }
   },
   "task_defs": {
@@ -76,7 +76,8 @@
     }
   },
   "fixed_env": {
-    "COMPRESS_MODEL": "qwen3-8b"
+    "COMPRESS_MODEL": "qwen3-8b",
+    "HARNESS_EVALUATOR_MODEL": "qwen3-8b"
   },
-  "notes": "TREATMENT placeholder in output paths is replaced by experiment_runner.py with the level name (pi or coder). Run with: python scripts/experiment_runner.py experiments/exp_C_model_pairing_spec.json --dry-run first."
+  "notes": "TREATMENT placeholder in output paths is replaced by experiment_runner.py with the level name (pi or coder). pi=qwen3.6-35b (35B llamacpp port 8083), coder=qwen3-8b (8B llamacpp port 8082). Both endpoints are HARNESS_ENDPOINTS entries. Start llama8b before running: python start.py llama8b"
 }

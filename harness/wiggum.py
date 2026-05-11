@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import time
 from contextlib import contextmanager
 from typing import Any
 
@@ -311,37 +312,44 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
         task_criteria=TASK_CRITERIA[task_type],
     )
 
-    response = ollama.chat(
-        model=EVALUATOR_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.0, "think": False, "num_predict": 1024},
-        format="json",
-    )
-    if _trace is not None:
-        _trace.log_usage(response, stage="wiggum_eval")
+    result = None
+    for _eval_attempt in range(2):
+        response = ollama.chat(
+            model=EVALUATOR_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.0, "num_predict": 2048},
+            format="json",
+        )
+        if _trace is not None:
+            _trace.log_usage(response, stage="wiggum_eval")
 
-    # Capture thinking content if the evaluator model supports it
-    thinking = getattr(response.message, "thinking", None) or ""
+        # Capture thinking content if the evaluator model supports it
+        thinking = getattr(response.message, "thinking", None) or ""
 
-    raw = response["message"]["content"].strip()
+        raw = response["message"]["content"].strip()
 
-    # Strip markdown code fences if present
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    # Strip <think>...</think> blocks some models prepend
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        # Strip markdown code fences if present
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        # Strip <think>...</think> blocks some models prepend
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        print(f"  [warn] evaluator returned non-JSON: {raw[:200]}")
-        # Fallback: extract scores from prose (handles models that ignore format=json)
-        prose_result = _extract_eval_from_prose(raw)
-        if prose_result:
-            print(f"  [warn] prose fallback succeeded: score={prose_result['score']}")
-            result = prose_result
-        else:
-            return {"passed": False, "score": 0.0, "issues": ["evaluator parse error"], "feedback": raw}
+        try:
+            result = json.loads(raw)
+            break
+        except json.JSONDecodeError:
+            print(f"  [warn] evaluator returned non-JSON (attempt {_eval_attempt+1}): {raw[:200]}")
+            prose_result = _extract_eval_from_prose(raw)
+            if prose_result:
+                print(f"  [warn] prose fallback succeeded: score={prose_result['score']}")
+                result = prose_result
+                break
+            if _eval_attempt == 0:
+                print("  [warn] retrying evaluation...")
+                time.sleep(3)
+
+    if result is None:
+        return {"passed": False, "score": 0.0, "issues": ["evaluator parse error"], "feedback": raw}
 
     # Recompute composite from dimension scores in Python — don't trust model arithmetic
     dims = {

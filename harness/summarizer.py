@@ -26,7 +26,8 @@ from harness.inference import OllamaLike as _OllamaLike
 _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 _chat = _OllamaLike(keep_alive=_KEEP_ALIVE).chat
 
-SUMMARIZER_MODEL  = os.environ.get("SUMMARIZER_MODEL", "glm4:9b")
+SUMMARIZER_MODEL  = os.environ.get("SUMMARIZER_MODEL",
+                       os.environ.get("COMPRESS_MODEL", "qwen3-8b"))
 EVAL_THRESHOLD    = int(os.environ.get("SUMMARIZER_EVAL_THRESHOLD",   32000))
 REVISE_THRESHOLD  = int(os.environ.get("SUMMARIZER_REVISE_THRESHOLD",   5000))
 

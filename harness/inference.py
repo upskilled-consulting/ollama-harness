@@ -300,6 +300,7 @@ def _chat_vllm(
 
     kwargs.pop("keep_alive", None)
     options = kwargs.pop("options", {}) or {}
+    fmt = kwargs.pop("format", None)
 
     oai_kwargs: dict = {}
     if "temperature" in options:
@@ -312,6 +313,8 @@ def _chat_vllm(
         oai_kwargs["presence_penalty"] = options["presence_penalty"]
     if "top_k" in options:
         oai_kwargs.setdefault("extra_body", {})["top_k"] = options["top_k"]
+    if fmt == "json" and backend == "vllm":
+        oai_kwargs["response_format"] = {"type": "json_object"}
 
     vllm_model = model_id if model_id else _resolve_model(model)
     if backend in ("vllm", "llamacpp") and any(k in vllm_model.lower() for k in ("qwen", "qwq")):
@@ -344,22 +347,26 @@ def _chat_vllm(
                 or "exceed_context_size" in exc_str
                 or "context_length_exceeded" in exc_str
             )
-            _is_disconnect = (
+            _is_oom_disconnect = (
                 "Server disconnected" in exc_str
                 or "RemoteProtocolError" in exc_str
-                or "Connection error" in exc_str
+            )
+            _is_connect_refused = (
+                "Connection error" in exc_str
                 or "ConnectError" in exc_str
             )
+            _is_disconnect = _is_oom_disconnect or _is_connect_refused
             if (_is_ctx_err or _is_disconnect) and attempt < 2:
                 reason = "context too long" if _is_ctx_err else "server disconnect (OOM)"
-                if _is_disconnect:
-                    print(f"  [inference] waiting for vLLM to recover (up to 120s)…")
+                if _is_oom_disconnect:
+                    print("  [inference] waiting for vLLM to recover (up to 120s)…")
                     _t0 = time.monotonic()
                     _recovered = False
+                    _health_url = base_url.split("/v1")[0] + "/health"
                     while time.monotonic() - _t0 < 120:
                         try:
                             import httpx as _httpx
-                            _httpx.get(f"{base_url}/health", timeout=4)
+                            _httpx.get(_health_url, timeout=4)
                             _recovered = True
                             break
                         except Exception:

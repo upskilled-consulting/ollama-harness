@@ -64,7 +64,13 @@ def _resolve_task(task_id: str, spec: ExperimentSpec, suite: dict) -> dict:
     """Return {task: str, output: str} for a task ID."""
     # Spec-level task_defs take priority (allows custom tasks not in SUITE)
     if hasattr(spec, "task_defs") and spec.task_defs and task_id in spec.task_defs:
-        return spec.task_defs[task_id]
+        td = spec.task_defs[task_id]
+        expanded = os.path.expanduser(td["output"])
+        # Derive tilde form so task-string replacement hits "~/Desktop/..." paths
+        home = os.path.expanduser("~").replace("\\", "/")
+        raw = td["output"].replace("\\", "/")
+        tilde = raw.replace(home, "~") if home in raw else raw
+        return {"task": td["task"], "output": expanded, "output_raw": tilde}
     if task_id in suite:
         entry = suite[task_id]
         # Keep raw (unexpanded) output for task string replacement, expanded for existence check

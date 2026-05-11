@@ -151,7 +151,7 @@ class Plan:
 # Planning
 # ---------------------------------------------------------------------------
 
-def prior_knowledge_pass(task: str, memory_context: str = "") -> tuple[list[str], list[str]]:
+def prior_knowledge_pass(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -> tuple[list[str], list[str]]:
     """
     Ask the planner model what it already knows and what gaps need web search.
 
@@ -163,7 +163,7 @@ def prior_knowledge_pass(task: str, memory_context: str = "") -> tuple[list[str]
     prompt = PRIOR_KNOWLEDGE_PROMPT.format(task=task, memory_block=memory_block)
     try:
         response = ollama.chat(
-            model=PLANNER_MODEL,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1, "think": False},
         )
@@ -190,7 +190,7 @@ def prior_knowledge_pass(task: str, memory_context: str = "") -> tuple[list[str]
         return [], []
 
 
-def make_plan(task: str, memory_context: str = "") -> tuple["Plan", object]:
+def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -> tuple["Plan", object]:
     """
     Analyse the task and memory context to produce a Plan.
 
@@ -206,7 +206,7 @@ def make_plan(task: str, memory_context: str = "") -> tuple["Plan", object]:
     known_facts: list[str] = []
     gaps: list[str] = []
     if os.environ.get("HARNESS_SKIP_PRIOR_KNOWLEDGE") != "1":
-        known_facts, gaps = prior_knowledge_pass(task, memory_context)
+        known_facts, gaps = prior_knowledge_pass(task, memory_context, model=model)
         if known_facts or gaps:
             print(f"  [planner:prior] {len(known_facts)} known fact(s), {len(gaps)} gap(s) identified")
     else:
@@ -229,7 +229,7 @@ def make_plan(task: str, memory_context: str = "") -> tuple["Plan", object]:
 
     try:
         response = ollama.chat(
-            model=PLANNER_MODEL,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1},
         )

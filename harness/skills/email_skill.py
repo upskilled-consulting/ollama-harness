@@ -135,23 +135,27 @@ def _ollama_chat(model: str, messages: list[dict], num_predict: int = 512) -> tu
 def _log_draft_trace(
     name, affiliation, to_email, subject, body,
     subject_prompt, body_prompt,
-    producer_model, tokens_in, tokens_out, duration_s,
-    json_path, goal,
+    producer_model,
+    subject_tokens_in, subject_tokens_out,
+    body_tokens_in, body_tokens_out,
+    duration_s, json_path, goal,
 ):
-    """Append one runs.jsonl entry per email draft so each gets its own dashboard row."""
+    """Append one runs.jsonl entry + messages.jsonl turns per email draft."""
     from harness.logger import LOG_PATH
+    run_id = make_id()
+    now    = datetime.now(UTC).isoformat()
     record = {
-        "run_id":         make_id(),
-        "timestamp":      datetime.now(UTC).isoformat(),
+        "run_id":         run_id,
+        "timestamp":      now,
         "task":           f"Email draft: {name} <{to_email}>",
         "producer_model": producer_model,
         "evaluator_model": None,
         "run_duration_s": duration_s,
-        "input_tokens":   tokens_in,
-        "output_tokens":  tokens_out,
+        "input_tokens":   subject_tokens_in + body_tokens_in,
+        "output_tokens":  subject_tokens_out + body_tokens_out,
         "tokens_by_stage": {
-            "subject": {"input": 0, "output": 0},
-            "body":    {"input": 0, "output": 0},
+            "subject": {"input": subject_tokens_in, "output": subject_tokens_out, "calls": 1},
+            "body":    {"input": body_tokens_in,    "output": body_tokens_out,    "calls": 1},
         },
         "tool_calls": [
             {"name": "subject_prompt", "query": subject_prompt, "result_chars": len(subject)},
@@ -176,6 +180,41 @@ def _log_draft_trace(
     }
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    _write_messages(run_id, subject_prompt, subject, body_prompt, body, now)
+
+
+def _write_messages(
+    run_id: str,
+    subject_prompt: str, subject: str,
+    body_prompt: str, body: str,
+    now: str = "",
+) -> None:
+    """Write LLM turn messages to messages.jsonl so the context-window inspector shows content."""
+    from harness.schema import MESSAGES_PATH
+    if not now:
+        now = datetime.now(UTC).isoformat()
+    _turns = [
+        (0, "subject", _SUBJECT_SYSTEM, subject_prompt, subject),
+        (2, "body",    _EMAIL_SYSTEM,   body_prompt,    body),
+    ]
+    with open(MESSAGES_PATH, "a", encoding="utf-8") as f:
+        for base_seq, stage, system_text, prompt_text, response_text in _turns:
+            for seq_off, role, content in [
+                (0, "system",    system_text),
+                (1, "user",      prompt_text),
+                (2, "assistant", response_text),
+            ]:
+                entry = {
+                    "run_id":    run_id,
+                    "seq":       base_seq + seq_off,
+                    "role":      role,
+                    "stage":     stage,
+                    "content":   content,
+                    "chars":     len(content),
+                    "timestamp": now,
+                }
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +254,8 @@ def generate_single_email(
     name: str,
     to_email: str,
     goal: str,
+    affiliation: str = "",
+    keywords: str = "",
     source: str = "",
     output_dir: str = "email_drafts/",
     producer_model: str = "qwen3-14b",
@@ -222,6 +263,8 @@ def generate_single_email(
     sender_email: str = "",
     sender_company: str = "",
     platform_url: str = "",
+    run_id: str = "",
+    log_trace: bool = True,
 ) -> dict | None:
     """
     Generate a single personalized email draft for one contact.
@@ -246,8 +289,8 @@ def generate_single_email(
         goal=goal_full,
         sender_company=sender_company or sender_name,
         name=name,
-        affiliation="",
-        keywords="",
+        affiliation=affiliation,
+        keywords=keywords,
     )
     subject, s_in, s_out = _ollama_chat(
         producer_model,
@@ -261,8 +304,8 @@ def generate_single_email(
         sender_name=sender_name or "Nick",
         sender_company_line=sender_company_line,
         name=name,
-        affiliation="",
-        keywords="",
+        affiliation=affiliation,
+        keywords=keywords,
         summary="",
         slide_excerpt=slide_excerpt,
         first_name=first_name,
@@ -278,7 +321,7 @@ def generate_single_email(
 
     record = {
         "name":          name,
-        "affiliation":   "",
+        "affiliation":   affiliation,
         "to_email":      to_email,
         "email_found":   True,
         "sender_name":   sender_name,
@@ -291,20 +334,29 @@ def generate_single_email(
     json_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     record["json_path"] = str(json_path.resolve())
 
-    _log_draft_trace(
-        name=name, affiliation="", to_email=to_email,
-        subject=subject, body=body,
-        subject_prompt=subject_prompt, body_prompt=body_prompt,
-        producer_model=producer_model,
-        tokens_in=s_in + b_in, tokens_out=s_out + b_out,
-        duration_s=draft_duration,
-        json_path=str(json_path.resolve()),
-        goal=goal_full,
-    )
+    if log_trace:
+        _log_draft_trace(
+            name=name, affiliation=affiliation, to_email=to_email,
+            subject=subject, body=body,
+            subject_prompt=subject_prompt, body_prompt=body_prompt,
+            producer_model=producer_model,
+            subject_tokens_in=s_in, subject_tokens_out=s_out,
+            body_tokens_in=b_in,    body_tokens_out=b_out,
+            duration_s=draft_duration,
+            json_path=str(json_path.resolve()),
+            goal=goal_full,
+        )
+    elif run_id:
+        # Outer trace owns the run record — just write messages under its run_id
+        _write_messages(run_id, subject_prompt, subject, body_prompt, body)
 
     print(f"    -> {json_path.name}  subject: {subject[:50]}")
     record["_tokens_in"]  = s_in + b_in
     record["_tokens_out"] = s_out + b_out
+    record["_subject_tokens_in"]  = s_in
+    record["_subject_tokens_out"] = s_out
+    record["_body_tokens_in"]     = b_in
+    record["_body_tokens_out"]    = b_out
     return record
 
 
@@ -466,7 +518,8 @@ def run_email_standalone(
             subject=subject, body=body,
             subject_prompt=subject_prompt, body_prompt=body_prompt,
             producer_model=producer_model,
-            tokens_in=s_in + b_in, tokens_out=s_out + b_out,
+            subject_tokens_in=s_in, subject_tokens_out=s_out,
+            body_tokens_in=b_in,    body_tokens_out=b_out,
             duration_s=draft_duration,
             json_path=str(json_path.resolve()),
             goal=goal_full,

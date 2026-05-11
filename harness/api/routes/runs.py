@@ -116,11 +116,16 @@ async def get_all_runs():
 
 
 @router.get("/runs/paged")
-async def get_paged_runs(page: int = 1, per_page: int = 25):
-    """Paginated run list. Returns total count for display even on page > 1."""
+async def get_paged_runs(page: int = 1, per_page: int = 25, status: str = "", search: str = ""):
+    """Paginated run list with optional status/search filtering."""
     per_page = max(1, min(100, per_page))
     page     = max(1, page)
     records  = await asyncio.to_thread(_load_all_runs_uncapped)
+    if status:
+        records = [r for r in records if (r.get("final") or "").lower() == status.lower()]
+    if search:
+        q = search.lower()
+        records = [r for r in records if q in (r.get("task") or "").lower() or q in (r.get("producer_model") or "").lower()]
     total    = len(records)
     pages    = math.ceil(total / per_page) if total else 1
     offset   = (page - 1) * per_page

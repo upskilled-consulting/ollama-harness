@@ -24,10 +24,16 @@ SERVICES: dict[str, str] = {
     "ollama":    "ollama serve",
     "llama":     r"llama.cpp\build\bin\llama-server.exe"
                  r" --model models\Qwen3.6-35B-A3B-UD-IQ3_S.gguf"
-                 r" --ctx-size 2048 --parallel 1 --port 8083 -ngl 99",
+                 r" --ctx-size 16384 --parallel 2 --port 8083 -ngl 99",
+    "llama8b":   r"llama.cpp\build\bin\llama-server.exe"
+                 r" --model models\qwen3-8b.gguf"
+                 r" --ctx-size 16384 --parallel 4 --port 8082 -ngl 99",
+    "llama7b":   r"llama.cpp\build\bin\llama-server.exe"
+                 r" --model models\qwen3-7b-instruct-q4_k_m.gguf"
+                 r" --ctx-size 16384 --parallel 4 --port 8084 -ngl 99",
 }
 
-PORT_MAP = {"api": 7860, "mcp": 8766, "dashboard": 5173, "ollama": 11434, "llama": 8083}
+PORT_MAP = {"api": 7860, "mcp": 8766, "dashboard": 5173, "ollama": 11434, "llama": 8083, "llama8b": 8082, "llama7b": 8084}
 
 _procs: dict[str, subprocess.Popen] = {}
 

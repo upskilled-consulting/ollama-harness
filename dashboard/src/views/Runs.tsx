@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect, useRef, type ReactNode, type CSSProperties } from "react";
-import { Plus, Minus } from "lucide-react";
+import { useState, useEffect, useRef, type ReactNode, type CSSProperties } from "react";
+import { Plus, Minus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useLiveRun, usePagedRuns } from "@/hooks/useRuns";
@@ -793,26 +793,42 @@ function LiveRunCard({ liveRun, isSelected, onSelect }: { liveRun: LiveRun; isSe
   );
 }
 
+function SyncButton() {
+  const qc = useQueryClient();
+  const [spinning, setSpinning] = useState(false);
+
+  const handleSync = () => {
+    setSpinning(true);
+    void qc.invalidateQueries({ queryKey: ["paged_runs"] });
+    setTimeout(() => setSpinning(false), 600);
+  };
+
+  return (
+    <button
+      onClick={handleSync}
+      title="Refresh runs"
+      style={{
+        background: "none", border: "none", cursor: "pointer",
+        color: "var(--dim)", display: "flex", alignItems: "center",
+        padding: "2px 4px", borderRadius: 4, transition: "color 0.15s",
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--dim)"; }}
+    >
+      <RefreshCw size={12} style={{ transition: "transform 0.6s", transform: spinning ? "rotate(360deg)" : "none" }} />
+    </button>
+  );
+}
+
 function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLive,
-  total, page, pages, onPage }: {
+  total, page, pages, onPage, search, onSearch, status, onStatus }: {
   runs: RunRecord[]; selected: RunRecord | null; onSelect: (r: RunRecord) => void;
   liveRun: LiveRun | null; liveSelected: boolean; onSelectLive: () => void;
   total: number; page: number; pages: number; onPage: (p: number) => void;
+  search: string; onSearch: (s: string) => void;
+  status: StatusFilter; onStatus: (s: StatusFilter) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("all");
-
-  const filtered = useMemo(() => runs.filter((r) => {
-    if (status !== "all") {
-      const f = r.final?.toLowerCase() ?? "running";
-      if (f !== status) return false;
-    }
-    if (search) {
-      const q = search.toLowerCase();
-      if (!r.task.toLowerCase().includes(q) && !(r.producer_model ?? "").toLowerCase().includes(q)) return false;
-    }
-    return true;
-  }), [runs, search, status]);
+  const filtered = runs;
 
   const statuses: StatusFilter[] = ["all", "pass", "fail", "error", "running"];
 
@@ -822,12 +838,12 @@ function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLi
       <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 7, flexShrink: 0 }}>
         <input
           type="search" placeholder="Filter…" value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => onSearch(e.target.value)}
           style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: 11, padding: "5px 9px", outline: "none" }}
         />
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
           {statuses.map((s) => (
-            <button key={s} onClick={() => setStatus(s)} style={{
+            <button key={s} onClick={() => onStatus(s)} style={{
               padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 600, cursor: "pointer",
               textTransform: "uppercase", letterSpacing: "0.04em",
               border: status === s ? "1px solid var(--accent)" : "1px solid var(--border)",
@@ -836,12 +852,13 @@ function LeftPanel({ runs, selected, onSelect, liveRun, liveSelected, onSelectLi
             }}>{s}</button>
           ))}
         </div>
-        <span style={{ fontSize: 10, color: "var(--dim)" }}>
-          {filtered.length < runs.length
-            ? `${filtered.length} / ${runs.length} on page`
-            : `${runs.length} on page`}
-          {total > runs.length && <span style={{ color: "var(--accent)", marginLeft: 4 }}>{total} total</span>}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 10, color: "var(--dim)" }}>
+            {runs.length} on page
+            {total > runs.length && <span style={{ color: "var(--accent)", marginLeft: 4 }}>{total} total</span>}
+          </span>
+          <SyncButton />
+        </div>
       </div>
 
       {/* run list */}
@@ -1156,8 +1173,12 @@ function ContextTreemap({ run }: { run: RunRecord }) {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export function Runs() {
-  const [page, setPage] = useState(1);
-  const { data: paged, isLoading, error } = usePagedRuns(page);
+  const [page,   setPage]   = useState(1);
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [search, setSearch] = useState("");
+
+  const apiStatus = status === "all" ? "" : status;
+  const { data: paged, isLoading, error } = usePagedRuns(page, 25, apiStatus, search);
   const runs  = paged?.runs  ?? [];
   const total = paged?.total ?? 0;
   const pages = paged?.pages ?? 1;
@@ -1165,6 +1186,9 @@ export function Runs() {
   const { data: liveRun = null }              = useLiveRun();
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
+
+  const handleStatus = (s: StatusFilter) => { setStatus(s); setPage(1); setSelectedRun(null); setSelectedNode(null); };
+  const handleSearch = (s: string)       => { setSearch(s); setPage(1); setSelectedRun(null); setSelectedNode(null); };
   const [viewMode,     setViewMode]     = useState<ViewMode>("dag");
   const [liveSelected, setLiveSelected] = useState(false);
 
@@ -1198,7 +1222,9 @@ export function Runs() {
       <LeftPanel runs={runs} selected={activeRun} onSelect={handleSelectRun}
         liveRun={liveRun} liveSelected={liveSelected} onSelectLive={handleSelectLive}
         total={total} page={page} pages={pages}
-        onPage={(p) => { setPage(p); setSelectedRun(null); setSelectedNode(null); }} />
+        onPage={(p) => { setPage(p); setSelectedRun(null); setSelectedNode(null); }}
+        search={search} onSearch={handleSearch}
+        status={status} onStatus={handleStatus} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {liveSelected && liveRun ? (

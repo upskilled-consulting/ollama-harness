@@ -22,10 +22,14 @@ export const api = {
   data:      ()                             => get<DashboardData>("/data"),
   runs:      ()                             => get<{ active: RunRecord[]; recent: RunRecord[] }>("/runs"),
   all_runs:  ()                             => get<RunRecord[]>("/runs/all"),
-  paged_runs: (page: number, per_page = 25) =>
-    get<{ runs: RunRecord[]; total: number; page: number; per_page: number; pages: number }>(
-      `/runs/paged?page=${page}&per_page=${per_page}`
-    ),
+  paged_runs: (page: number, per_page = 25, status = "", search = "") => {
+    const p = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+    if (status) p.set("status", status);
+    if (search) p.set("search", search);
+    return get<{ runs: RunRecord[]; total: number; page: number; per_page: number; pages: number }>(
+      `/runs/paged?${p.toString()}`
+    );
+  },
   queue:     ()                             => get<{ pending: number; items: QueueItem[] }>("/queue"),
   mcp_log:   (limit = 200)                 => get<McpLogEntry[]>(`/mcp/log?limit=${limit}`),
   mcp_tools: ()                             => get<McpTool[]>("/mcp/tools"),

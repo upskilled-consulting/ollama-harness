@@ -743,7 +743,8 @@ def fetch_url_content(url: str) -> str:
         if len(text) > URL_ENRICH_MAX_CHARS:
             text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
         return text
-    except Exception:
+    except Exception as e:
+        print(f"    -> error: {type(e).__name__}: {e}")
         return ""
 
 
@@ -773,7 +774,8 @@ def enrich_with_page_content(results: list[dict], count: int, knowledge_state: s
         if content:
             blocks.append(f"**Full page: {r.get('title', url)}**\n{url}\n\n{content}")
             fetched += 1
-            print(f"    -> {len(content)} chars")
+            preview = content.split("\n", 1)[0][:120].strip()
+            print(f"    -> {len(content)} chars  [{preview}]")
         else:
             print("    -> failed or empty")
     return "\n\n---\n\n".join(blocks)
@@ -1531,20 +1533,46 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
 
             if email_token:
                 # Form 1: email address provided
-                email_idx   = tokens.index(email_token)
-                name        = " ".join(tokens[:email_idx]).strip()
-                rest        = tokens[email_idx + 1:]
-                source      = ""
-                goal_tokens = rest
-                if rest:
-                    first = rest[0].strip('"')
-                    if first.startswith("http") or any(first.endswith(ext) for ext in _SOURCE_EXTS):
-                        source = first
-                        goal_tokens = rest[1:]
-                goal = " ".join(goal_tokens).strip().strip('"')
+                email_idx  = tokens.index(email_token)
+                # Strip trailing label artifacts like "Email:" before the address
+                name_parts = tokens[:email_idx]
+                while name_parts and name_parts[-1].rstrip(":").lower() in ("email", "e-mail", "contact"):
+                    name_parts.pop()
+                name     = " ".join(name_parts).strip()
+                rest_str = " ".join(tokens[email_idx + 1:])
+
+                # Parse labeled fields: Affiliation, Domain, Presentation/Source, Goal, Summary
+                _FIELD_PAT = re.compile(
+                    r'\b(Affiliation|Domain|Presentation|Source|URL|Goal|Summary|Notes)\s*:',
+                    re.IGNORECASE,
+                )
+                _parts = _FIELD_PAT.split(rest_str)
+                # _parts = [pre_text, key1, val1, key2, val2, ...]
+                _fields: dict[str, str] = {}
+                _i = 1
+                while _i + 1 < len(_parts):
+                    _fields[_parts[_i].lower()] = _parts[_i + 1].strip()
+                    _i += 2
+
+                affiliation = _fields.get("affiliation", "")
+                keywords    = _fields.get("domain", "")
+                source      = (_fields.get("presentation") or _fields.get("source") or _fields.get("url") or "").strip()
+                goal        = _fields.get("goal", "").strip()
+
+                # Fallback: no labeled fields — use old positional logic
+                if not _fields:
+                    rest = tokens[email_idx + 1:]
+                    if rest:
+                        first = rest[0].strip('"')
+                        if first.startswith("http") or any(first.endswith(ext) for ext in _SOURCE_EXTS):
+                            source = first
+                            goal = " ".join(rest[1:]).strip().strip('"')
+                        else:
+                            goal = " ".join(rest).strip().strip('"')
+
                 if not goal:
                     goal = f"reach out to {name}"
-                print(f"  [email] single mode (email known) — to={email_token}  goal={goal[:60]}")
+                print(f"  [email] single mode (email known) — to={email_token}  affiliation={affiliation or '—'}  goal={goal[:60]}")
             else:
                 # Form 2: no email — parse name + context, search online for address
                 import re as _re2
@@ -1584,6 +1612,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 result = generate_single_email(
                     name=name,
                     to_email=email_token,
+                    affiliation=affiliation,
+                    keywords=keywords,
                     source=source,
                     goal=goal,
                     output_dir=_out_dir,
@@ -1591,12 +1621,21 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                     sender_name=os.environ.get("SENDER_NAME", ""),
                     sender_email=os.environ.get("SENDER_EMAIL", ""),
                     sender_company=os.environ.get("SENDER_COMPANY", ""),
+                    run_id=trace.run_id,
+                    log_trace=False,
                 )
             if result:
-                trace.data.update({"task_type": "email", "email_drafts": 1,
-                                   "email_output_dir": _out_dir,
-                                   "input_tokens":  result.get("_tokens_in",  0),
-                                   "output_tokens": result.get("_tokens_out", 0)})
+                trace.data.update({
+                    "task_type":    "email_draft",
+                    "email_drafts": 1,
+                    "email_output_dir": _out_dir,
+                    "input_tokens":  result.get("_tokens_in",  0),
+                    "output_tokens": result.get("_tokens_out", 0),
+                    "tokens_by_stage": {
+                        "subject": {"input": result.get("_subject_tokens_in",  0), "output": result.get("_subject_tokens_out", 0), "calls": 1},
+                        "body":    {"input": result.get("_body_tokens_in",     0), "output": result.get("_body_tokens_out",    0), "calls": 1},
+                    },
+                })
                 trace.finish("PASS")
             else:
                 trace.finish("ERROR")
@@ -3303,7 +3342,7 @@ Rules:
             trace.set_stage("plan")
             print("  [planner] generating plan...")
             with trace.span("planner"):
-                plan, _planner_resp = make_plan(task, memory_context)
+                plan, _planner_resp = make_plan(task, memory_context, model=producer_model)
             trace.log_plan(plan.to_dict())
             trace.log_plan_record(plan.to_dict(), plan_type="agent")
             if _planner_resp is not None:

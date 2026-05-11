@@ -73,7 +73,7 @@ DEFAULT_ANNOTATE_PARALLEL = 2   # match llama-server --parallel N
 DEFAULT_TEMPLATE     = "survey"
 DEFAULT_PRODUCER     = os.environ.get("PRODUCER_MODEL", "pi-qwen-32b")
 DEFAULT_EVALUATOR    = os.environ.get("EVALUATOR_MODEL", "Qwen3-Coder:30b")
-DEFAULT_CLUSTER_MODEL = os.environ.get("PLANNER_MODEL", "glm4:9b")
+DEFAULT_CLUSTER_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("COMPRESS_MODEL", "qwen3-8b"))
 KEEP_ALIVE           = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 
 ANNOTATE_MODEL = "nanda-annotator-v2-q4km:latest"
