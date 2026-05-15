@@ -463,6 +463,14 @@ def revise(task: str, content: str, eval_result: dict, _trace=None) -> str:
     issues_list = eval_result.get("issues", [])
     issues_text = "\n".join(f"- {i}" for i in issues_list)
     revision_content = summarize_for_revision(content, task, issues_list, _trace)
+    # Hard cap: even if summarizer fails and returns full content, cap the revision
+    # prompt to ~2 000 tokens so the producer's KV cache stays bounded.
+    # num_ctx: 16384 is silently dropped by _chat_vllm (not translated to OpenAI API),
+    # so the actual limit is whatever llama-server was started with. Keep input small.
+    _REVISE_CONTENT_CAP = int(os.environ.get("WIGGUM_REVISE_CONTENT_CAP", 8000))
+    if len(revision_content) > _REVISE_CONTENT_CAP:
+        revision_content = revision_content[:_REVISE_CONTENT_CAP] + "\n…[truncated for revision]…"
+        print(f"  [revise] content hard-capped at {_REVISE_CONTENT_CAP} chars")
     prompt = REVISE_PROMPT.format(
         task=task,
         content=revision_content,
@@ -474,7 +482,7 @@ def revise(task: str, content: str, eval_result: dict, _trace=None) -> str:
     response = ollama.chat(
         model=PRODUCER_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.1, "think": False, "num_predict": 8192, "num_ctx": 16384},
+        options={"temperature": 0.1, "think": False, "num_predict": 4096, "num_ctx": 12288},
     )
     if _trace is not None:
         _trace.log_usage(response, stage="wiggum_revise")

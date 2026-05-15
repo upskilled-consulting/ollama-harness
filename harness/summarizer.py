@@ -31,6 +31,11 @@ SUMMARIZER_MODEL  = os.environ.get("SUMMARIZER_MODEL",
 EVAL_THRESHOLD    = int(os.environ.get("SUMMARIZER_EVAL_THRESHOLD",    6000))
 REVISE_THRESHOLD  = int(os.environ.get("SUMMARIZER_REVISE_THRESHOLD",   5000))
 
+# Hard cap on content passed INTO the summarizer itself — prevents the summarizer
+# model from OOMing on very large documents. 20 000 chars ≈ 5 000 tokens, which
+# fits comfortably in an 8 192-token context alongside the prompt template.
+_SUMMARIZER_INPUT_CAP = int(os.environ.get("SUMMARIZER_INPUT_CAP", 20_000))
+
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -115,6 +120,13 @@ def summarize_for_eval(content: str, task: str, trace=None) -> str:
         return content
 
     print(f"  [summarizer] eval: {len(content)} chars > {EVAL_THRESHOLD} — summarizing for evaluator")
+    # Pre-truncate before sending to summarizer to prevent the summarizer itself
+    # from OOMing. Keep 85% head + 15% tail so both intro and conclusion survive.
+    if len(content) > _SUMMARIZER_INPUT_CAP:
+        head = int(_SUMMARIZER_INPUT_CAP * 0.85)
+        tail = _SUMMARIZER_INPUT_CAP - head
+        content = content[:head] + "\n\n[...]\n\n" + content[-tail:]
+        print(f"  [summarizer] pre-truncated to {len(content)} chars for summarizer input")
     prompt = _EVAL_SUMMARY_PROMPT.format(task=task, content=content)
 
     try:
@@ -154,10 +166,19 @@ def summarize_for_revision(content: str, task: str, issues: list[str], trace=Non
     issue_sections = _sections_matching_issues(content, issues)
     issue_sections_str = "\n".join(f"- {s}" for s in issue_sections) if issue_sections else "(none identified — preserve all sections)"
 
+    # Pre-truncate before sending to summarizer to prevent the summarizer itself
+    # from OOMing. Keep 85% head + 15% tail.
+    capped = content
+    if len(content) > _SUMMARIZER_INPUT_CAP:
+        head = int(_SUMMARIZER_INPUT_CAP * 0.85)
+        tail = _SUMMARIZER_INPUT_CAP - head
+        capped = content[:head] + "\n\n[...]\n\n" + content[-tail:]
+        print(f"  [summarizer] pre-truncated to {len(capped)} chars for revision summarizer input")
+
     prompt = _REVISE_SUMMARY_PROMPT.format(
         task=task,
         issue_sections=issue_sections_str,
-        content=content,
+        content=capped,
     )
 
     try:
