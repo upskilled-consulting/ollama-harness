@@ -3503,7 +3503,7 @@ Rules:
 
         trace.set_stage("synth")
         print("\n  [synth] synthesizing from merged results...")
-        _emit("synth", {"stage": "start", "task_type": plan.task_type, "context_chars": len(context)})
+        _emit("synth", {"stage": "start", "task_type": plan.task_type, "tokens_in": len(context) // 4})
         if expected_count is not None:
             print(f"  [count] detected count constraint: {expected_count} — using count-aware synthesis")
             with trace.span("synthesize", model=producer_model):

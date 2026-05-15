@@ -92,8 +92,7 @@ All views wired and shipping:
 - Submit — live pulse dot while in flight; `ResultCard` with score, duration, output preview
 - MCP inspector — real tool cards from `GET /api/mcp/tools`, param badges, call log
 
-Remaining open: **Submit live output streaming** (SSE per-run stdout → structured rendering)
-— not yet implemented; deferred to 0.3.0.
+Remaining open: ~~Submit live output streaming~~ — implemented (see 0.3.0 below).
 
 ---
 
@@ -155,11 +154,12 @@ After fine-tune v2 completes:
 `trl dpo --model <sft-checkpoint> --dataset hf_datasets/dpo.jsonl`
 Re-import via Ollama Modelfile and benchmark against base producer.
 
-### Submit: live output streaming
-`POST /api/tasks` queues a run and returns a `run_id`. The Submit view should then
-open an SSE connection to `/api/runs/{run_id}/stream` and render the agent's stdout
-(plan events, search rounds, wiggum scores) in real time — identical to the terminal
-but with structured rendering for `[EVENT]` lines.
+### ✓ Submit: live output streaming
+`POST /api/tasks` returns an `item_id`. The Submit view opens an SSE connection to
+`/api/tasks/{item_id}/stream` and renders structured `[EVENT]` lines as typed cards
+(plan, search, synth, wiggum) with a raw log `<pre>` for unstructured output. Plan
+approval gate (`use_plan=true`) blocks execution until the user edits and approves
+queries via `ApprovePlanCard`.
 
 ---
 
