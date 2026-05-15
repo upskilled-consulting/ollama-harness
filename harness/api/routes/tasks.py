@@ -8,6 +8,7 @@ import sys
 import threading
 import uuid
 from pathlib import Path
+from typing import IO
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -38,7 +39,7 @@ class _TaskTee(io.TextIOBase):
     """Thread-aware stdout tee. Real stdout + per-thread task log file."""
 
     _local: threading.local = threading.local()
-    _real: io.TextIOBase | None = None
+    _real: IO[str] | None = None
 
     def write(self, s: str) -> int:  # type: ignore[override]
         if self._real is not None:

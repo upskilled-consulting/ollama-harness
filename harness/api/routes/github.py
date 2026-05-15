@@ -195,7 +195,7 @@ async def github_commit_tree(sha: str, path: str = ""):
         except Exception:
             pass
 
-    entries.sort(key=lambda e: (0 if e["type"] == "tree" else 1, e["name"].lower()))
+    entries.sort(key=lambda e: (0 if e["type"] == "tree" else 1, str(e["name"]).lower()))
     return _set_cache(cache_key, entries)
 
 
