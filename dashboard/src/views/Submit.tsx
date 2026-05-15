@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Square, Search, Brain, Zap } from "lucide-react";
+import { Play, Square, Search, Brain, Zap, Database } from "lucide-react";
 import { clsx } from "clsx";
 import { useCancelTask, useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
-import { api } from "@/api/client";
 import { MdView } from "@/components/MdView";
+import { ApprovePlanCard } from "@/components/ApprovePlanCard";
 import type { RunRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -12,6 +12,7 @@ import type { RunRecord } from "@/types";
 
 type EventLine =
   | { kind: "log";       text: string }
+  | { kind: "memory";    hits: number; titles: string[] }
   | { kind: "plan";      queries: string[]; complexity: string; task_type: string; notes?: string }
   | { kind: "plan_gate"; queries: string[] }
   | { kind: "search";    round: number; query: string; hits: number }
@@ -22,6 +23,13 @@ function parseLine(raw: string): EventLine {
   if (raw.startsWith("[EVENT]")) {
     try {
       const ev = JSON.parse(raw.slice(7)) as { type: string; data: Record<string, unknown> };
+      if (ev.type === "memory") {
+        return {
+          kind:   "memory",
+          hits:   (ev.data.hits   as number)   ?? 0,
+          titles: (ev.data.titles as string[]) ?? [],
+        };
+      }
       if (ev.type === "plan") {
         return {
           kind: "plan",
@@ -65,6 +73,22 @@ function parseLine(raw: string): EventLine {
 // ---------------------------------------------------------------------------
 // Event card renderers
 // ---------------------------------------------------------------------------
+
+function MemoryCard({ e }: { e: Extract<EventLine, { kind: "memory" }> }) {
+  return (
+    <div className="event-card event-memory">
+      <div className="event-header">
+        <Database size={13} />
+        <span>{e.hits > 0 ? `Memory: ${e.hits} hit${e.hits > 1 ? "s" : ""}` : "Memory: no history"}</span>
+      </div>
+      {e.titles.length > 0 && (
+        <ul className="event-list">
+          {e.titles.map((t, i) => <li key={i}>{t}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function PlanCard({ e }: { e: Extract<EventLine, { kind: "plan" }> }) {
   return (
@@ -138,84 +162,12 @@ function WiggumCard({ e }: { e: Extract<EventLine, { kind: "wiggum" }> }) {
   );
 }
 
-function ApprovePlanCard({
-  itemId,
-  initialQueries,
-  onApproved,
-}: {
-  itemId: string;
-  initialQueries: string[];
-  onApproved: () => void;
-}) {
-  const [text, setText]       = useState(initialQueries.join("\n"));
-  const [busy, setBusy]       = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-
-  const handleApprove = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const queries = text.split("\n").map((q) => q.trim()).filter(Boolean);
-      await api.approve_plan(itemId, queries);
-      onApproved();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="event-card" style={{
-      borderLeft: "3px solid var(--accent, #6366f1)",
-      background: "var(--bg-surface)",
-      marginBottom: 8,
-    }}>
-      <div className="event-header" style={{ marginBottom: 8 }}>
-        <span className="pulse-dot" />
-        <Brain size={13} />
-        <span style={{ fontWeight: 600 }}>Waiting for plan approval…</span>
-      </div>
-      <p style={{ fontSize: 11, color: "var(--dim)", margin: "0 0 6px" }}>
-        Edit queries below (one per line), then approve to continue.
-      </p>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={Math.max(3, initialQueries.length + 1)}
-        style={{
-          width: "100%",
-          fontSize: 12,
-          fontFamily: "var(--font-mono, monospace)",
-          background: "var(--bg)",
-          color: "var(--fg)",
-          border: "1px solid var(--border)",
-          borderRadius: 4,
-          padding: "6px 8px",
-          resize: "vertical",
-          boxSizing: "border-box",
-        }}
-      />
-      {error && <p style={{ color: "var(--error)", fontSize: 11, margin: "4px 0 0" }}>{error}</p>}
-      <div style={{ marginTop: 8 }}>
-        <button
-          className="btn btn-primary"
-          onClick={() => void handleApprove()}
-          disabled={busy}
-          style={{ padding: "4px 14px", fontSize: 12 }}
-        >
-          {busy ? "Approving…" : "Approve"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function EventCard({ e }: { e: EventLine }) {
-  if (e.kind === "plan")   return <PlanCard   e={e} />;
-  if (e.kind === "search") return <SearchCard e={e} />;
-  if (e.kind === "synth")  return <SynthCard  e={e} />;
-  if (e.kind === "wiggum") return <WiggumCard e={e} />;
+  if (e.kind === "memory") return <MemoryCard  e={e} />;
+  if (e.kind === "plan")   return <PlanCard    e={e} />;
+  if (e.kind === "search") return <SearchCard  e={e} />;
+  if (e.kind === "synth")  return <SynthCard   e={e} />;
+  if (e.kind === "wiggum") return <WiggumCard  e={e} />;
   return null; // log lines go into the pre block below
 }
 

@@ -3343,8 +3343,10 @@ Rules:
                 for t in _mem_titles:
                     print(f"    • {t}")
                 trace.log_memory_hits(memory_hits, titles=_mem_titles)
+                _emit("memory", {"hits": memory_hits, "titles": _mem_titles})
             else:
                 print("\n  [memory] no relevant history")
+                _emit("memory", {"hits": 0, "titles": []})
 
             # Planning — analyse task + memory; produces search queries and synthesis notes
             trace.set_stage("plan")

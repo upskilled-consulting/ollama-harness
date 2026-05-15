@@ -27,8 +27,9 @@ _queue_lock = asyncio.Lock()
 _running_threads: dict[str, int] = {}
 
 # Plan approval gate state
-_plan_gates: dict[str, threading.Event] = {}
-_plan_approvals: dict[str, list[str]]   = {}
+_plan_gates:    dict[str, threading.Event] = {}
+_plan_approvals: dict[str, list[str]]      = {}
+_plan_pending:   dict[str, list[str]]      = {}  # item_id -> queries awaiting approval
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +122,13 @@ def _make_plan_gate(item_id: str):
     _plan_approvals[item_id] = []
 
     def _gate(queries: list[str]) -> list[str]:
+        _plan_pending[item_id] = queries
         print(
             f"[EVENT]{_json.dumps({'type': 'plan_gate', 'data': {'status': 'waiting', 'queries': queries}})}",
             flush=True,
         )
         event.wait(timeout=600)
+        _plan_pending.pop(item_id, None)
         approved = _plan_approvals.pop(item_id, queries) or queries
         _plan_gates.pop(item_id, None)
         return approved
@@ -225,6 +228,15 @@ async def approve_plan(item_id: str, body: _PlanApproval):
     _plan_approvals[item_id] = body.queries
     event.set()
     return {"ok": True}
+
+
+@router.get("/tasks/gates")
+async def list_plan_gates():
+    """Return all item_ids currently waiting for plan approval."""
+    return [
+        {"item_id": iid, "queries": _plan_pending.get(iid, [])}
+        for iid in list(_plan_gates)
+    ]
 
 
 @router.get("/tasks/{item_id}/stream")

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Sidebar, type View } from "@/components/Sidebar";
-import { useLiveRuns } from "@/hooks/useRuns";
+import { useLiveRuns, useGates } from "@/hooks/useRuns";
+import { ApprovePlanCard } from "@/components/ApprovePlanCard";
 import { Home }      from "@/views/Home";
 import { Runs }      from "@/views/Runs";
 import { Submit }    from "@/views/Submit";
@@ -29,6 +30,21 @@ const VIEWS: Record<View, React.ReactNode> = {
   github:    <Github />,
 };
 
+function GateBanner() {
+  const { data: gates = [] } = useGates();
+  if (gates.length === 0) return null;
+  return (
+    <div style={{
+      position: "fixed", top: 16, right: 16, zIndex: 200,
+      width: 360, display: "flex", flexDirection: "column", gap: 8,
+    }}>
+      {gates.map((g) => (
+        <ApprovePlanCard key={g.item_id} itemId={g.item_id} initialQueries={g.queries} onApproved={() => {}} />
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [view, setView] = useState<View>("home");
   const [panelOpen, setPanelOpen] = useState<"terminal" | "voice" | null>(null);
@@ -42,6 +58,7 @@ function App() {
       <Sidebar active={view} onChange={setView} panelOpen={panelOpen} onPanelToggle={togglePanel} />
       <div id="content">{VIEWS[view]}</div>
       <FloatingPanels open={panelOpen} onClose={() => setPanelOpen(null)} />
+      <GateBanner />
     </div>
   );
 }

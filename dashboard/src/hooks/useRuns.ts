@@ -77,6 +77,15 @@ export function useQueue() {
   return useQuery({ queryKey: ["queue"], queryFn: api.queue, refetchInterval: 3_000 });
 }
 
+export function useGates() {
+  return useQuery({
+    queryKey:       ["gates"],
+    queryFn:        api.gates,
+    refetchInterval: 2_000,
+    staleTime:      0,
+  });
+}
+
 export function useMcpLog() {
   return useQuery({ queryKey: ["mcp_log"], queryFn: () => api.mcp_log(), refetchInterval: 5_000 });
 }
