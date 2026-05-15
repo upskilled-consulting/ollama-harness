@@ -25,6 +25,7 @@ import os
 import re
 import sqlite3
 from datetime import UTC, datetime
+from typing import Any
 
 from harness import inference as ollama
 from harness.config import CHROMA_DIR, MEMORY_DB
@@ -747,8 +748,8 @@ class MemoryStore:
     def update_memory(self, memory_id: int, title: str | None = None,
                       tags: list | None = None, quality: int | None = None) -> bool:
         """Partial update. Returns True if row existed."""
-        sets = []
-        params = []
+        sets: list[str] = []
+        params: list[Any] = []
         if title is not None:
             sets.append("title = ?")
             params.append(title)
@@ -873,7 +874,7 @@ class MemoryStore:
         kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto")
         labels = kmeans.fit_predict(emb_array)
 
-        rowids = []
+        rowids: list[int | None] = []
         for _id in ids:
             try:
                 rowids.append(int(_id))

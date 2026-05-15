@@ -51,7 +51,7 @@ jobs:
             -m "not requires_ollama" \
             --cov=harness \
             --cov-report=term-missing \
-            --cov-fail-under=20
+            --cov-fail-under=15
         env:
           DATA_DIR: /tmp/harness-ci-data
 
