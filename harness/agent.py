@@ -121,7 +121,6 @@ def _estimate_keep_alive(task_type: str, explicit_skills: set, use_wiggum: bool)
 
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)
 
-from ddgs import DDGS
 from harness.logger import RunTrace
 from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
@@ -508,9 +507,14 @@ def web_search_raw(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> lis
         print("  [headed] falling back to DDGS for structured results")
 
     try:
+        try:
+            from ddgs import DDGS as _DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS as _DDGS  # type: ignore[no-redef]
+
         from harness.search_cache import cached_search
         def _ddgs(q: str, n: int) -> list[dict]:
-            with DDGS() as ddgs:
+            with _DDGS() as ddgs:
                 return list(ddgs.text(q, max_results=n))
         return cached_search(query, _ddgs, max_results=max_results)
     except ImportError:
@@ -520,7 +524,11 @@ def web_search_raw(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> lis
         return []
 
     try:
-        with DDGS() as ddgs:
+        try:
+            from ddgs import DDGS as _DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS as _DDGS  # type: ignore[no-redef]
+        with _DDGS() as ddgs:
             return list(ddgs.text(query, max_results=max_results))
     except Exception as e:
         print(f"  [web_search error] {e}")
