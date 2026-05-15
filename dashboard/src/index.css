@@ -159,6 +159,9 @@ textarea.task-input:focus { border-color: var(--accent); }
 .active-run-task { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Voice ── */
+.voice-panel-body  { padding: 20px 20px 16px; overflow-y: auto; flex: 1; }
+.voice-panel-body .view-header { display: none; }
+.voice-panel-body .voice-wrap  { max-width: 100%; }
 .voice-wrap        { max-width: 640px; }
 .voice-wave        { display: block; margin-bottom: 12px; border-radius: 4px; }
 .mic-btn {

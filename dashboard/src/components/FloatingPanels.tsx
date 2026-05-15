@@ -225,24 +225,26 @@ function TerminalPanel({ onClose }: { onClose: () => void }) {
 
 function VoicePanel({ onClose }: { onClose: () => void }) {
   return (
-    <div style={{
+    <div className="voice-panel" style={{
       width: 420,
       background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12,
       display: "flex", flexDirection: "column", overflow: "hidden",
       boxShadow: "0 24px 48px rgba(0,0,0,0.6)",
-      maxHeight: "80vh", overflowY: "auto",
+      maxHeight: "80vh",
     }}>
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "10px 14px", borderBottom: "1px solid var(--border)",
-        background: "var(--surface)",
+        background: "var(--surface)", flexShrink: 0,
       }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>Voice</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer" }}>
           <X size={14} />
         </button>
       </div>
-      <Voice />
+      <div className="voice-panel-body">
+        <Voice />
+      </div>
     </div>
   );
 }
