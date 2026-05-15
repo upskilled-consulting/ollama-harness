@@ -411,6 +411,7 @@ enable per-stage progress cards, live plan display, and training metrics without
 Event taxonomy:
 ```json
 {"type": "plan",   "data": {"queries": [...], "gaps": [...], "complexity": "high"}}
+{"type": "memory", "data": {"hits": 3, "titles": ["prior run title", ...]}}
 {"type": "search", "data": {"query": "...", "round": 1, "hits": 3}}
 {"type": "synth",  "data": {"stage": "start", "tokens_in": 4200}}
 {"type": "wiggum", "data": {"round": 1, "score": 7.4, "dims": {...}}}
@@ -420,7 +421,9 @@ Event taxonomy:
 ```
 
 Non-`[EVENT]` lines fall through as `log` — backward compatible. Build order:
-1. Emit `plan` + `search` + `wiggum` events from `agent.py` and `wiggum.py` — small, immediate
+1. ✓ `memory` event emitted from `agent.py` after ChromaDB retrieval (hits + titles)
+2. ✓ `plan` + `search` + `synth` + `wiggum` events live; rendered as typed cards in Submit view
+3. Emit `plan` + `search` + `wiggum` events from `agent.py` and `wiggum.py` — small, immediate
 2. Add `DashboardCallback` (`trl.TrainerCallback`) to `finetune_annotate.py` — emits `metric`
    events per step + appends to `finetune_metrics.jsonl`; `GET /api/finetune/metrics` serves it
 3. Dashboard: parse `[EVENT]` prefix → plan card above log stream; Training tab with live loss
@@ -472,32 +475,32 @@ code-review-graph watch    # incremental on save/commit
 Build after Stage 4 Proposer prototype exists — most valuable once agents need structured
 context about what they can mutate and what the downstream impact is.
 
-### Evaluator rotation (Gemma 4 26B)
-`Qwen3-Coder:30b` is the sole evaluator across wiggum and panel. Single-evaluator
-autoresearch risks optimizing against one model's scoring bias invisibly.
+### ✓ Evaluator rotation
+`HARNESS_EVALUATOR_POOL` (comma-separated list) + `select_evaluator(seed)` in `wiggum.py`.
+Hash-based deterministic selection per run; falls back to `EVALUATOR_MODEL` when pool is
+empty. Guards against producer == evaluator collision. Enabled via:
+```bash
+HARNESS_EVALUATOR_POOL=qwen3-14b,gemma4-27b
+```
+Gemma 4 26B (MoE, 3.8B active params) is the recommended second evaluator: different
+architecture family (Google vs Alibaba), 256K context, configurable thinking mode.
+Test: set pool to both models and confirm divergent wiggum scores → add as 4th panel persona.
 
-Gemma 4 26B (MoE, 3.8B active params at inference) is the right candidate: different
-architecture family (Google vs Alibaba), fits alongside pi-qwen-32b without full VRAM swap,
-256K context, native function calling, configurable thinking mode.
+### Plan approval — surface extensions
+**✓ Global gate banner** — `GET /api/tasks/gates` returns all pending gates (`_plan_pending`
+dict in `tasks.py`). `useGates()` polls every 2s. `GateBanner` in `App.tsx` renders a
+fixed overlay (top-right, z=200) with one `ApprovePlanCard` per pending gate — visible
+from any dashboard view regardless of which tab is active.
 
-Test protocol: `EVALUATOR_MODEL=gemma4:26b python eval_suite.py --tasks T_D,T_E --score`.
-If scores diverge significantly → rotate evaluators across autoresearch sessions or add
-Gemma 4 as a 4th panel persona. If scores converge → rubric is robust.
+**Remaining (deferred):**
 
-### Plan approval — surface extensions (deferred)
-The `/plan` gate is currently Submit-view-only. Two natural extensions, in priority order:
+*Active-run card in Runs view* — when a run has a pending gate, the Runs view could
+render an inline `ApprovePlanCard` without needing a full EventSource subscription.
 
-**Active-run card in Runs view** — when a run has a pending gate, `GET /api/runs/live`
-or a new `GET /api/tasks/{id}/gate-status` endpoint exposes `waiting_for_plan: true`.
-The Runs view can poll this and render an inline `ApprovePlanCard` without needing a
-full EventSource subscription.
+*Floating terminal* — the `oh >` REPL could open the EventSource stream, watch for
+`plan_gate` events, and render a blocking `input()` prompt — mirroring the terminal path.
 
-**Floating terminal** — the `oh >` REPL submits tasks via `POST /api/tasks`. After
-submission it could open the EventSource stream, watch for `plan_gate` events, and
-render a blocking `input()` prompt — mirroring the originally-planned terminal path.
-
-Neither is blocked on infrastructure; both are purely additive UI. Implement whichever
-gets asked for first.
+Both are purely additive UI. Implement whichever gets asked for first.
 
 ---
 
