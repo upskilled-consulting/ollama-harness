@@ -485,10 +485,15 @@ _LOCAL_EMBED_MODEL = "all-MiniLM-L6-v2"   # ~22MB, fast, 384 dims
 
 
 def _embed_vllm(texts: list[str]) -> list[list[float]]:
-    """Embed via vLLM /v1/embeddings using the first served model."""
+    """Embed via vLLM /v1/embeddings. Requires HARNESS_EMBED_MODEL to be set."""
+    embed_model = os.environ.get("HARNESS_EMBED_MODEL", "").strip()
+    if not embed_model:
+        raise RuntimeError(
+            "HARNESS_EMBED_MODEL is not set — cannot embed via vLLM. "
+            "Set it to the model ID served at VLLM_BASE_URL, or unset INFERENCE_BACKEND=vllm."
+        )
     from openai import OpenAI
     client = OpenAI(base_url=_VLLM_BASE, api_key=_VLLM_API_KEY)
-    embed_model = next(iter(_MODEL_MAP.values())) if _MODEL_MAP else "default"
     resp = client.embeddings.create(model=embed_model, input=texts)
     return [d.embedding for d in resp.data]
 

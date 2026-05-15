@@ -49,6 +49,7 @@ uv pip install -e .   # register the `oh` entry point
 |---|---|---|
 | [Ollama](https://ollama.com) | LLM inference (default) | `ollama serve` must be running |
 | [llama.cpp server](https://github.com/ggerganov/llama.cpp) | Alternative inference backend | Configure via `HARNESS_ENDPOINTS` |
+| [vLLM](https://github.com/vllm-project/vllm) | High-throughput inference backend (Linux/WSL2) | Set `INFERENCE_BACKEND=vllm` + `VLLM_BASE_URL` |
 | [Node.js ≥ 18](https://nodejs.org) | Dashboard UI | `start.py` builds it automatically; manual: `cd dashboard && npm install && npm run build` |
 | [Playwright](https://playwright.dev) | Browser skills | `playwright install chromium` |
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | Audio transcription | Build binary, place at `whisper.cpp/` |
@@ -147,6 +148,13 @@ HARNESS_PRODUCER_MODEL=qwen3.6-35b
 
 # Pure Ollama (default — no HARNESS_ENDPOINTS needed)
 # Just run: ollama pull qwen3:8b
+
+# vLLM backend (Linux/WSL2 only)
+INFERENCE_BACKEND=vllm
+VLLM_BASE_URL=http://localhost:8000/v1
+VLLM_API_KEY=token-abc123
+# Required when INFERENCE_BACKEND=vllm — must match the embedding model served by vLLM:
+HARNESS_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5
 
 # Semantic Scholar API key (optional — increases rate limit)
 S2_API_KEY=your_key_here

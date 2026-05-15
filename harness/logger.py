@@ -112,6 +112,12 @@ class RunTrace:
 
             "orchestrated":         False,
             "subtask_count":        0,
+            "orchestration_style":  None,
+            "allow_parallelism":    None,
+            "subtask_results":      [],
+            "tool_failures":        [],
+            "validation_passed":    None,
+            "policy_confidence":    None,
 
             "synth_forced":         False,
             "output_path":          None,
@@ -402,8 +408,18 @@ class RunTrace:
         self.log_message(role="user",      content=input_text,  stage=stage)
         self.log_message(role="assistant", content=output_text, cot=thinking or None, stage=stage)
 
+    def log_policy(self, orchestration_style: str, allow_parallelism: bool) -> None:
+        """Record the orchestration policy chosen for this run."""
+        self.data["orchestration_style"] = orchestration_style
+        self.data["allow_parallelism"] = allow_parallelism
+
     def log_plan_record(self, plan_dict: dict, plan_type: str = "agent") -> str:
         """Write an OrchestratorPlan record to plans.jsonl. Returns plan_id."""
+        raw_subtasks = plan_dict.get("subtasks", [])
+        subtasks = [
+            s if isinstance(s, dict) else {"desc": s}
+            for s in raw_subtasks
+        ]
         p = OrchestratorPlan(
             run_id=self.run_id,
             session_id=self.session_id,
@@ -413,7 +429,7 @@ class RunTrace:
             plan_type=plan_type,
             task_type=plan_dict.get("task_type", ""),
             complexity=plan_dict.get("complexity", ""),
-            subtasks=[{"desc": s} for s in plan_dict.get("subtasks", [])],
+            subtasks=subtasks,
             known_facts=plan_dict.get("known_facts", []),
             knowledge_gaps=plan_dict.get("knowledge_gaps", []),
             search_queries=plan_dict.get("search_queries", []),

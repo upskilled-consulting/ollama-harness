@@ -318,11 +318,90 @@ Proposer/Executor/Critic loop requires agents to coordinate directly without a c
 bottleneck. Blocked on: cycle detection, shared file conflict resolution, distributed
 trace reconstruction across agent conversation histories.
 
+### ✓ PlannedSubtask typed objects (DAG prerequisite)
+`plan.subtasks` is currently `list[str]`. Convert to a structured dataclass before
+implementing DAG execution — strings can't encode dependency order or execution mode:
+
+```python
+@dataclass
+class PlannedSubtask:
+    desc: str
+    depends_on: list[int] = field(default_factory=list)  # indices into subtasks list
+    mode: str = "research"                                 # "research" | "code" | "critique"
+    priority: int = 0
+```
+
+Call sites: `planner._parse_plan()`, `orchestrator._assign_paths()`,
+`orchestrator._run_subtasks_parallel()`, `logger.log_plan_record()`. Downstream code
+that iterates `plan.subtasks` treating each as a string needs a one-line update
+(`sub.desc` instead of `sub`). Parse `depends_on` from the planner JSON output so the
+model can declare ordering constraints; orchestrator respects them when scheduling.
+Without this, DAG execution in 0.4.x is building on strings.
+
+### ✓ Policy-driven orchestration (replace always-parallel fan-out)
+`orchestrator.py` currently runs `_run_subtasks_parallel()` whenever `plan.subtasks`
+is non-empty, regardless of whether subtasks are independent. Add `orchestration_style`
+and `allow_parallelism` to `Plan` so the planner makes the call:
+
+```python
+# Plan dataclass additions
+orchestration_style: str = "single_agent"   # "single_agent" | "sequential" | "parallel" | "dag"
+allow_parallelism: bool = False
+```
+
+Planner prompt gains two new output fields:
+```json
+{"orchestration_style": "parallel", "allow_parallelism": true}
+```
+
+Orchestrator reads `plan.orchestration_style` and branches:
+- `single_agent` → delegate to `agent.run()` (existing path)
+- `sequential` → `_run_subtasks_sequential()` (new, preserves order, blocks on each)
+- `parallel` → `_run_subtasks_parallel()` (existing, gated on `allow_parallelism`)
+- `dag` → deferred to 0.4.x after `PlannedSubtask.depends_on` is wired
+
+This also removes the need for a standalone `PolicySelector` module: policy lives
+in the Plan, produced by the same LLM call that already has task + memory context.
+A rule-based scoring layer on arbitrary weights adds no value until calibrated from
+telemetry; use the planner's contextual judgment instead.
+
 ---
 
 ## 0.3.6 — Observability, tooling, and critic infrastructure
 
 Items recovered from pre-refactor roadmap that are open and not yet ported.
+
+### ✓ Logger policy fields (telemetry → policy feedback loop)
+`RunTrace.data` currently records what happened (tokens, scores, output size) but not
+which orchestration policy was chosen. Add these fields so run outcomes can be correlated
+with the decisions that produced them:
+
+```python
+# RunTrace.__init__ additions
+"orchestration_style": None,    # from Plan.orchestration_style
+"allow_parallelism": None,      # from Plan.allow_parallelism
+"subtask_results": [],          # [{"desc", "ok", "attempts", "elapsed_s"}] per subtask
+"tool_failures": [],            # [{"tool", "query", "error"}]
+"validation_passed": None,      # True/False after wiggum
+"policy_confidence": None,      # planner-reported confidence when added
+```
+
+`orchestrator.py` populates these before calling `trace.finish()`. Without this,
+`runs.jsonl` can't answer "did parallel execution outperform sequential on high-complexity
+tasks?" — the signal needed for a self-calibrating policy selector in Stage 4.
+
+### ✓ Embed routing fix
+`_embed_vllm()` currently picks `next(iter(_MODEL_MAP.values()))` as the embedding model,
+which resolves to whatever chat model is first in the map (`pi-qwen3.6`). Chat models
+reject embedding requests. Fix: add a dedicated env var:
+
+```bash
+HARNESS_EMBED_MODEL=nomic-ai/nomic-embed-text-v1.5  # vLLM-served embed model
+```
+
+`_embed_vllm()` reads `os.environ.get("HARNESS_EMBED_MODEL")` and falls back to
+`_embed_local()` if unset, rather than guessing from the chat model map. The local
+`sentence-transformers` path already works correctly and is the right default.
 
 ### Unified structured event protocol (`[EVENT]` format)
 All pipeline stages print `[EVENT]<json>` to stdout. The SSE stream already delivers
@@ -461,6 +540,71 @@ voice: MOS proxy via preference comparison against the base SpeechT5 output.
 
 ## Stage 4 — Autonomous swarm
 
+### Harness governance layer (constitution / ethos / cadence)
+As the swarm gains multiple autonomous agents, behavioral constraints need to live in
+shared documents rather than per-agent system prompts. Three non-anthropomorphic files,
+injected into every agent's bootstrap context:
+
+| File | Purpose |
+|------|---------|
+| `constitution.md` | Hard constraints all agents must respect: what they can't do, what requires human checkpoint, output format minimums, security rules |
+| `ethos.md` | Evaluation standards and decision norms: quality floors, search discipline, when to stop and escalate, how to handle conflicting sources |
+| `cadence.md` | The operational loop: gather → annotate → synthesize → eval → checkpoint. Each agent's recurring cycle, what state must be checkpointed, what triggers the next phase |
+
+Mirrors OpenClaw's bootstrap injection pattern: stable content (constitution, ethos)
+sits above the prompt cache boundary so vLLM prefix caching can reuse it across turns.
+`cadence.md` is the technical analogue of `heartbeat.md` — cycle rhythm without
+organism metaphor.
+
+**Iterative improvement path:** after each autoresearch session, Wiggum's failure
+patterns (e.g. "specificity_score < 6 in 40% of runs") can be distilled into a
+proposed `constitution.md` diff by a meta-agent. Human approves or rejects the diff
+before it merges. This is the "democratic constitution" pattern — grounded in eval
+signal rather than agent opinion.
+
+### Prompt cache boundary design
+Before the vLLM move, design the system prompt so stable content sits above the cache
+cut and volatile content below it. Concretely:
+
+- **Above the boundary (stable):** `constitution.md`, `ethos.md`, `cadence.md`,
+  skill list, tool descriptions, workspace path
+- **Below the boundary (volatile):** current task, memory hits, session state,
+  live tool results, plan events
+
+With Qwen3.6-35B's SWA this is irrelevant — it re-processes the full prompt per
+request regardless. But designing for the boundary now means the vLLM migration
+is a configuration change, not a prompt rewrite. Target: stable prefix ≥ 80% of
+total prompt tokens on repeat task types.
+
+### Sub-agent minimal context mode
+Worker agents (orchestrator subtasks, Executor instances) don't need the full
+coordinator context: no memory recall, no self-update guidance, no evaluation
+rubric, no session history. Add a `--minimal-context` flag to `harness.agent` that
+strips the system prompt to task + tools + `constitution.md` only. Reduces per-subtask
+token cost proportionally to how much coordinator context the worker would otherwise
+receive — typically 30–50% of the full prompt on research tasks.
+
+Mirrors OpenClaw's `promptMode=minimal`: sub-agents get `AGENTS.md` + `TOOLS.md`
+equivalents only. Apply in `orchestrator._run_one_subtask()` by passing
+`--minimal-context` in the subprocess command.
+
+### Policy selector with telemetry calibration
+A rule-based `PolicySelector` with fixed weights is editorial guesswork until
+calibrated from data. After Stage 4 Proposer/Executor/Critic is running and
+`runs.jsonl` has 50+ orchestrated runs with policy fields logged (see 0.3.6):
+
+1. Extract `(orchestration_style, allow_parallelism, complexity, task_type) →
+   (final, wiggum_scores[-1], leverage, wall_time_s)` from `runs.jsonl`
+2. Fit a lightweight model (logistic regression or gradient-boosted tree) on the
+   extracted features — no LLM needed, just tabular prediction
+3. Replace planner's flat JSON orchestration fields with a call to the fitted
+   selector at planning time
+4. Re-fit after each N=25 new orchestrated runs; version the weights in git so
+   regressions are diffable
+
+This is how policy selection becomes genuinely adaptive rather than opinion-driven.
+The telemetry loop closed in 0.3.6 is the prerequisite.
+
 ### Proposer → Executor → Critic loop
 Close the manual hand-offs in the autoresearch loop:
 - **Proposer** generates harness mutations (synthesis instruction, rubric params, search config, model routing)
@@ -473,6 +617,31 @@ Human checkpoint: goal-setting and checkpoint promotion only.
 Each Proposer mutation runs in its own `git worktree` — isolated filesystem, own branch,
 no interference with live harness runs on `main`. Promoter merges with `--ff-only`;
 reverts are `git worktree remove --force`. Zero new infrastructure — just `git worktree add`.
+
+Coordination objects live inside each worktree as a directory convention — no VFS
+infrastructure needed on a single machine:
+
+```
+worktrees/<branch>/
+  tasks/      ← agent claims work by writing a file here (task_id.json)
+  leases/     ← task_id.lock with {agent_id, claimed_at} — coordinator expires stale locks
+  artifacts/  ← outputs staged here; never written directly to shared data/
+  events/     ← append-only per-run event log for this agent
+```
+
+Workers only write inside their branch tree. Coordinator reads `leases/` to detect
+abandonment and re-queue. Promotion is `git merge --ff-only`; cleanup is
+`git worktree remove --force`. This gives VFS-style coordination semantics (isolated
+write namespace, shared read, staged commits) without FUSE, Lustre, or any kernel driver.
+
+**Multi-machine scaling note:** when the swarm grows beyond a single GPU host, this
+convention needs a shared namespace across nodes. Ordered preference by complexity:
+1. NFS mount of `data/` — simplest, sufficient for 2–4 machines
+2. FUSE-based coordinator-mediated writes (WinFsp/Dokany on Windows) — adds policy
+3. Distributed filesystem — only if running dozens of nodes
+
+Don't pull in distributed filesystem infrastructure for single-machine operation;
+the directory convention above is the right implementation at current scale.
 
 ### vLLM hot-swap for promoted checkpoints
 When a fine-tuned checkpoint is promoted:
@@ -587,6 +756,24 @@ MCP and A2A are complementary layers: MCP for tools, A2A for agent-to-agent dele
 When `run_python` scope expands beyond model-generated code to untrusted sources
 (web search results, user scripts), replace the AST blocklist with true process
 isolation via Docker throwaway containers. Not urgent until productionization.
+
+For subagent sandboxes specifically, the target shape is:
+```bash
+docker run --rm --gpus all \
+  --network harness-net \          # isolated bridge, no host access
+  --mount type=bind,src=./worktrees/<branch>,dst=/workspace \
+  harness-agent:latest \
+  python -m harness.agent --minimal-context "<task>"
+```
+NVIDIA Container Toolkit (already needed for WSL2/vLLM) handles GPU passthrough;
+the worktree mount provides the isolation substrate from 0.3.5.
+
+**OpenShell watch item:** NVIDIA's [OpenShell](https://github.com/NVIDIA/OpenShell) (alpha)
+provides declarative YAML egress policy, credential injection, and inference routing for
+sandboxed agents. Currently optimized for external coding agents (Claude Code, Codex) rather
+than self-hosted harness subprocesses — the inference routing duplicates what `HARNESS_ENDPOINTS`
+already does. Revisit if Stage 4 expands to include external coding agents as swarm participants,
+at which point credential isolation and per-sandbox egress policy become genuinely valuable.
 
 ---
 

@@ -52,6 +52,18 @@ def _extract_string_list(text: str, key: str) -> list[str]:
 
 PLANNER_MODEL = "glm4:9b"
 
+
+# ---------------------------------------------------------------------------
+# Subtask data model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PlannedSubtask:
+    desc: str
+    mode: str = "research"          # "research" | "code" | "critique"
+    depends_on: list[int] = field(default_factory=list)  # indices; used by DAG executor (0.4.x)
+    priority: int = 0
+
 # ---------------------------------------------------------------------------
 # Prior knowledge pass
 # ---------------------------------------------------------------------------
@@ -97,6 +109,8 @@ Produce a structured execution plan. Respond with ONLY valid JSON — no explana
 {{
   "task_type": "enumerated|best_practices|research",
   "complexity": "low|medium|high",
+  "orchestration_style": "single_agent|sequential|parallel",
+  "allow_parallelism": false,
   "expected_sections": <integer or null>,
   "search_queries": ["query1", "query2"],
   "prior_work_summary": "<one sentence about relevant prior work, or empty string>",
@@ -107,11 +121,13 @@ Produce a structured execution plan. Respond with ONLY valid JSON — no explana
 Rules:
 - task_type: "enumerated" if task says "top N" or "N most/common/key/best"; "best_practices" if asking for practices/strategies/guidelines; "research" otherwise
 - complexity: "low" for simple factual lookups; "medium" for standard research; "high" for tasks requiring synthesis across 2+ distinct domains
+- orchestration_style: "single_agent" when subtasks is empty; "parallel" when subtasks are fully independent and can run concurrently; "sequential" when order matters between subtasks
+- allow_parallelism: true only when orchestration_style is "parallel"
 - expected_sections: the integer N from "top N" / "N most", null if not specified
 - search_queries: exactly 2 specific, complementary queries targeting the identified knowledge GAPS — do not search for things already known
 - prior_work_summary: one sentence summarising what the memory shows, or "" if no relevant history
 - notes: one specific actionable note (e.g. "specificity was weak last time — include concrete tool names and version numbers")
-- subtasks: EMPTY ARRAY [] for single-focus tasks. Populate with 2-3 items ONLY when the task explicitly asks to research multiple distinct domains and combine/synthesize/integrate them. Each item must be a self-contained WEB RESEARCH directive (e.g. "Research the top 3 failure modes in multi-agent AI systems") — NO synthesis, assembly, or writing steps (the orchestrator handles final assembly). NO file paths.
+- subtasks: EMPTY ARRAY [] for single-focus tasks. Populate with 2-3 items ONLY when the task explicitly asks to research multiple distinct domains and combine/synthesize/integrate them. Each item must be a JSON object: {{"desc": "<self-contained WEB RESEARCH directive>", "mode": "research"}} — NO synthesis, assembly, or writing steps (the orchestrator handles final assembly). NO file paths.
 """
 
 
@@ -123,11 +139,13 @@ Rules:
 class Plan:
     task_type: str = "research"
     complexity: str = "medium"
+    orchestration_style: str = "single_agent"   # "single_agent" | "sequential" | "parallel"
+    allow_parallelism: bool = False
     expected_sections: int | None = None
     search_queries: list[str] = field(default_factory=list)
     prior_work_summary: str = ""
     notes: str = ""
-    subtasks: list[str] = field(default_factory=list)
+    subtasks: list[PlannedSubtask] = field(default_factory=list)
     known_facts: list[str] = field(default_factory=list)
     knowledge_gaps: list[str] = field(default_factory=list)
 
@@ -273,20 +291,34 @@ def _parse_plan(text: str) -> Plan:
         if isinstance(q, str) and q.strip()
     ]
 
+    orchestration_style = str(data.get("orchestration_style", "single_agent") or "single_agent").strip()
+    if orchestration_style not in ("single_agent", "sequential", "parallel"):
+        orchestration_style = "single_agent"
+    allow_parallelism = bool(data.get("allow_parallelism", False))
+
     # Filter out synthesis/assembly subtasks — those are the orchestrator's job
     _ASSEMBLY_WORDS = re.compile(
         r'\b(synthesize|synthesise|assemble|combine|integrate|unify|merge|compile|write|create)\b',
         re.IGNORECASE,
     )
     raw_subtasks = data.get("subtasks", [])
-    subtasks = [
-        s.strip() for s in raw_subtasks
-        if isinstance(s, str) and s.strip() and not _ASSEMBLY_WORDS.search(s)
-    ]
+    subtasks: list[PlannedSubtask] = []
+    for s in raw_subtasks:
+        if isinstance(s, str):
+            desc, mode = s.strip(), "research"
+        elif isinstance(s, dict):
+            desc = str(s.get("desc", "")).strip()
+            mode = str(s.get("mode", "research")).strip()
+        else:
+            continue
+        if desc and not _ASSEMBLY_WORDS.search(desc):
+            subtasks.append(PlannedSubtask(desc=desc, mode=mode))
 
     return Plan(
         task_type=data.get("task_type", "research"),
         complexity=data.get("complexity", "medium"),
+        orchestration_style=orchestration_style,
+        allow_parallelism=allow_parallelism,
         expected_sections=expected_sections,
         search_queries=queries,
         prior_work_summary=str(data.get("prior_work_summary", "") or "").strip(),
@@ -333,6 +365,8 @@ if __name__ == "__main__":
     print(f"  knowledge_gaps ({len(plan.knowledge_gaps)}):")
     for g in plan.knowledge_gaps:
         print(f"    - {g}")
+    print(f"  orchestration_style: {plan.orchestration_style}")
+    print(f"  allow_parallelism:   {plan.allow_parallelism}")
     print(f"  subtasks ({len(plan.subtasks)}):")
     for s in plan.subtasks:
-        print(f"    - {s}")
+        print(f"    - [{s.mode}] {s.desc}")

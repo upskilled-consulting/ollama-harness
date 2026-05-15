@@ -42,7 +42,7 @@ from harness.agent import (
 )
 from harness.logger import RunTrace
 from harness.memory import MemoryStore
-from harness.planner import make_plan
+from harness.planner import PlannedSubtask, make_plan
 from harness.wiggum import EVALUATOR_MODEL
 from harness.wiggum import loop as wiggum_loop
 
@@ -107,17 +107,15 @@ def assemble(task: str, subtask_results: list[dict], memory_context: str = "") -
 # Subtask execution
 # ---------------------------------------------------------------------------
 
-def _assign_paths(subtask_descs: list[str], workspace: str) -> list[dict]:
-    """Convert subtask descriptions to runnable task dicts with assigned output paths."""
+def _assign_paths(subtasks: list[PlannedSubtask], workspace: str) -> list[dict]:
+    """Convert PlannedSubtask objects to runnable task dicts with assigned output paths."""
     results = []
-    for i, desc in enumerate(subtask_descs, 1):
-        # Normalise: ensure the description starts with a research directive
-        desc = desc.strip().rstrip(".")
+    for i, sub in enumerate(subtasks, 1):
+        desc = sub.desc.strip().rstrip(".")
         sub_path = os.path.join(workspace, f"_sub_{i}.md")
-        # Use forward slashes so agent.py's path regex matches on Windows
         sub_path_fwd = sub_path.replace("\\", "/")
         task_str = f"{desc} and save to {sub_path_fwd}"
-        results.append({"desc": desc, "task": task_str, "path": sub_path})
+        results.append({"desc": desc, "task": task_str, "path": sub_path, "mode": sub.mode})
     return results
 
 
@@ -187,6 +185,28 @@ def _run_one_subtask(sub: dict, parent_env: dict | None = None) -> dict:
     sub["content"] = ""
     sub["elapsed"] = round(time.time() - t0, 1)
     return sub
+
+
+def _run_subtasks_sequential(subtask_defs: list[dict], parent_env: dict | None = None) -> list[dict]:
+    """Execute subtasks one at a time, preserving order."""
+    n = len(subtask_defs)
+    print(f"\n[orchestrator] running {n} subtask(s) sequentially...")
+    t_wall_start = time.time()
+
+    for i, sub in enumerate(subtask_defs):
+        result = _run_one_subtask(sub, parent_env)
+        subtask_defs[i] = result
+        status = "OK" if result.get("content") else "FAILED"
+        attempts_str = f", {result.get('attempts', 1)} attempt(s)" if result.get('attempts', 1) > 1 else ""
+        print(f"\n{'='*50}")
+        print(f"[subtask {i+1}/{n}] {result['desc']} — {status} ({result.get('elapsed', '?')}s{attempts_str})")
+        print(f"{'='*50}")
+        for line in (result.get("output_log") or []):
+            print(line, end="")
+
+    wall_time = round(time.time() - t_wall_start, 1)
+    print(f"\n[orchestrator] wall time: {wall_time}s (sequential)")
+    return subtask_defs
 
 
 def _run_subtasks_parallel(subtask_defs: list[dict], parent_env: dict | None = None) -> list[dict]:
@@ -286,7 +306,7 @@ def orchestrate(task: str, use_wiggum: bool = True):
           f"{len(plan.subtasks)} subtask(s)")
     if plan.subtasks:
         for i, s in enumerate(plan.subtasks, 1):
-            print(f"  {i}. {s}")
+            print(f"  {i}. [{s.mode}] {s.desc}")
 
     # --- Simple task: no subtasks → delegate to agent ---
     if not plan.subtasks:
@@ -304,8 +324,7 @@ def orchestrate(task: str, use_wiggum: bool = True):
     trace.data["parallel"] = True
 
     # Write plan record before execution so it's queryable even on crash
-    plan_dict = {**plan.to_dict(), "subtasks": [s["desc"] if isinstance(s, dict) else s for s in plan.subtasks]}
-    trace.log_plan_record(plan_dict, plan_type="orchestrator")
+    trace.log_plan_record(plan.to_dict(), plan_type="orchestrator")
 
     # Propagate tracking IDs into subtask subprocesses for run lineage
     parent_env = {
@@ -315,11 +334,16 @@ def orchestrate(task: str, use_wiggum: bool = True):
         "HARNESS_RUN_ID":       "",   # each subtask generates its own run_id
     }
 
+    subtask_defs: list[dict] = []
     try:
         subtask_defs = _assign_paths(plan.subtasks, workspace)
 
-        # Execute subtasks in parallel
-        subtask_defs = _run_subtasks_parallel(subtask_defs, parent_env=parent_env)
+        # Execute subtasks — strategy driven by plan policy
+        if plan.allow_parallelism:
+            subtask_defs = _run_subtasks_parallel(subtask_defs, parent_env=parent_env)
+        else:
+            subtask_defs = _run_subtasks_sequential(subtask_defs, parent_env=parent_env)
+        trace.log_policy(plan.orchestration_style, plan.allow_parallelism)
 
         completed = [s for s in subtask_defs if s.get("content")]
         failed = [s for s in subtask_defs if not s.get("content")]
@@ -374,7 +398,7 @@ def orchestrate(task: str, use_wiggum: bool = True):
                 output_lines=trace.data.get("output_lines", 0),
                 output_bytes=trace.data.get("output_bytes", 0),
                 output_path=trace.data.get("output_path", ""),
-                wiggum_scores=[float(x) for x in (_ws if isinstance(_ws := trace.data.get("wiggum_scores"), list) else [])],
+                wiggum_scores=[float(x) for x in (trace.data.get("wiggum_scores") or []) if isinstance(x, (int, float))],
                 final=final_status,
             )
             print(f"  [memory] stored: {obs['title']!r}")
@@ -386,10 +410,7 @@ def orchestrate(task: str, use_wiggum: bool = True):
         trace.finish("ERROR")
         raise
     finally:
-        _cleanup_subtask_files(
-            subtask_defs if 'subtask_defs' in dir() else [],
-            trace=trace if 'trace' in dir() else None,
-        )
+        _cleanup_subtask_files(subtask_defs, trace=trace)
 
 
 # ---------------------------------------------------------------------------

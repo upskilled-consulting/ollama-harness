@@ -3,6 +3,7 @@ import { Play, Square, Search, Brain, Zap } from "lucide-react";
 import { clsx } from "clsx";
 import { useCancelTask, useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
 import { api } from "@/api/client";
+import { MdView } from "@/components/MdView";
 import type { RunRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -388,18 +389,9 @@ function ResultCard({ run }: { run: RunRecord }) {
         )}
       </div>
       {run.final_content && (
-        <pre style={{
-          margin: 0,
-          fontSize: 11,
-          color: "var(--dim)",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          maxHeight: 200,
-          overflow: "auto",
-          lineHeight: 1.5,
-        }}>
-          {run.final_content.slice(0, 600)}{run.final_content.length > 600 ? "\n…" : ""}
-        </pre>
+        <div style={{ maxHeight: 480, overflow: "auto", marginTop: 8 }}>
+          <MdView content={run.final_content} />
+        </div>
       )}
     </div>
   );
