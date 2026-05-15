@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemories, useMemory, useMemoryGraph, useMemoryPruneCandidates } from "@/hooks/useRuns";
 import { api } from "@/api/client";
@@ -205,8 +206,8 @@ function DetailPane({ memId, onDeleted }: { memId: number; onDeleted: () => void
       {/* RLHF */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "var(--dim)" }}>Quality signal:</span>
-        <button onClick={() => void sendFeedback(1)} disabled={saving} style={btn("#10b981", true)}>👍 upvote</button>
-        <button onClick={() => void sendFeedback(-1)} disabled={saving} style={btn("#ef4444", true)}>👎 downvote</button>
+        <button onClick={() => void sendFeedback(1)} disabled={saving} style={btn("#10b981", true)} title="Upvote"><ThumbsUp size={13} /> upvote</button>
+        <button onClick={() => void sendFeedback(-1)} disabled={saving} style={btn("#ef4444", true)} title="Downvote"><ThumbsDown size={13} /> downvote</button>
         <span style={{ fontSize: 11, color: "var(--dim)" }}>(current: {mem.quality > 0 ? "+" : ""}{mem.quality})</span>
       </div>
 
@@ -710,5 +711,6 @@ function btn(color: string, small = false): React.CSSProperties {
     padding:    small ? "3px 8px" : "4px 12px",
     borderRadius: 6, border: "none", cursor: "pointer",
     background: color + "22", color, fontWeight: 600,
+    display: "inline-flex", alignItems: "center", gap: 5,
   };
 }

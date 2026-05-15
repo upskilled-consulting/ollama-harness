@@ -983,9 +983,9 @@ function MessageViewer({ runId, stage, label }: { runId: string; stage: string; 
                   {msg.truncated && <span style={{ fontSize: 9, color: "var(--warn)" }}>truncated</span>}
                 </div>
                 {msg.content && (
-                  <pre style={{ margin: 0, padding: "8px 10px", fontSize: 11, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)", fontFamily: "var(--font-mono)" }}>
-                    {msg.content}
-                  </pre>
+                  msg.role === "assistant"
+                    ? <div style={{ padding: "8px 10px", fontSize: 11, overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)" }}><MdView content={msg.content} /></div>
+                    : <pre style={{ margin: 0, padding: "8px 10px", fontSize: 11, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)", fontFamily: "var(--font-mono)" }}>{msg.content}</pre>
                 )}
                 {msg.cot && (
                   <details style={{ borderTop: `1px solid ${color}20` }}>
