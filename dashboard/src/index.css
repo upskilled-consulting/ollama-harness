@@ -1,16 +1,16 @@
 :root {
-  --bg:        #0f1117;
-  --surface:   #1a1d27;
-  --surface2:  #20243a;
-  --border:    #2a2d3a;
-  --text:      #e2e8f0;
-  --dim:       #64748b;
+  --bg:        #0d1014;
+  --surface:   #141820;
+  --surface2:  #1a2028;
+  --border:    rgba(100, 200, 180, 0.13);
+  --text:      rgba(220, 235, 230, 0.92);
+  --dim:       rgba(100, 200, 180, 0.38);
   --pass:      #34d399;
   --warn:      #f59e0b;
   --fail:      #f87171;
-  --accent:    #818cf8;
+  --accent:    #64c8b4;
   --blue:      #60a5fa;
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-mono: "Inconsolata", monospace;
 }
 
 /* ── DAG live animations ── */
@@ -38,11 +38,12 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, sans-serif;
+  font-family: "Inconsolata", monospace;
   font-size: 14px;
   line-height: 1.6;
   height: 100vh;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── App shell ── */
@@ -65,21 +66,21 @@ body {
   transition: color 0.15s, background 0.15s;
 }
 .nav-btn:hover  { background: rgba(255,255,255,0.05); color: var(--text); }
-.nav-btn.active { background: rgba(129,140,248,0.15); color: var(--accent); }
+.nav-btn.active { background: rgba(100,200,180,0.1); color: var(--accent); }
 .nav-spacer     { flex: 1; }
 .nav-tooltip {
   position: absolute; left: 50px; top: 50%; transform: translateY(-50%);
-  background: #1e2130; border: 1px solid var(--border);
-  color: var(--text); font-size: 12px; padding: 4px 9px;
-  border-radius: 5px; white-space: nowrap; pointer-events: none;
+  background: var(--surface); border: 1px solid rgba(100, 200, 180, 0.25);
+  color: var(--text); font-size: 12px; padding: 4px 9px; letter-spacing: 1px;
+  border-radius: 3px; white-space: nowrap; pointer-events: none;
   opacity: 0; transition: opacity 0.12s; z-index: 200;
 }
 .nav-btn:hover .nav-tooltip { opacity: 1; }
 
 /* ── View header ── */
 .view-header          { margin-bottom: 24px; }
-.view-header h1       { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
-.view-header p        { color: var(--dim); font-size: 0.875rem; margin-top: 2px; }
+.view-header h1       { font-size: 1.4rem; font-weight: 300; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; }
+.view-header p        { color: var(--dim); font-size: 0.8rem; margin-top: 4px; letter-spacing: 1px; }
 
 /* ── Cards ── */
 .card        { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
