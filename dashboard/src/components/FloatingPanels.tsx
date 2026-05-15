@@ -237,7 +237,7 @@ function VoicePanel({ onClose }: { onClose: () => void }) {
         padding: "10px 14px", borderBottom: "1px solid var(--border)",
         background: "var(--surface)", flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>Voice</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--accent)" }}>Voice</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer" }}>
           <X size={14} />
         </button>
