@@ -1,7 +1,7 @@
-import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon, TerminalSquare, Mic } from "lucide-react";
+import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon, Lock, Settings, TerminalSquare, Mic, Brain } from "lucide-react";
 import { clsx } from "clsx";
 
-export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp" | "github";
+export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp" | "github" | "security" | "system" | "memory";
 
 interface NavItem {
   id:    View;
@@ -18,7 +18,10 @@ const TOP_ITEMS: NavItem[] = [
   { id: "artifacts", icon: <FolderOpen size={18} />,      label: "Artifacts"  },
   { id: "finetune",  icon: <Microscope size={18} />,      label: "Fine-tune"  },
   { id: "mcp",       icon: <Cpu size={18} />,             label: "MCP"        },
+  { id: "memory",    icon: <Brain size={18} />,          label: "Memory"     },
   { id: "github",    icon: <GithubIcon size={18} />,     label: "GitHub"     },
+  { id: "security",  icon: <Lock size={18} />,           label: "Security"   },
+  { id: "system",    icon: <Settings size={18} />,       label: "System"     },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [];

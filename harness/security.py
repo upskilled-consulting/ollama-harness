@@ -17,8 +17,45 @@ All checks return (ok: bool, reason: str). Callers decide whether to block or wa
 """
 
 import ast
+import json
 import os
 import re
+import uuid
+from datetime import UTC, datetime
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+def _log_event(
+    event_type: str,
+    severity: str,
+    layer: str,
+    resource: str,
+    reason: str,
+    run_id: str | None = None,
+    caller: str | None = None,
+) -> None:
+    """Append a security event to data/security_events.jsonl (best-effort, never raises)."""
+    try:
+        from harness.config import SECURITY_LOG
+        record = {
+            "event_id":  uuid.uuid4().hex[:12],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event_type": event_type,
+            "severity":   severity,
+            "layer":      layer,
+            "resource":   resource[:400],
+            "reason":     reason,
+            "run_id":     run_id,
+            "caller":     caller,
+        }
+        SECURITY_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(SECURITY_LOG, "a", encoding="utf-8") as _f:
+            _f.write(json.dumps(record) + "\n")
+    except Exception as _e:
+        print(f"  [security] WARNING: _log_event failed ({event_type}): {_e}")
+
 
 # ---------------------------------------------------------------------------
 # 1. Python code scanner
@@ -79,7 +116,7 @@ BLOCKED_ATTR_PATTERNS = [
 TRUSTED_WORKSPACE_MODULES = {"browser_helpers", "scratch_helpers"}
 
 
-def check_python_code(code: str) -> tuple[bool, str]:
+def check_python_code(code: str, run_id: str | None = None, caller: str | None = None) -> tuple[bool, str]:
     """
     AST-scan Python code for dangerous imports and calls.
     Returns (True, "ok") if safe, (False, reason) if blocked.
@@ -87,13 +124,17 @@ def check_python_code(code: str) -> tuple[bool, str]:
     # First pass: raw pattern matching (catches obfuscation attempts like getattr tricks)
     for pattern in BLOCKED_ATTR_PATTERNS:
         if pattern.search(code):
-            return False, f"blocked pattern: {pattern.pattern!r}"
+            reason = f"blocked pattern: {pattern.pattern!r}"
+            _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+            return False, reason
 
     # Second pass: AST analysis
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        return False, f"syntax error: {e}"
+        reason = f"syntax error: {e}"
+        _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+        return False, reason
 
     for node in ast.walk(tree):
         # import foo / import foo as bar
@@ -101,18 +142,24 @@ def check_python_code(code: str) -> tuple[bool, str]:
             for alias in node.names:
                 root = alias.name.split(".")[0]
                 if root in BLOCKED_IMPORTS:
-                    return False, f"blocked import: {alias.name!r}"
+                    reason = f"blocked import: {alias.name!r}"
+                    _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+                    return False, reason
 
         # from foo import bar
         if isinstance(node, ast.ImportFrom):
             root = (node.module or "").split(".")[0]
             if root in BLOCKED_IMPORTS:
-                return False, f"blocked import: from {node.module!r}"
+                reason = f"blocked import: from {node.module!r}"
+                _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+                return False, reason
             # Block untrusted agent-workspace module imports — only the explicitly
             # trusted modules (browser_helpers, scratch_helpers) may be imported;
             # arbitrary modules added to agent-workspace/ don't get automatic trust.
             if root not in TRUSTED_WORKSPACE_MODULES and root.endswith("_helpers"):
-                return False, f"untrusted workspace module: {node.module!r}"
+                reason = f"untrusted workspace module: {node.module!r}"
+                _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+                return False, reason
 
         # direct calls: exec(...), eval(...), open(...), etc.
         if isinstance(node, ast.Call):
@@ -123,7 +170,9 @@ def check_python_code(code: str) -> tuple[bool, str]:
             elif isinstance(func, ast.Attribute):
                 name = func.attr
             if name in BLOCKED_CALLS:
-                return False, f"blocked call: {name!r}"
+                reason = f"blocked call: {name!r}"
+                _log_event("python_blocked", "block", "python_scanner", code, reason, run_id=run_id, caller=caller)
+                return False, reason
 
     return True, "ok"
 
@@ -150,7 +199,7 @@ BLOCKED_FILE_PATTERNS = [
 ]
 
 
-def check_file_path(path: str) -> tuple[bool, str]:
+def check_file_path(path: str, run_id: str | None = None, caller: str | None = None) -> tuple[bool, str]:
     """
     Validate a file path before read_file reads it.
     Returns (True, "ok") if permitted, (False, reason) if blocked.
@@ -163,12 +212,16 @@ def check_file_path(path: str) -> tuple[bool, str]:
     # Check blocklisted filename patterns
     for pattern in BLOCKED_FILE_PATTERNS:
         if pattern.search(filename) or pattern.search(expanded):
-            return False, f"blocked sensitive file: {filename!r}"
+            reason = f"blocked sensitive file: {filename!r}"
+            _log_event("file_blocked", "block", "file_sandbox", path, reason, run_id=run_id, caller=caller)
+            return False, reason
 
     # Check allowed directory prefixes
     allowed_expanded = [os.path.realpath(os.path.expanduser(d)) for d in ALLOWED_READ_DIRS]
     if not any(expanded.startswith(d) for d in allowed_expanded):
-        return False, f"path outside allowed dirs: {expanded!r}"
+        reason = f"path outside allowed dirs: {expanded!r}"
+        _log_event("file_blocked", "block", "file_sandbox", path, reason, run_id=run_id, caller=caller)
+        return False, reason
 
     return True, "ok"
 
@@ -184,7 +237,7 @@ ALLOWED_WRITE_DIRS = [
 ]
 
 
-def check_output_path(path: str) -> tuple[bool, str]:
+def check_output_path(path: str, run_id: str | None = None, caller: str | None = None) -> tuple[bool, str]:
     """
     Validate an output file path before writing.
     Returns (True, "ok") if permitted, (False, reason) if blocked.
@@ -195,12 +248,16 @@ def check_output_path(path: str) -> tuple[bool, str]:
     # Block writing to sensitive file patterns
     for pattern in BLOCKED_FILE_PATTERNS:
         if pattern.search(filename) or pattern.search(expanded):
-            return False, f"blocked sensitive file: {filename!r}"
+            reason = f"blocked sensitive file: {filename!r}"
+            _log_event("output_blocked", "block", "output_sandbox", path, reason, run_id=run_id, caller=caller)
+            return False, reason
 
     # Check allowed directory prefixes
     allowed_expanded = [os.path.realpath(os.path.expanduser(d)) for d in ALLOWED_WRITE_DIRS]
     if not any(expanded.startswith(d) for d in allowed_expanded):
-        return False, f"output path outside allowed dirs: {expanded!r}"
+        reason = f"output path outside allowed dirs: {expanded!r}"
+        _log_event("output_blocked", "block", "output_sandbox", path, reason, run_id=run_id, caller=caller)
+        return False, reason
 
     return True, "ok"
 
@@ -224,17 +281,33 @@ INJECTION_PATTERNS = [
 ]
 
 
-def scan_for_injection(text: str, source: str = "unknown") -> tuple[bool, list[str]]:
+def scan_for_injection(
+    text: str,
+    source: str = "unknown",
+    run_id: str | None = None,
+    caller: str | None = None,
+    _log: bool = True,
+) -> tuple[bool, list[str]]:
     """
     Scan external text (search results, file contents) for injection patterns.
     Returns (clean: bool, matches: list[str]).
     clean=False means suspicious content was found — caller should log and consider stripping.
+    Pass _log=False when called in a tight per-line loop (e.g. strip_injection_candidates)
+    to avoid duplicate events for content already logged at the block level.
     """
     found = []
     for pattern in INJECTION_PATTERNS:
         match = pattern.search(text)
         if match:
             found.append(f"[{source}] {pattern.pattern!r} matched: {match.group(0)!r}")
+    if found and _log:
+        _log_event(
+            "injection_detected", "warn", "injection_scanner",
+            f"[{source}] {text[:300]}",
+            "; ".join(found[:3]),
+            run_id=run_id, caller=caller,
+        )
+        print(f"  [security] event logged: injection_detected ({len(found)} pattern(s), source={source!r})")
     return len(found) == 0, found
 
 
@@ -247,7 +320,7 @@ def strip_injection_candidates(text: str) -> tuple[str, int]:
     clean_lines = []
     removed = 0
     for line in lines:
-        clean, _ = scan_for_injection(line)
+        clean, _ = scan_for_injection(line, _log=False)
         if clean:
             clean_lines.append(line)
         else:
@@ -275,7 +348,7 @@ _CDP_BLOCKED_HOST_PATTERNS = [
 ]
 
 
-def check_cdp_navigate(url: str) -> tuple[bool, str]:
+def check_cdp_navigate(url: str, run_id: str | None = None, caller: str | None = None) -> tuple[bool, str]:
     """
     Block CDP navigation to local, internal, or dangerous URL schemes.
     Returns (True, "ok") if the URL is safe to navigate to.
@@ -284,16 +357,22 @@ def check_cdp_navigate(url: str) -> tuple[bool, str]:
     try:
         parsed = urllib.parse.urlparse(url)
     except Exception:
-        return False, f"unparseable URL: {url!r}"
+        reason = f"unparseable URL: {url!r}"
+        _log_event("cdp_blocked", "block", "cdp_guard", url, reason, run_id=run_id, caller=caller)
+        return False, reason
 
     scheme = (parsed.scheme or "").lower()
     if scheme in _CDP_BLOCKED_SCHEMES:
-        return False, f"blocked URL scheme: {scheme!r}"
+        reason = f"blocked URL scheme: {scheme!r}"
+        _log_event("cdp_blocked", "block", "cdp_guard", url, reason, run_id=run_id, caller=caller)
+        return False, reason
 
     host = (parsed.hostname or "").lower()
     for pattern in _CDP_BLOCKED_HOST_PATTERNS:
         if pattern.search(host):
-            return False, f"blocked internal host: {host!r}"
+            reason = f"blocked internal host: {host!r}"
+            _log_event("cdp_blocked", "block", "cdp_guard", url, reason, run_id=run_id, caller=caller)
+            return False, reason
 
     return True, "ok"
 
@@ -302,7 +381,7 @@ def check_cdp_navigate(url: str) -> tuple[bool, str]:
 # 5. Scratch path guard
 # ---------------------------------------------------------------------------
 
-def check_scratch_path(path, scratch_dir) -> tuple[bool, str]:
+def check_scratch_path(path, scratch_dir, run_id: str | None = None, caller: str | None = None) -> tuple[bool, str]:
     """
     Enforce that a scratch file path resolves within scratch_dir.
     Prevents path traversal (e.g. name='../../.env').
@@ -310,10 +389,14 @@ def check_scratch_path(path, scratch_dir) -> tuple[bool, str]:
     resolved   = os.path.realpath(str(path))
     scratch_real = os.path.realpath(str(scratch_dir))
     if not resolved.startswith(scratch_real + os.sep) and resolved != scratch_real:
-        return False, f"scratch path escapes sandbox: {resolved!r}"
+        reason = f"scratch path escapes sandbox: {resolved!r}"
+        _log_event("scratch_blocked", "block", "scratch_guard", str(path), reason, run_id=run_id, caller=caller)
+        return False, reason
     # Also apply sensitive-file blocklist
     filename = os.path.basename(resolved)
     for pattern in BLOCKED_FILE_PATTERNS:
         if pattern.search(filename):
-            return False, f"blocked sensitive filename: {filename!r}"
+            reason = f"blocked sensitive filename: {filename!r}"
+            _log_event("scratch_blocked", "block", "scratch_guard", str(path), reason, run_id=run_id, caller=caller)
+            return False, reason
     return True, "ok"

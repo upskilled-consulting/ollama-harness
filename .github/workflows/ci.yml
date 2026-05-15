@@ -38,13 +38,42 @@ jobs:
         run: uv run mypy harness/ --ignore-missing-imports --no-error-summary
         continue-on-error: true   # advisory only — tighten gradually
 
-      - name: Test
+      - name: Security scan (pip-audit)
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: .
+
+      - name: Test with coverage
         run: |
           uv run pytest tests/ \
             -v \
             --tb=short \
             -m "not requires_ollama" \
-            --ignore=tests/tests/
+            --cov=harness \
+            --cov-report=term-missing \
+            --cov-fail-under=20
         env:
-          # Point harness at a temp data dir so no writes to repo root
           DATA_DIR: /tmp/harness-ci-data
+
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check + build
+        run: npm run build

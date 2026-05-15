@@ -942,7 +942,7 @@ const ROLE_COLORS: Record<string, string> = {
   tool:      "#fb923c",
 };
 
-function MessageViewer({ runId, stage }: { runId: string; stage: string }) {
+function MessageViewer({ runId, stage, label }: { runId: string; stage: string; label?: string }) {
   const [open, setOpen] = useState(false);
 
   const { data: messages, isLoading, error } = useQuery({
@@ -953,13 +953,15 @@ function MessageViewer({ runId, stage }: { runId: string; stage: string }) {
     staleTime: 60_000,
   });
 
+  const btnLabel = label ?? "view input / output";
+
   return (
     <div style={{ marginTop: 10 }}>
       <button
         onClick={() => setOpen((o) => !o)}
         style={{ background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--dim)", cursor: "pointer", fontSize: 10, padding: "3px 10px", textTransform: "uppercase", letterSpacing: "0.05em" }}
       >
-        {open ? "▲ hide messages" : "▼ view input / output"}
+        {open ? "▲ hide" : `▼ ${btnLabel}`}
       </button>
 
       {open && (
@@ -1016,7 +1018,7 @@ function inferContextLimit(model: string | undefined): number {
   return 32768;
 }
 
-const STAGE_CFG: Record<string, { color: string; label: string }> = {
+const STAGE_CFG: Record<string, { color: string; label: string; context?: boolean }> = {
   search_query:        { color: "#fb923c", label: "Search" },
   synth:               { color: "#22d3ee", label: "Synthesis" },
   synth_count:         { color: "#0e8899", label: "Synth count" },
@@ -1027,6 +1029,13 @@ const STAGE_CFG: Record<string, { color: string; label: string }> = {
   memory:              { color: "#a78bfa", label: "Memory" },
   compress_knowledge:  { color: "#3fb950", label: "Compress" },
   other:               { color: "#6b7280", label: "Other" },
+  // context injection stages (no LLM call — estimated chars/4 tokens)
+  system_prompt:       { color: "#f472b6", label: "Sys prompt",  context: true },
+  research_context:    { color: "#34d399", label: "Research ctx", context: true },
+  memory_context:      { color: "#c084fc", label: "Memory ctx",  context: true },
+  skill_context:       { color: "#fbbf24", label: "Skill ctx",   context: true },
+  vision_context:      { color: "#60a5fa", label: "Vision ctx",  context: true },
+  file_context:        { color: "#a3e635", label: "File ctx",    context: true },
 };
 
 function ContextTreemap({ run }: { run: RunRecord }) {
@@ -1080,19 +1089,20 @@ function ContextTreemap({ run }: { run: RunRecord }) {
           const pct        = ((st.input ?? 0) / limit) * 100;
           const cfg        = STAGE_CFG[stage] ?? { color: "#8b949e", label: stage };
           const isSelected = selected === stage;
+          const isCtx      = st.context === true;
           return (
             <div
               key={stage}
               onClick={(e) => { e.stopPropagation(); setSelected(isSelected ? null : stage); }}
               style={{
                 width: `${pct}%`, height: "100%", flexShrink: 0,
-                background: cfg.color,
+                background: isCtx ? `${cfg.color}40` : cfg.color,
                 opacity: selected && !isSelected ? 0.35 : 0.82,
                 outline: isSelected ? "2px solid rgba(255,255,255,0.8)" : "none",
                 outlineOffset: -2,
                 display: "flex", flexDirection: "column", justifyContent: "flex-end",
                 padding: "5px 6px", overflow: "hidden", cursor: "pointer",
-                borderRight: "1px solid rgba(0,0,0,0.22)",
+                borderRight: isCtx ? `1px dashed ${cfg.color}80` : "1px solid rgba(0,0,0,0.22)",
                 transition: "opacity 0.15s",
                 boxSizing: "border-box",
               }}
@@ -1100,12 +1110,12 @@ function ContextTreemap({ run }: { run: RunRecord }) {
               onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = selected && !isSelected ? "0.35" : "0.82"; }}
             >
               {pct > 4 && (
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.95)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 9, color: isCtx ? cfg.color : "rgba(255,255,255,0.95)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {cfg.label}
                 </div>
               )}
               {pct > 7 && (
-                <div style={{ fontSize: 8, color: "rgba(255,255,255,0.6)", fontFamily: "var(--font-mono)", marginTop: 1 }}>
+                <div style={{ fontSize: 8, color: isCtx ? `${cfg.color}bb` : "rgba(255,255,255,0.6)", fontFamily: "var(--font-mono)", marginTop: 1 }}>
                   {(st.input ?? 0).toLocaleString()}
                 </div>
               )}
@@ -1120,31 +1130,45 @@ function ContextTreemap({ run }: { run: RunRecord }) {
       </div>
 
       {/* selected stage detail */}
-      {selected && selSt && selCfg && (
-        <div style={{ marginTop: 12, padding: "11px 14px", background: "var(--surface)", border: `1px solid ${selCfg.color}35`, borderLeft: `3px solid ${selCfg.color}`, borderRadius: 7 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: selCfg.color, marginBottom: 9 }}>
-            {selCfg.label}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px 20px" }}>
-            {([
-              ["Input tokens",   (selSt.input ?? 0).toLocaleString()],
-              ["Output tokens",  (selSt.output ?? 0).toLocaleString()],
-              ["LLM calls",      String(selSt.calls ?? 1)],
-              ["% of window",    `${((selSt.input ?? 0) / limit * 100).toFixed(2)}%`],
-              ["Total time",     selSt.total_ms   != null ? `${(selSt.total_ms   / 1000).toFixed(2)}s` : null],
-              ["Prompt time",    selSt.prompt_ms  != null ? `${(selSt.prompt_ms  / 1000).toFixed(2)}s` : null],
-              ["Eval time",      selSt.eval_ms    != null ? `${(selSt.eval_ms    / 1000).toFixed(2)}s` : null],
-              ["Thinking chars", selSt.thinking_chars ? selSt.thinking_chars.toLocaleString() : null],
-            ] as [string, string | null][]).filter(([, v]) => v !== null).map(([label, value]) => (
-              <div key={label}>
-                <div style={{ fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
-                <div style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</div>
+      {selected && selSt && selCfg && (() => {
+        const isCtxStage = selSt.context === true;
+        const detailRows: [string, string | null][] = isCtxStage ? [
+          ["Est. tokens",  (selSt.input ?? 0).toLocaleString()],
+          ["% of window",  `${((selSt.input ?? 0) / limit * 100).toFixed(2)}%`],
+        ] : [
+          ["Input tokens",   (selSt.input ?? 0).toLocaleString()],
+          ["Output tokens",  (selSt.output ?? 0).toLocaleString()],
+          ["LLM calls",      String(selSt.calls ?? 1)],
+          ["% of window",    `${((selSt.input ?? 0) / limit * 100).toFixed(2)}%`],
+          ["Total time",     selSt.total_ms   != null ? `${(selSt.total_ms   / 1000).toFixed(2)}s` : null],
+          ["Prompt time",    selSt.prompt_ms  != null ? `${(selSt.prompt_ms  / 1000).toFixed(2)}s` : null],
+          ["Eval time",      selSt.eval_ms    != null ? `${(selSt.eval_ms    / 1000).toFixed(2)}s` : null],
+          ["Thinking chars", selSt.thinking_chars ? selSt.thinking_chars.toLocaleString() : null],
+        ];
+        return (
+          <div style={{ marginTop: 12, padding: "11px 14px", background: "var(--surface)", border: `1px solid ${selCfg.color}35`, borderLeft: `3px solid ${selCfg.color}`, borderRadius: 7 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: selCfg.color }}>
+                {selCfg.label}
               </div>
-            ))}
+              {isCtxStage && (
+                <span style={{ fontSize: 9, color: selCfg.color, border: `1px dashed ${selCfg.color}60`, borderRadius: 3, padding: "1px 5px", letterSpacing: "0.06em" }}>
+                  context injection · estimated tokens
+                </span>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px 20px" }}>
+              {detailRows.filter(([, v]) => v !== null).map(([label, value]) => (
+                <div key={label}>
+                  <div style={{ fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+            <MessageViewer runId={run.run_id} stage={selected} label={isCtxStage ? "view content" : undefined} />
           </div>
-          <MessageViewer runId={run.run_id} stage={selected} />
-        </div>
-      )}
+        );
+      })()}
 
       {/* legend */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 14px", marginTop: 13 }}>
@@ -1154,8 +1178,8 @@ function ContextTreemap({ run }: { run: RunRecord }) {
           return (
             <div key={stage} onClick={() => setSelected(selected === stage ? null : stage)}
               style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, cursor: "pointer", opacity: selected && selected !== stage ? 0.45 : 1, transition: "opacity 0.15s" }}>
-              <div style={{ width: 8, height: 8, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
-              <span style={{ color: "var(--dim)" }}>{cfg.label}</span>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: st.context ? `${cfg.color}40` : cfg.color, border: st.context ? `1px dashed ${cfg.color}` : "none", flexShrink: 0 }} />
+              <span style={{ color: "var(--dim)" }}>{cfg.label}{st.context ? " ~" : ""}</span>
               <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>{pct.toFixed(1)}%</span>
             </div>
           );

@@ -44,6 +44,7 @@ export interface StageTokens {
   eval_ms?:        number;
   prompt_ms?:      number;
   thinking_chars?: number;
+  context?:        boolean;
 }
 
 export interface RunRecord {
@@ -215,11 +216,63 @@ export interface AnalyticsData {
   task_types:         { type: string; count: number }[];
 }
 
+export interface SecurityEvent {
+  event_id:   string;
+  timestamp:  string;
+  event_type: string;
+  severity:   "block" | "warn" | "info";
+  layer:      string;
+  resource:   string;
+  reason:     string;
+  run_id?:    string | null;
+  caller?:    string | null;
+}
+
+export interface SecuritySummary {
+  total:       number;
+  by_severity: Record<string, number>;
+  by_type:     Record<string, number>;
+  by_layer:    Record<string, number>;
+}
+
 export interface ArtifactContent {
   content:   string;
   truncated: boolean;
   bytes:     number;
   path:      string;
+}
+
+export interface SystemFileMeta {
+  key:      string;
+  label:    string;
+  group:    string;
+  editable: boolean;
+  exists:   boolean;
+  size:     number;
+}
+
+export interface SystemFileContent {
+  key:       string;
+  label:     string;
+  content:   string;
+  truncated: boolean;
+  editable:  boolean;
+  exists:    boolean;
+  size?:     number;
+}
+
+export interface SystemConfig {
+  env:      Record<string, string>;
+  settings: Record<string, unknown>;
+  synth:    { default: string; count: string; prose: string };
+}
+
+export interface SkillEntry {
+  name:        string;
+  description: string;
+  hook:        string;
+  has_auto:    boolean;
+  has_prompt:  boolean;
 }
 
 export interface McpToolParam {
@@ -320,4 +373,58 @@ export interface McpTool {
   name:        string;
   description: string;
   parameters:  McpToolParam[];
+}
+
+// ---------------------------------------------------------------------------
+// Memory panel
+// ---------------------------------------------------------------------------
+
+export interface MemoryRow {
+  id:          number;
+  run_id?:     string | null;
+  timestamp:   string;
+  task:        string;
+  task_type?:  string | null;
+  title:       string;
+  quality:     number;
+  tags:        string[];
+  facts_count: number;
+  final_score?: number | null;
+  final?:      string | null;
+}
+
+export interface MemoryDetail extends MemoryRow {
+  narrative:   string;
+  facts:       string[];
+  output_path?: string | null;
+}
+
+export interface MemoryList {
+  memories: MemoryRow[];
+  total:    number;
+  page:     number;
+  per_page: number;
+  pages:    number;
+}
+
+export interface MemoryGraphNode {
+  id:        number;
+  x:         number;
+  y:         number;
+  label:     string;
+  cluster:   number;
+  quality:   number;
+  task_type: string;
+}
+
+export interface MemoryGraphCluster {
+  id:    number;
+  label: string;
+  color: string;
+}
+
+export interface MemoryGraph {
+  nodes:    MemoryGraphNode[];
+  clusters: MemoryGraphCluster[];
+  error?:   string | null;
 }

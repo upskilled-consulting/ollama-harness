@@ -408,6 +408,20 @@ class RunTrace:
         self.log_message(role="user",      content=input_text,  stage=stage)
         self.log_message(role="assistant", content=output_text, cot=thinking or None, stage=stage)
 
+    def log_context_block(self, stage: str, content: str) -> None:
+        """Log a non-LLM context injection (system prompt, memory, research, etc.) to messages.jsonl.
+        Records an estimated token count (chars // 4) in tokens_by_stage so the treemap can show it."""
+        if not content or not content.strip():
+            return
+        self.log_message(role="context", content=content, stage=stage)
+        chars = len(content)
+        s = self.data["tokens_by_stage"].setdefault(
+            stage, {"input": 0, "output": 0, "calls": 0, "total_ms": 0,
+                    "eval_ms": 0, "prompt_ms": 0, "thinking_chars": 0, "context": True}
+        )
+        s["input"]   += max(1, chars // 4)
+        s["context"]  = True
+
     def log_policy(self, orchestration_style: str, allow_parallelism: bool) -> None:
         """Record the orchestration policy chosen for this run."""
         self.data["orchestration_style"] = orchestration_style

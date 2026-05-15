@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 WORD_RE = re.compile(r"\b\w+\b")
@@ -122,3 +123,33 @@ def write_jsonl(df: pd.DataFrame, path: str | Path) -> None:
     with Path(path).open("w", encoding="utf-8") as f:
         for _, row in df.iterrows():
             f.write(json.dumps(row.to_dict(), ensure_ascii=False) + "\n")
+
+
+def preprocess_clip(audio_np: np.ndarray, sr: int = 16000) -> np.ndarray:
+    """Denoise and normalise a mono float32 audio clip.
+
+    Steps:
+      1. High-pass at 80 Hz — removes low-frequency rumble / HVAC hum
+      2. Spectral noise reduction (noisereduce, non-stationary mode)
+      3. Peak normalise to -1 dBFS
+
+    Requires: noisereduce, scipy  (pip install noisereduce scipy)
+    """
+    from scipy.signal import butter, sosfilt
+    import noisereduce as nr
+
+    audio_np = audio_np.astype(np.float32)
+
+    # 1. High-pass filter — 4th-order Butterworth at 80 Hz
+    sos = butter(4, 80.0, btype="high", fs=sr, output="sos")
+    audio_np = sosfilt(sos, audio_np).astype(np.float32)
+
+    # 2. Spectral noise reduction
+    audio_np = nr.reduce_noise(y=audio_np, sr=sr, stationary=False).astype(np.float32)
+
+    # 3. Peak normalise to -1 dBFS (0.891 linear ≈ -1 dB)
+    peak = np.abs(audio_np).max()
+    if peak > 1e-6:
+        audio_np = audio_np / peak * 0.891
+
+    return audio_np

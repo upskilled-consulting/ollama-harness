@@ -326,6 +326,12 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
     print(f"  [evaluate] task_type={task_type}  scoring output...")
 
     eval_content = summarize_for_eval(content, task, _trace)
+    # Hard cap: keep eval prompt well within VRAM budget regardless of summarizer output.
+    # The eval rubric alone is ~900 tokens; 4000 chars ≈ 1000 tokens leaves ~2000 tokens
+    # of headroom for both input + JSON output without competing with the producer weights.
+    _EVAL_CONTENT_CAP = 4000
+    if len(eval_content) > _EVAL_CONTENT_CAP:
+        eval_content = eval_content[:_EVAL_CONTENT_CAP] + "\n…[truncated for eval]…"
     prompt = EVAL_PROMPT.format(
         task=task,
         content=eval_content,
@@ -333,13 +339,21 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
     )
 
     result = None
+    raw = ""
     for _eval_attempt in range(2):
-        response = ollama.chat(
-            model=EVALUATOR_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.0, "num_predict": 2048},
-            format="json",
-        )
+        try:
+            response = ollama.chat(
+                model=EVALUATOR_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.0, "num_predict": 512, "num_ctx": 4096},
+                format="json",
+            )
+        except Exception as _conn_err:
+            print(f"  [warn] evaluator connection error (attempt {_eval_attempt+1}): {_conn_err!s:.120}")
+            if _eval_attempt == 0:
+                time.sleep(8)
+            continue
+
         if _trace is not None:
             _trace.log_usage(response, stage="wiggum_eval")
 
@@ -353,6 +367,9 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
         raw = re.sub(r"\s*```$", "", raw)
         # Strip <think>...</think> blocks some models prepend
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+        if _trace is not None:
+            _trace.log_llm_turn("wiggum_eval", prompt, raw, thinking=thinking)
 
         try:
             result = json.loads(raw)
@@ -369,7 +386,8 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
                 time.sleep(3)
 
     if result is None:
-        return {"passed": False, "score": 0.0, "issues": ["evaluator parse error"], "feedback": raw}
+        return {"passed": False, "score": 0.0, "issues": ["evaluator parse error"],
+                "feedback": raw, "_eval_failed": True}
 
     # Recompute composite from dimension scores in Python — don't trust model arithmetic
     dims = {
@@ -460,6 +478,7 @@ def revise(task: str, content: str, eval_result: dict, _trace=None) -> str:
     )
     if _trace is not None:
         _trace.log_usage(response, stage="wiggum_revise")
+        _trace.log_llm_turn("wiggum_revise", prompt, response["message"]["content"].strip())
 
     return response["message"]["content"].strip()
 
@@ -507,6 +526,19 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
     best_score = 0.0
     best_content = ""
     best_round = 0
+
+    # Attempt to unload the producer from VRAM before evaluation.
+    # Works for ollama backend (keep_alive=0 is forwarded); silently no-ops for
+    # vLLM and llamacpp (keep_alive is dropped in _chat_vllm).  The primary OOM
+    # defense for non-ollama backends is the hard eval-content cap in evaluate().
+    try:
+        ollama.chat(model=producer_model,
+                    messages=[{"role": "user", "content": ""}],
+                    options={"num_predict": 1},
+                    keep_alive=0)
+        print("  [wiggum] producer unload requested (effective for ollama backend)")
+    except Exception:
+        pass
 
     for round_num in range(1, max_rounds + 1):
         print(f"--- round {round_num} ---")
@@ -604,7 +636,25 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
             _attach_token_stats(trace, _local_trace)
             return trace
 
-        # 3. Revise
+        # Skip revision when the evaluator itself failed (connection/OOM) rather than giving
+        # a genuine low score — revising based on "evaluator parse error" produces noise, and
+        # reloading the producer while the evaluator is still in VRAM worsens the OOM situation.
+        if result.get("_eval_failed"):
+            print("  [wiggum] skipping revision — evaluator connection failed, will retry eval")
+            time.sleep(5)
+            continue
+
+        # 3. Revise — unload evaluator first to free VRAM before reloading the producer.
+        # keep_alive=0 works for ollama and llamacpp backends; silently dropped for vLLM.
+        try:
+            ollama.chat(model=evaluator_model,
+                        messages=[{"role": "user", "content": ""}],
+                        options={"num_predict": 1},
+                        keep_alive=0)
+            print("  [wiggum] evaluator unloaded before revision")
+        except Exception:
+            pass
+
         with (parent_trace.span("wiggum_revise", round=round_num) if parent_trace else _nullspan()):
             revised_content = revise(task, content, result, _trace=_local_trace)
 
@@ -803,6 +853,7 @@ def loop_annotate(
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        _local_trace.log_llm_turn("wiggum_eval", eval_prompt, raw)
 
         try:
             result = json.loads(raw)
@@ -895,6 +946,7 @@ def loop_annotate(
             options={"temperature": 0.1, "think": False, "num_predict": 8192, "num_ctx": 16384},
         )
         _local_trace.log_usage(rev_response, stage="wiggum_revise")
+        _local_trace.log_llm_turn("wiggum_revise", revise_prompt, rev_response["message"]["content"].strip())
         revised = rev_response["message"]["content"].strip()
 
         if not revised.strip():

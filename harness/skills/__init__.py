@@ -21,6 +21,7 @@ Skills are loaded lazily — importing skills.py does not import kg_gen, panel, 
 
 import os
 import re
+from datetime import UTC, datetime as _datetime
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -76,6 +77,25 @@ REGISTRY: dict[str, dict] = {
             "If a claim cannot be attributed to the provided sources, flag it explicitly as inferred."
         ),
         "auto": None,   # explicit only — too broad to auto-trigger
+    },
+
+    "date": {
+        "description": "Inject today's date into the synthesis prompt so the model knows the current date",
+        "hook":        "pre_synthesis",
+        "prompt":      lambda: f"Today's date is {_datetime.now(UTC).strftime('%Y-%m-%d')} — use this when referencing the current date or year in your output.",
+        "auto": lambda task, plan: bool(re.search(
+            r"\bto[\s-]date\b|\bso[\s-]far\b|\bthis[\s-]year\b|\bcurrent(?:ly)?\b"
+            r"|\blatest\b|\brecent(?:ly)?\b|\btoday\b|\bright[\s-]now\b|\bas[\s-]of\b"
+            r"|\b(?:in\s+)?20\d\d\b",
+            task, re.IGNORECASE
+        )),
+    },
+
+    "time": {
+        "description": "Inject the current UTC timestamp into the synthesis prompt",
+        "hook":        "pre_synthesis",
+        "prompt":      lambda: f"Current UTC timestamp: {_datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')} — use this when referencing the current time in your output.",
+        "auto":        None,
     },
 
     "annotated-abstract": {
@@ -571,12 +591,14 @@ def get_prompt_injections(active_skills: list[str], hook: str) -> str:
     """
     Concatenate prompt injections for all active skills at the given hook.
     Returns an empty string if none match.
+    Prompt values may be a static string or a zero-argument callable returning a string.
     """
     parts = []
     for name in active_skills:
         skill = REGISTRY.get(name, {})
         if skill.get("hook") == hook and skill.get("prompt"):
-            parts.append(skill["prompt"])
+            p = skill["prompt"]
+            parts.append(p() if callable(p) else p)
     return "\n\n".join(parts)
 
 

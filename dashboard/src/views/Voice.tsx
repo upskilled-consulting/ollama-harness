@@ -18,11 +18,14 @@ interface VoiceResult {
   note_text?:          string;
   timestamp?:          string;
   wav_path?:           string;
+  transcript_path?:    string;
 }
 
 const SPACE_HOLD_MS = 900;
 
 export function Voice() {
+  const [mode,           setMode]           = useState<"note" | "task">("note");
+  const [autoTranscribe, setAutoTranscribe] = useState(true);
   const [status,   setStatus]   = useState<Status>("idle");
   const [result,   setResult]   = useState<VoiceResult | null>(null);
   const [task,     setTask]     = useState("");
@@ -112,6 +115,8 @@ export function Voice() {
       const blob = new Blob(chunksRef.current, { type: "audio/webm" });
       const form = new FormData();
       form.append("audio", blob, "voice.webm");
+      form.append("mode", mode);
+      form.append("auto_transcribe", autoTranscribe ? "true" : "false");
 
       try {
         const resp = await fetch("/api/voice", { method: "POST", body: form });
@@ -132,7 +137,7 @@ export function Voice() {
 
     rec.start();
     setStatus("recording");
-  }, [startWaveform]);
+  }, [startWaveform, mode, autoTranscribe]);
 
   const stopRecording = useCallback(() => {
     if (statusRef.current === "recording") recRef.current?.stop();
@@ -215,7 +220,7 @@ export function Voice() {
   // Status label
   // ---------------------------------------------------------------------------
   const statusLabel = {
-    idle:         "Click the mic or hold Space to start recording.",
+    idle:         `Click the mic or hold Space to record a ${mode}.`,
     recording:    "Recording… click the mic or release Space to stop.",
     transcribing: "Transcribing…",
     done:         null,
@@ -228,10 +233,35 @@ export function Voice() {
     <div>
       <div className="view-header">
         <h1>Voice</h1>
-        <p>Speak a task or note — hold Space or click mic</p>
+        <p>{mode === "note" ? "Recording as note — hold Space or click mic" : "Recording as task — hold Space or click mic"}</p>
       </div>
 
       <div className="voice-wrap">
+        {/* Mode toggle */}
+        <div className="voice-mode-toggle" style={{ display: "flex", gap: 6, marginBottom: mode === "note" ? 10 : 20 }}>
+          <button
+            className={clsx("btn", mode === "note" ? "btn-primary" : "btn-ghost")}
+            onClick={() => setMode("note")}
+            disabled={status !== "idle"}
+          >Note</button>
+          <button
+            className={clsx("btn", mode === "task" ? "btn-primary" : "btn-ghost")}
+            onClick={() => setMode("task")}
+            disabled={status !== "idle"}
+          >Task</button>
+        </div>
+        {mode === "note" && (
+          <label className="toggle-label" style={{ marginBottom: 20 }}>
+            <input
+              type="checkbox"
+              checked={autoTranscribe}
+              onChange={(e) => setAutoTranscribe(e.target.checked)}
+              disabled={status !== "idle"}
+            />
+            Auto-transcribe to corpus
+          </label>
+        )}
+
         {/* Waveform canvas */}
         <canvas
           ref={canvasRef}

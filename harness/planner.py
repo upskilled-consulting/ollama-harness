@@ -18,6 +18,7 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from harness import inference as ollama
+from harness.utils import current_date_context
 
 try:
     import dirtyjson as _dirtyjson
@@ -102,6 +103,7 @@ Rules:
 PLAN_PROMPT = """\
 You are a task planner for an AI research agent.
 
+{date_context}
 Task: {task}
 {memory_block}{knowledge_block}
 Produce a structured execution plan. Respond with ONLY valid JSON — no explanation, no markdown fences:
@@ -169,7 +171,7 @@ class Plan:
 # Planning
 # ---------------------------------------------------------------------------
 
-def prior_knowledge_pass(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -> tuple[list[str], list[str]]:
+def prior_knowledge_pass(task: str, memory_context: str = "", model: str = PLANNER_MODEL, trace=None) -> tuple[list[str], list[str]]:
     """
     Ask the planner model what it already knows and what gaps need web search.
 
@@ -186,6 +188,8 @@ def prior_knowledge_pass(task: str, memory_context: str = "", model: str = PLANN
             options={"temperature": 0.1, "think": False},
         )
         text = response["message"]["content"].strip()
+        if trace is not None:
+            trace.log_llm_turn("planner", prompt, text)
         text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
         text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
         json_match = re.search(r'\{.*\}', text.strip(), re.DOTALL)
@@ -208,7 +212,7 @@ def prior_knowledge_pass(task: str, memory_context: str = "", model: str = PLANN
         return [], []
 
 
-def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -> tuple["Plan", object]:
+def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL, trace=None) -> tuple["Plan", object]:
     """
     Analyse the task and memory context to produce a Plan.
 
@@ -224,7 +228,7 @@ def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -
     known_facts: list[str] = []
     gaps: list[str] = []
     if os.environ.get("HARNESS_SKIP_PRIOR_KNOWLEDGE") != "1":
-        known_facts, gaps = prior_knowledge_pass(task, memory_context, model=model)
+        known_facts, gaps = prior_knowledge_pass(task, memory_context, model=model, trace=trace)
         if known_facts or gaps:
             print(f"  [planner:prior] {len(known_facts)} known fact(s), {len(gaps)} gap(s) identified")
     else:
@@ -243,7 +247,7 @@ def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -
         knowledge_block = "\n".join(lines) + "\n\n"
 
     memory_block = f"Relevant past work:\n{memory_context}\n\n" if memory_context else ""
-    prompt = PLAN_PROMPT.format(task=task, memory_block=memory_block, knowledge_block=knowledge_block)
+    prompt = PLAN_PROMPT.format(task=task, memory_block=memory_block, knowledge_block=knowledge_block, date_context=current_date_context())
 
     try:
         response = ollama.chat(
@@ -252,6 +256,8 @@ def make_plan(task: str, memory_context: str = "", model: str = PLANNER_MODEL) -
             options={"temperature": 0.1},
         )
         text = response["message"]["content"].strip()
+        if trace is not None:
+            trace.log_llm_turn("planner", prompt, text)
         plan = _parse_plan(text)
         # Attach prior knowledge to the plan for downstream use
         plan.known_facts = known_facts

@@ -247,6 +247,24 @@ class MemoryStore:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            for _col, _defn in [
+                ("run_id",  "TEXT"),
+                ("quality", "INTEGER DEFAULT 0"),
+                ("tags",    "TEXT DEFAULT '[]'"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE observations ADD COLUMN {_col} {_defn}")
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS memory_feedback_log (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id  INTEGER NOT NULL,
+                    rating     INTEGER NOT NULL,
+                    comment    TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
 
     # ------------------------------------------------------------------
     # ChromaDB init + migration
@@ -316,6 +334,7 @@ class MemoryStore:
         wiggum_scores: list[float],
         final: str,
         wiggum_issues: list[str] | None = None,
+        run_id: str | None = None,
     ) -> dict:
         """
         Compress a completed run into an observation and persist it.
@@ -346,8 +365,8 @@ class MemoryStore:
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO observations
-                   (timestamp, task, task_type, title, narrative, facts, output_path, final_score, final)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (timestamp, task, task_type, title, narrative, facts, output_path, final_score, final, run_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now(UTC).isoformat(),
                     task,
@@ -358,6 +377,7 @@ class MemoryStore:
                     output_path,
                     score,
                     final,
+                    run_id,
                 ),
             )
             rowid = cursor.lastrowid
@@ -377,6 +397,7 @@ class MemoryStore:
                         "task_type": task_type or "unknown",
                         "final_score": score or 0.0,
                         "timestamp": datetime.now(UTC).isoformat(),
+                        "quality": 0,
                     }],
                 )
             except Exception as e:
@@ -533,7 +554,7 @@ class MemoryStore:
                             row["id"]: row
                             for row in conn.execute(
                                 f"SELECT id, timestamp, task, task_type, title, "
-                                f"narrative, facts, final_score "
+                                f"narrative, facts, final_score, quality, tags "
                                 f"FROM observations WHERE id IN ({placeholders})",
                                 rowids,
                             ).fetchall()
@@ -552,7 +573,8 @@ class MemoryStore:
                             qual = (raw_score / 10.0) * 0.5
                         else:
                             qual = (raw_score or 5.0) / 10.0
-                        rank  = 0.7 * sim + 0.3 * qual
+                        q_adjust = max(0.2, 1.0 + (row["quality"] or 0) * 0.15)
+                        rank  = (0.7 * sim + 0.3 * qual) * q_adjust
                         scored.append((rank, row))
 
                     scored.sort(key=lambda x: x[0], reverse=True)
@@ -601,6 +623,294 @@ class MemoryStore:
                    LIMIT ?""",
                 (n,),
             ).fetchall()
+
+    def list_memories(self, search="", task_type="", quality_min=-3, quality_max=3,
+                      final="", page=1, per_page=25) -> dict:
+        """Paginated list for the API. Returns {memories, total, page, per_page, pages}."""
+        with self._connect() as conn:
+            base_filters = []
+            params: list = []
+
+            if task_type:
+                base_filters.append("o.task_type = ?")
+                params.append(task_type)
+            base_filters.append("COALESCE(o.quality, 0) >= ?")
+            params.append(quality_min)
+            base_filters.append("COALESCE(o.quality, 0) <= ?")
+            params.append(quality_max)
+            if final:
+                base_filters.append("o.final = ?")
+                params.append(final)
+
+            where_sql = ("WHERE " + " AND ".join(base_filters)) if base_filters else ""
+
+            if search:
+                fts_q = _fts_query(search)
+                rows = []
+                if fts_q:
+                    try:
+                        fts_where = ("AND " + " AND ".join(base_filters)) if base_filters else ""
+                        rows = conn.execute(
+                            f"""SELECT o.id, o.run_id, o.timestamp, o.task, o.task_type,
+                                       o.title, COALESCE(o.quality, 0) AS quality, o.tags,
+                                       o.facts, o.final_score, o.final
+                                FROM observations_fts f
+                                JOIN observations o ON o.id = f.rowid
+                                WHERE observations_fts MATCH ? {fts_where}
+                                ORDER BY bm25(observations_fts), o.timestamp DESC""",
+                            [fts_q] + params,
+                        ).fetchall()
+                    except sqlite3.OperationalError:
+                        pass
+                if not rows:
+                    like_pat = f"%{search}%"
+                    like_clause = "(o.title LIKE ? OR o.task LIKE ? OR o.narrative LIKE ?)"
+                    extra_params = [like_pat, like_pat, like_pat]
+                    if base_filters:
+                        rows = conn.execute(
+                            f"SELECT o.id, o.run_id, o.timestamp, o.task, o.task_type, "
+                            f"o.title, COALESCE(o.quality, 0) AS quality, o.tags, "
+                            f"o.facts, o.final_score, o.final "
+                            f"FROM observations o {where_sql} AND {like_clause} "
+                            f"ORDER BY o.timestamp DESC",
+                            params + extra_params,
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            f"SELECT o.id, o.run_id, o.timestamp, o.task, o.task_type, "
+                            f"o.title, COALESCE(o.quality, 0) AS quality, o.tags, "
+                            f"o.facts, o.final_score, o.final "
+                            f"FROM observations o WHERE {like_clause} "
+                            f"ORDER BY o.timestamp DESC",
+                            extra_params,
+                        ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT o.id, o.run_id, o.timestamp, o.task, o.task_type, "
+                    f"o.title, COALESCE(o.quality, 0) AS quality, o.tags, "
+                    f"o.facts, o.final_score, o.final "
+                    f"FROM observations o {where_sql} ORDER BY o.timestamp DESC",
+                    params,
+                ).fetchall()
+
+        total = len(rows)
+        pages = max(1, (total + per_page - 1) // per_page)
+        offset = (page - 1) * per_page
+        page_rows = rows[offset:offset + per_page]
+
+        memories = []
+        for r in page_rows:
+            facts = []
+            if r["facts"]:
+                try:
+                    facts = json.loads(r["facts"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            memories.append({
+                "id": r["id"],
+                "run_id": r["run_id"],
+                "timestamp": r["timestamp"],
+                "task": r["task"],
+                "task_type": r["task_type"],
+                "title": r["title"],
+                "quality": r["quality"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+                "facts_count": len(facts),
+                "final_score": r["final_score"],
+                "final": r["final"],
+            })
+
+        return {"memories": memories, "total": total, "page": page, "per_page": per_page, "pages": pages}
+
+    def get_memory(self, memory_id: int) -> dict | None:
+        """Full detail row. Returns dict or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, run_id, timestamp, task, task_type, title, narrative, "
+                "facts, output_path, final_score, final, COALESCE(quality, 0) AS quality, tags "
+                "FROM observations WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        if d["facts"]:
+            try:
+                d["facts"] = json.loads(d["facts"])
+            except (json.JSONDecodeError, TypeError):
+                d["facts"] = []
+        else:
+            d["facts"] = []
+        d["tags"] = json.loads(d["tags"]) if d["tags"] else []
+        return d
+
+    def update_memory(self, memory_id: int, title: str | None = None,
+                      tags: list | None = None, quality: int | None = None) -> bool:
+        """Partial update. Returns True if row existed."""
+        sets = []
+        params = []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if tags is not None:
+            sets.append("tags = ?")
+            params.append(json.dumps(tags))
+        if quality is not None:
+            sets.append("quality = ?")
+            params.append(max(-3, min(3, quality)))
+        if not sets:
+            with self._connect() as conn:
+                row = conn.execute("SELECT id FROM observations WHERE id = ?", (memory_id,)).fetchone()
+            return row is not None
+        params.append(memory_id)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE observations SET {', '.join(sets)} WHERE id = ?", params
+            )
+        return cur.rowcount > 0
+
+    def delete_memory(self, memory_id: int) -> bool:
+        """Hard delete from SQLite + ChromaDB. Returns True if existed."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM observations WHERE id = ?", (memory_id,))
+            existed = cur.rowcount > 0
+        if existed:
+            col = self._get_chroma()
+            if col is not None:
+                try:
+                    col.delete(ids=[str(memory_id)])
+                except Exception as e:
+                    print(f"  [memory] ChromaDB delete failed (non-fatal): {e}")
+        return existed
+
+    def add_feedback(self, memory_id: int, rating: int, comment: str = "") -> dict | None:
+        """Adjust quality ± 1, clamp to [-3, 3]. Log to feedback table. Return updated row."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, COALESCE(quality, 0) AS quality FROM observations WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            delta = 1 if rating > 0 else (-1 if rating < 0 else 0)
+            new_quality = max(-3, min(3, row["quality"] + delta))
+            conn.execute(
+                "UPDATE observations SET quality = ? WHERE id = ?",
+                (new_quality, memory_id),
+            )
+            conn.execute(
+                "INSERT INTO memory_feedback_log (memory_id, rating, comment, created_at) VALUES (?, ?, ?, ?)",
+                (memory_id, rating, comment, datetime.now(UTC).isoformat()),
+            )
+        return self.get_memory(memory_id)
+
+    def prune_candidates(self) -> list[dict]:
+        """Return memories with quality <= -2 or (final_score < 6 and quality < 0), newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, run_id, timestamp, task, task_type, title, "
+                "COALESCE(quality, 0) AS quality, tags, facts, final_score, final "
+                "FROM observations "
+                "WHERE COALESCE(quality, 0) <= -2 "
+                "   OR (final_score < 6 AND COALESCE(quality, 0) < 0) "
+                "ORDER BY timestamp DESC",
+            ).fetchall()
+        result = []
+        for r in rows:
+            facts = []
+            if r["facts"]:
+                try:
+                    facts = json.loads(r["facts"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append({
+                "id": r["id"],
+                "run_id": r["run_id"],
+                "timestamp": r["timestamp"],
+                "task": r["task"],
+                "task_type": r["task_type"],
+                "title": r["title"],
+                "quality": r["quality"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+                "facts_count": len(facts),
+                "final_score": r["final_score"],
+                "final": r["final"],
+            })
+        return result
+
+    def get_graph(self) -> dict:
+        """UMAP 2D + k-means clustering of ChromaDB embeddings."""
+        CLUSTER_COLORS = [
+            "#6366f1", "#0ea5e9", "#10b981", "#f59e0b",
+            "#ec4899", "#8b5cf6", "#14b8a6", "#f97316",
+        ]
+        try:
+            import umap
+        except ImportError:
+            return {"nodes": [], "clusters": [], "error": "umap-learn not installed"}
+
+        col = self._get_chroma()
+        if col is None:
+            return {"nodes": [], "clusters": [], "error": "ChromaDB unavailable"}
+
+        data = col.get(include=["embeddings", "metadatas", "documents"])
+        ids        = data.get("ids") or []
+        embeddings = data.get("embeddings")
+        if embeddings is None or len(embeddings) == 0:
+            return {"nodes": [], "clusters": [], "error": "no embeddings in ChromaDB"}
+        if len(ids) < 5:
+            return {"nodes": [], "clusters": [], "error": "not enough memories for graph"}
+
+        import numpy as np
+        from sklearn.cluster import KMeans
+
+        emb_array = np.array(embeddings)
+        reducer = umap.UMAP(n_components=2, random_state=42)
+        coords = reducer.fit_transform(emb_array)
+
+        n = len(ids)
+        k = min(8, max(1, n // 3))
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto")
+        labels = kmeans.fit_predict(emb_array)
+
+        rowids = []
+        for _id in ids:
+            try:
+                rowids.append(int(_id))
+            except (ValueError, TypeError):
+                rowids.append(None)
+
+        valid_rowids = [r for r in rowids if r is not None]
+        sqlite_info: dict[int, dict] = {}
+        if valid_rowids:
+            placeholders = ",".join("?" * len(valid_rowids))
+            with self._connect() as conn:
+                for row in conn.execute(
+                    f"SELECT id, title, COALESCE(quality, 0) AS quality, task_type "
+                    f"FROM observations WHERE id IN ({placeholders})",
+                    valid_rowids,
+                ).fetchall():
+                    sqlite_info[row["id"]] = {"title": row["title"], "quality": row["quality"], "task_type": row["task_type"]}
+
+        nodes = []
+        for i, (_id, rowid) in enumerate(zip(ids, rowids)):
+            info = sqlite_info.get(rowid, {}) if rowid is not None else {}
+            nodes.append({
+                "id": _id,
+                "x": float(coords[i, 0]),
+                "y": float(coords[i, 1]),
+                "label": info.get("title") or _id,
+                "cluster": int(labels[i]),
+                "quality": info.get("quality", 0),
+                "task_type": info.get("task_type") or "unknown",
+            })
+
+        clusters = [
+            {"id": c, "label": f"Cluster {c + 1}", "color": CLUSTER_COLORS[c % len(CLUSTER_COLORS)]}
+            for c in range(k)
+        ]
+
+        return {"nodes": nodes, "clusters": clusters, "error": None}
 
     def count(self) -> int:
         with self._connect() as conn:

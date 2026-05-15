@@ -15,7 +15,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -24,7 +24,8 @@ from harness.inference import chat as _llm_chat
 
 router = APIRouter()
 
-NOTES_DIR = ROOT / "notes"
+NOTES_DIR       = ROOT / "notes"
+TRANSCRIPTS_DIR = ROOT / "data" / "transcripts"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +124,18 @@ def _save_note_wav(wav_src: str, dest: Path) -> None:
     shutil.copy2(wav_src, dest)
 
 
+def _save_transcript(stem: str, wav_dest: Path, segments: list[dict]) -> Path:
+    """Write a transcript file to data/transcripts/ in build_manifest-compatible format."""
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = TRANSCRIPTS_DIR / f"{stem}-transcript.md"
+    body = _segments_to_markdown(segments)
+    dest.write_text(
+        f"# Transcript: {stem}\n\n**Source:** `{wav_dest}`\n\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return dest
+
+
 _CLASSIFICATION_SYSTEM = """\
 You are the voice interface for the Harness Engineering agentic research pipeline.
 
@@ -200,7 +213,11 @@ Return exactly this JSON, no other text:
 # ---------------------------------------------------------------------------
 
 @router.post("/voice")
-async def api_voice(audio: UploadFile = File(...)):
+async def api_voice(
+    audio:           UploadFile = File(...),
+    mode:            str        = Form("note"),
+    auto_transcribe: str        = Form("true"),
+):
     # Save blob to temp file
     suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -227,10 +244,10 @@ async def api_voice(audio: UploadFile = File(...)):
                 pass
         raise HTTPException(status_code=400, detail="transcript empty")
 
-    # Note shortcut — "note: ..." or "note this is ..." bypasses LLM classification
+    # Note path — triggered by toggle mode=note OR "note: ..." prefix in task mode
     note_match = re.match(r"^note[s]?\s*[:,-]?\s*", transcript, re.IGNORECASE)
-    if note_match:
-        note_text  = transcript[note_match.end():].strip() or transcript
+    if mode == "note" or note_match:
+        note_text  = transcript[note_match.end():].strip() if note_match else transcript
         ts         = datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S")
         date_fmt   = ts[:10]
         wav_dest   = NOTES_DIR / f"op-note-{ts}.wav"
@@ -257,14 +274,23 @@ async def api_voice(audio: UploadFile = File(...)):
             saved_md = str(md_dest)
         except Exception as e:
             print(f"[voice/note] md save failed (non-fatal): {e}")
+        saved_transcript = None
+        if auto_transcribe == "true" and saved_wav:
+            try:
+                stem = wav_dest.stem
+                t_path = _save_transcript(stem, wav_dest, segments)
+                saved_transcript = str(t_path)
+            except Exception as e:
+                print(f"[voice/note] transcript save failed (non-fatal): {e}")
         return JSONResponse({
-            "type":       "note",
-            "transcript": transcript,
-            "note_text":  note_text,
-            "wav_path":   saved_wav,
-            "md_path":    saved_md,
-            "timestamp":  ts,
-            "segments":   segments,
+            "type":            "note",
+            "transcript":      transcript,
+            "note_text":       note_text,
+            "wav_path":        saved_wav,
+            "md_path":         saved_md,
+            "transcript_path": saved_transcript,
+            "timestamp":       ts,
+            "segments":        segments,
         })
 
     # LLM classification

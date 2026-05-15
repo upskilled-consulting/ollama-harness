@@ -20,6 +20,16 @@ from pathlib import Path
 from harness.config import RUNS_FILE
 
 # ---------------------------------------------------------------------------
+# Date context
+# ---------------------------------------------------------------------------
+
+def current_date_context() -> str:
+    """Return a one-line date string for injection into LLM prompts."""
+    now = datetime.now(UTC)
+    return f"Current date: {now.strftime('%Y-%m-%d')} (year: {now.year})"
+
+
+# ---------------------------------------------------------------------------
 # Run loading
 # ---------------------------------------------------------------------------
 

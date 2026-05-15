@@ -126,6 +126,7 @@ from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
 from harness.security import check_file_path, check_output_path, check_python_code, scan_for_injection, strip_injection_candidates
 from harness.skills import auto_activate, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, skills_at_hook
+from harness.utils import current_date_context
 from harness.vision import detect_image_paths, extract_image_context
 from harness.wiggum import loop as wiggum_loop
 
@@ -293,7 +294,23 @@ PYTHON_TOOLS = [
                 "required": ["code"]
             }
         }
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_date",
+            "description": "Return today's date (YYYY-MM-DD). Call this whenever the task refers to 'today', 'this year', 'current', or any relative date.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "Return the current UTC date and time (YYYY-MM-DD HH:MM:SS UTC).",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
 ]
 
 
@@ -714,7 +731,8 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
 
         for tc in tool_calls:
             fn = tc.get("function", {})
-            if fn.get("name") == "run_python":
+            tool_name = fn.get("name", "")
+            if tool_name == "run_python":
                 code = fn.get("arguments", {}).get("code", "")
                 print(f"  [run_python] executing ({len(code)} chars)...")
                 result = execute_python(code)
@@ -722,8 +740,20 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
                 trace.log_tool_call("run_python", code[:80], len(result))
                 trace.log_step("tool_loop", thinking=turn_thinking, tool="run_python",
                                query=code[:120], result_chars=len(result))
-                turn_thinking = ""  # consumed — only attribute to the first call in this turn
+                turn_thinking = ""
                 messages.append({"role": "tool", "content": result, "name": "run_python"})
+            elif tool_name == "get_current_date":
+                from datetime import UTC, datetime as _dt
+                result = _dt.now(UTC).strftime("%Y-%m-%d")
+                print(f"  [get_current_date] → {result}")
+                trace.log_tool_call("get_current_date", "", len(result))
+                messages.append({"role": "tool", "content": result, "name": "get_current_date"})
+            elif tool_name == "get_current_time":
+                from datetime import UTC, datetime as _dt
+                result = _dt.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+                print(f"  [get_current_time] → {result}")
+                trace.log_tool_call("get_current_time", "", len(result))
+                messages.append({"role": "tool", "content": result, "name": "get_current_time"})
 
     return "\n\n".join(execution_log)
 
@@ -840,6 +870,7 @@ def compress_knowledge(current_state: str, new_results: list[dict],
         )
         if trace is not None:
             trace.log_usage(response, stage="compress_knowledge")
+            trace.log_llm_turn("compress_knowledge", prompt, response["message"]["content"].strip())
         return response["message"]["content"].strip()[:KNOWLEDGE_MAX_CHARS]
     except Exception as _ce:
         print(f"  [compress] model call failed ({_ce!s:.80}) — falling back to truncation")
@@ -858,6 +889,7 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
         return re.sub(r"(?i)^search\s+(for\s+)?", "", task.split("save to")[0].strip()).strip().rstrip("and ,.")
 
     prompt = (
+        f"{current_date_context()}\n"
         f"Task: {task}\n\n"
         f"What is already known:\n{knowledge_state}\n\n"
         "Generate ONE search query to find important information about the task NOT yet covered above. "
@@ -865,9 +897,9 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
     )
     try:
         response = ollama.chat(
-            model=COMPRESS_MODEL,
+            model=producer_model,
             messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3},
+            options={"temperature": 0.3, "num_predict": 64},
         )
         query_out = response["message"]["content"].strip().strip('"')
         if trace is not None:
@@ -875,6 +907,7 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
             thinking = getattr(getattr(response, "message", None), "thinking", None) or ""
             if thinking:
                 trace.log_step("search_query", thinking=thinking, tool="web_search", query=query_out)
+            trace.log_llm_turn("search_query", prompt, query_out, thinking=thinking or "")
         return query_out
     except Exception as _qe:
         print(f"  [plan_query] model call failed ({_qe!s:.80}) — falling back to task-derived query")
@@ -1067,12 +1100,20 @@ def synthesize(task: str, research_context: str, vision_context: str = "", file_
     code_block = f"\nCode execution results:\n{code_context}\n" if code_context else ""
     memory_block = f"\n{memory_context}\n" if memory_context else ""
     skill_block  = f"\nAdditional requirements:\n{skill_context}\n" if skill_context else ""
+    _instruction = _synth_instruction(task)
     prompt = (
         f"Task: {task}\n\n"
         f"Research findings:\n{research_context}\n"
         f"{vision_block}{file_block}{code_block}{memory_block}{skill_block}\n"
-        f"{_synth_instruction(task)}"
+        f"{_instruction}"
     )
+    if trace is not None:
+        trace.log_context_block("system_prompt",     _instruction)
+        trace.log_context_block("research_context",  research_context)
+        trace.log_context_block("memory_context",    memory_context)
+        trace.log_context_block("skill_context",     skill_context)
+        trace.log_context_block("vision_context",    vision_context)
+        trace.log_context_block("file_context",      file_context)
     response = ollama.chat(
         model=producer_model,
         messages=[{"role": "user", "content": prompt}],
@@ -1196,22 +1237,32 @@ def synthesize_with_count(task: str, research_context: str, expected_count: int,
     code_block = f"\nCode execution results:\n{code_context}\n" if code_context else ""
     memory_block = f"\n{memory_context}\n" if memory_context else ""
     skill_block  = f"\nAdditional requirements:\n{skill_context}\n" if skill_context else ""
+    _instruction = _synth_instruction(task)
     prompt = (
         f"Task: {task}\n\n"
         f"Research findings:\n{research_context}\n"
         f"{vision_block}{file_block}{code_block}{memory_block}{skill_block}\n"
         f"IMPORTANT: You must produce EXACTLY {expected_count} numbered sections "
         f"(## 1. ... through ## {expected_count}. ...) — no more, no fewer. "
-        f"{_synth_instruction(task)}"
+        f"{_instruction}"
     )
+    if trace is not None:
+        trace.log_context_block("system_prompt",     _instruction)
+        trace.log_context_block("research_context",  research_context)
+        trace.log_context_block("memory_context",    memory_context)
+        trace.log_context_block("skill_context",     skill_context)
+        trace.log_context_block("vision_context",    vision_context)
+        trace.log_context_block("file_context",      file_context)
     response = ollama.chat(
         model=producer_model,
         messages=[{"role": "user", "content": prompt}],
         options=_synth_options(producer_model),
     )
     if trace is not None:
+        _thinking = getattr(response.message, "thinking", "") or ""
         trace.log_usage(response, stage="synth_count")
-        trace.log_synth_cot(getattr(response.message, "thinking", "") or "")
+        trace.log_synth_cot(_thinking)
+        trace.log_llm_turn("synth_count", prompt, response["message"]["content"].strip(), _thinking)
     return response["message"]["content"].strip()
 
 
@@ -1319,7 +1370,8 @@ def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: di
             output_path=trace_data.get("output_path", ""),
             wiggum_scores=trace_data.get("wiggum_scores", []),
             final=trace_data.get("final", "PASS"),
-            wiggum_issues=wiggum_issues or [],
+            wiggum_issues=[i for i in (wiggum_issues or []) if not any(skip in i for skip in ("parse error", "connection failed", "evaluator connection"))],
+            run_id=trace_data.get("run_id"),
         )
         print(f"  [memory] stored: {obs['title']!r}")
     except Exception as e:
@@ -3352,7 +3404,7 @@ Rules:
             trace.set_stage("plan")
             print("  [planner] generating plan...")
             with trace.span("planner"):
-                plan, _planner_resp = make_plan(task, memory_context, model=producer_model)
+                plan, _planner_resp = make_plan(task, memory_context, model=producer_model, trace=trace)
             trace.log_plan(plan.to_dict())
             trace.log_plan_record(plan.to_dict(), plan_type="agent")
             if _planner_resp is not None:

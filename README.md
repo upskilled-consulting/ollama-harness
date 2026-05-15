@@ -220,11 +220,14 @@ A React/TypeScript UI (Vite + Tanstack Query) provides live visibility into ever
 | **Artifacts** | Browse output files written by runs. |
 | **Fine-tune** | Training metrics (loss, accuracy curves) and RL dataset browser — preference pairs, reward feedback, GRPO rollouts, and DPO examples with Wiggum evaluator annotations. |
 | **MCP** | Inspect registered MCP tool servers. |
+| **Memory** | Semantic observation store browser — search/filter 1960+ memories, 👍/👎 RLHF quality signals (clamp −3 to +3), provenance trace to originating run, tag editor, prune-candidate review queue, and UMAP ontology graph (`pip install umap-learn scikit-learn`). |
+| **Security** | Real-time audit log for all blocked/detected security events — injection attempts, path sandbox violations, Python code blocks, CDP navigation. Search, filter by severity/type/layer, click to expand full event detail. |
+| **System** | Governance file viewer/editor (AGENTS.md, ROADMAP.md, wiki pages, user profile, `.harness-user.toml`), live active-config inspector (safe env vars + runtime settings + synth instructions), and skills registry table with hook-type filter chips. |
 
-Two floating action buttons in the lower-right corner provide quick access without cluttering the sidebar:
+Two floating panels provide quick access from any view:
 
 - **Terminal** — a harness shell with `cd` navigation, command history (↑/↓), `clear`/`help`, and live run-status badges for any submitted task.
-- **Voice** — the voice input panel for hands-free task submission.
+- **Voice** — hands-free task submission via microphone.
 
 ---
 

@@ -504,6 +504,181 @@ Both are purely additive UI. Implement whichever gets asked for first.
 
 ---
 
+## 0.3.7 — Memory observability, RLHF pruning, and ontology ✓ COMPLETE
+
+The semantic memory system (`observations` table + ChromaDB collection) currently has
+no user-facing window and no quality signal. Memories accumulate indefinitely; bad ones
+lower retrieval quality without any mechanism for correction. This milestone adds:
+a provenance layer so every memory can be traced to the run that produced it; an RLHF
+signal (thumbs up/down) that soft-weights retrieval without deletion; a full Memory
+panel in the dashboard; and a nascent ontology visualization using the embeddings already
+in ChromaDB.
+
+### Layer 0 — Schema migration
+
+The `observations` SQLite table gains three new columns:
+
+```sql
+ALTER TABLE observations ADD COLUMN run_id     TEXT;    -- FK → runs.jsonl run_id
+ALTER TABLE observations ADD COLUMN quality    INTEGER DEFAULT 0;  -- -1 / 0 / +1
+ALTER TABLE observations ADD COLUMN tags       TEXT;    -- JSON array of strings
+```
+
+`run_id` closes the provenance gap: every memory created from a run can be traced back
+to the originating `run_id` and from there to the full run trace, output artifact, and
+wiggum eval. `quality` stores the cumulative RLHF signal from user thumbs votes.
+`tags` seeds the ontology layer (user-editable, agent-suggested via embedding clusters).
+
+**Write path:** `memory.py`'s `store_observation()` accepts an optional `run_id` kwarg;
+`agent.py` passes `trace.run_id` at the call site. Migration is additive — existing
+rows default to `run_id=NULL, quality=0, tags='[]'`.
+
+**Read path:** `retrieve_observations()` receives an additional `quality_floor` param
+(default `−1` — include all); retrieval SQL adds `AND quality >= quality_floor` so
+consistently downvoted memories can be suppressed without deletion by raising the floor.
+ChromaDB `where` filter mirrors this: `{"$and": [{"quality": {"$gte": quality_floor}}]}`.
+
+### Layer 1 — Backend API (5 endpoints)
+
+```
+GET    /api/memories                 list, filter by task_type / tags / quality / search
+GET    /api/memories/{id}            full detail: title, narrative, facts, tags, provenance
+PATCH  /api/memories/{id}            update title, tags, quality; supports partial updates
+DELETE /api/memories/{id}            hard delete after confirm dialog (soft-delete preferred)
+POST   /api/memories/{id}/feedback   body: {"rating": 1|-1, "comment": "..."}
+                                     → adjusts quality column ± 1, clamps to [-3, 3]
+```
+
+`GET /api/memories` response shape:
+```json
+{
+  "memories": [
+    {
+      "id": 42,
+      "run_id": "abc123",
+      "timestamp": "2026-05-14T03:21:00Z",
+      "task": "survey RLHF papers",
+      "task_type": "research",
+      "title": "PPO vs DPO tradeoffs",
+      "quality": 1,
+      "tags": ["rlhf", "alignment"],
+      "facts_count": 4,
+      "final_score": 8.2
+    }
+  ],
+  "total": 147,
+  "page": 1
+}
+```
+
+`GET /api/memories/{id}` includes `provenance`:
+```json
+{
+  "provenance": {
+    "run_id": "abc123",
+    "task": "survey RLHF papers",
+    "final": "PASS",
+    "wiggum_scores": [6.1, 7.8, 8.2],
+    "timestamp": "2026-05-14T03:21:00Z",
+    "output_path": "data/lit_reviews/rlhf_survey.md"
+  }
+}
+```
+
+The `feedback` endpoint does not delete. Deletion is a separate explicit user action
+with a confirm dialog. This preserves the audit trail even for bad memories — the
+quality score is the soft signal; hard delete is the user's last resort.
+
+### Layer 2 — Memory panel (dashboard)
+
+**Entry point:** brain SVG icon in the sidebar nav (between GitHub and MCP). Routes
+to `/memories`.
+
+**List view (left pane):**
+- Paginated list of memories (25/page), sorted by recency by default
+- Search bar — free-text search against title + narrative (hits ChromaDB's `query_texts`)
+- Filter chips: `task_type`, `tags`, `quality` (⊕ = 1, ○ = 0, ⊖ = −1), `final` (PASS/FAIL)
+- Each row: title, task_type badge, quality icon (thumb up/down/neutral), date, score chip
+- Clicking a row opens the detail panel (right pane)
+
+**Detail panel (right pane):**
+- Header: title (editable inline), quality bar (−3 to +3 thermometer)
+- RLHF controls: 👍 / 👎 buttons → `POST /api/memories/{id}/feedback`; shows current
+  quality score and vote count
+- Narrative block (markdown-rendered)
+- Facts list (bulleted, from JSON array)
+- Tags: editable chip list; typing in the box adds a tag; `PATCH /api/memories/{id}`
+- **Provenance trace:** collapsible section showing:
+  - `run_id` linked to the Runs view (filters to that run)
+  - task string, timestamp, final verdict
+  - wiggum score sparkline
+  - link to output artifact if `output_path` is set
+- **Changelog:** list of quality adjustments with timestamp and direction (auto-appended
+  on every feedback POST; stored in a `memory_feedback_log` table — `memory_id, rating,
+  comment, created_at`)
+- Delete button → confirm dialog: "This will permanently remove this memory from
+  retrieval. Consider lowering quality instead. Delete permanently?" → `DELETE /api/memories/{id}`
+
+**Empty state:** no memories matching filters → "No memories yet. Memories are created
+automatically after PASS runs." with a link to Submit.
+
+### Layer 3 — Ontology visualization
+
+Builds on the ChromaDB embeddings already computed for retrieval. No new embedding
+pipeline needed.
+
+**Algorithm:**
+1. `GET /api/memories/graph` — Python side fetches all memory embeddings from ChromaDB,
+   runs UMAP (2D, `n_neighbors=15, min_dist=0.1`), then lightweight community detection
+   (HDBSCAN or k-means k=8) to assign cluster labels
+2. Response: `{nodes: [{id, title, x, y, cluster, quality}], edges: [{source, target, weight}]}`
+   Edges computed by cosine similarity > 0.75 threshold
+3. Dashboard: D3 force-directed graph with cluster color coding; nodes sized by quality
+   (higher quality = larger); hover shows title; click opens detail panel
+4. Cluster labels: auto-generated by asking the producer model "given these memory titles:
+   [...], name this cluster in 2-3 words" — cached in `memory_clusters` table
+
+**Scope note:** This is a visualization layer on top of existing embeddings. No new
+model training, no knowledge graph database. The ChromaDB collection already has the
+vectors — UMAP + D3 is the only new code. Build UMAP as a lazy endpoint: computed
+on first request, cached for 1h (`memory_graph_cache.json`), invalidated on any
+`store_observation()` or `feedback` write.
+
+### RLHF-based soft pruning
+
+Retrieval quality degrades when low-quality memories compete with high-quality ones
+at equal weight. Two mechanisms close this:
+
+**1. Quality-weighted retrieval score:**
+After ChromaDB returns the top-K candidates by cosine similarity, rerank by:
+```python
+adjusted_score = cosine_similarity * max(0.2, 1 + (quality * 0.15))
+```
+`quality=+3` → 1.45× boost; `quality=-3` → 0.2× floor (not zero — still visible to the
+quality inspector in the panel). The floor prevents good memories from being permanently
+buried by a bad vote cluster. Reranked top-K is what the agent actually sees.
+
+**2. Auto-suggest prune candidates:**
+`GET /api/memories/prune-candidates` — returns memories with `quality ≤ -2` and
+`final_score < 6` on the originating run. Memory panel renders these in a separate
+"Review needed" tab with batch thumbs-down confirmation. This is the human-in-the-loop
+step before any bulk delete; the agent never auto-deletes.
+
+### Sequencing
+
+1. **Schema migration** ✓ — idempotent `ALTER TABLE` in `_init_db()`; safe on existing installs (1960 rows migrated). `run_id` threaded through `compress_and_store()` from `trace.data`.
+2. **Backend API** ✓ — 7 endpoints (list, detail, update, delete, feedback, prune-candidates, graph) + `memory_feedback_log` table. Quality adjustment clamps to `[-3, 3]`. Quality-weighted reranking: `adjusted = blend * max(0.2, 1 + quality * 0.15)`.
+3. **Memory panel list + detail** ✓ — brain icon in sidebar; list with search (FTS5 → LIKE fallback), quality filter chips, pagination; detail with inline title edit, 👍/👎 RLHF, tag editor, provenance block, confirm-delete.
+4. **Ontology graph** ✓ — `GET /api/memories/graph` runs UMAP 2D + k-means clustering on ChromaDB embeddings; SVG renderer with scroll-to-zoom, drag-to-pan, hover preview, click-to-open detail. Gracefully degrades when `umap-learn` is missing or fewer than 5 memories exist.
+
+**Also shipped in this milestone:**
+- **Security panel** (lock icon) — `GET /api/security/events` + `/summary`; search/filter/severity chips; sticky detail pane; `_log_event()` wired into all 5 security layers with diagnostic print on success and failure.
+- **System panel** (gear icon) — governance file viewer/editor (AGENTS.md, ROADMAP.md, wiki files, user profile, `.harness-user.toml`); live config inspector (safe env vars, runtime settings, synth instructions); skills registry table with hook filter chips.
+- **Test suite expansion** — `test_wiggum.py` (45 tests: dim weights, composite formula, stub detector, prose parser, task type, evaluator rotation) and `test_memory.py` (56 tests: schema migration, CRUD, quality clamping, feedback log, list filtering/pagination, prune candidates). Total: 419 tests.
+- **CI hardening** — dashboard `tsc + vite build` job; `pip-audit` dependency CVE scan; `--cov-fail-under=20` coverage floor; publish-from-main guard via `git merge-base`; tests run before PyPI publish.
+
+---
+
 ## 0.4.0 — Personal TTS model
 
 Fine-tune `microsoft/speecht5_tts` on local voice recordings to produce a personalized

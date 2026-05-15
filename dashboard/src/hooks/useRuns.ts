@@ -90,8 +90,73 @@ export function useMcpLog() {
   return useQuery({ queryKey: ["mcp_log"], queryFn: () => api.mcp_log(), refetchInterval: 5_000 });
 }
 
+export function useSecurityEvents(params: { search?: string; severity?: string; event_type?: string; layer?: string } = {}) {
+  return useQuery({
+    queryKey:        ["security_events", params],
+    queryFn:         () => api.security_events(params),
+    refetchInterval: 10_000,
+    staleTime:       5_000,
+  });
+}
+
+export function useSystemFiles() {
+  return useQuery({ queryKey: ["system_files"], queryFn: api.system_files, staleTime: 30_000 });
+}
+
+export function useSystemFile(key: string | null) {
+  return useQuery({
+    queryKey: ["system_file", key],
+    queryFn:  () => api.system_file(key!),
+    enabled:  !!key,
+    staleTime: 30_000,
+  });
+}
+
+export function useSystemConfig() {
+  return useQuery({ queryKey: ["system_config"], queryFn: api.system_config, staleTime: 60_000 });
+}
+
+export function useSystemSkills() {
+  return useQuery({ queryKey: ["system_skills"], queryFn: api.system_skills, staleTime: Infinity });
+}
+
+export function useSecuritySummary() {
+  return useQuery({
+    queryKey:        ["security_summary"],
+    queryFn:         api.security_summary,
+    refetchInterval: 15_000,
+    staleTime:       10_000,
+  });
+}
+
 export function useMcpTools() {
   return useQuery({ queryKey: ["mcp_tools"], queryFn: api.mcp_tools, staleTime: Infinity });
+}
+
+export function useMemories(params: Parameters<typeof api.memories>[0] = {}) {
+  return useQuery({
+    queryKey:  ["memories", params],
+    queryFn:   () => api.memories(params),
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useMemory(id: number | null) {
+  return useQuery({
+    queryKey: ["memory", id],
+    queryFn:  () => api.memory(id!),
+    enabled:  id !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function useMemoryGraph() {
+  return useQuery({ queryKey: ["memory_graph"], queryFn: api.memory_graph, staleTime: 120_000 });
+}
+
+export function useMemoryPruneCandidates() {
+  return useQuery({ queryKey: ["memory_prune"], queryFn: api.memory_prune_candidates, staleTime: 30_000 });
 }
 
 export function useSubmitTask() {

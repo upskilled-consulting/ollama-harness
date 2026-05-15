@@ -13,6 +13,9 @@ import { Sessions }  from "@/views/Sessions";
 import { Artifacts }       from "@/views/Artifacts";
 import { Finetune }        from "@/views/Finetune";
 import { Github }          from "@/views/Github";
+import { Memory }          from "@/views/Memory";
+import { Security }        from "@/views/Security";
+import { System }          from "@/views/System";
 import { FloatingPanels }  from "@/components/FloatingPanels";
 
 const qc = new QueryClient();
@@ -27,7 +30,10 @@ const VIEWS: Record<View, React.ReactNode> = {
   finetune:  <Finetune />,
   voice:     <Voice />,
   mcp:       <Mcp />,
+  memory:    <Memory />,
   github:    <Github />,
+  security:  <Security />,
+  system:    <System />,
 };
 
 function GateBanner() {
