@@ -14,7 +14,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from harness.api.routes import data, feedback, github, history, mcp, memory, queue, runs, security, system, tasks, voice
+from harness.api.routes import (
+    data,
+    feedback,
+    github,
+    history,
+    mcp,
+    memory,
+    queue,
+    runs,
+    security,
+    system,
+    tasks,
+    voice,
+)
 from harness.api.ws import router as ws_router
 from harness.config import ROOT, ensure_dirs, settings
 

@@ -1,9 +1,8 @@
 """GET/PATCH/DELETE /api/memories — memory store management endpoints."""
 
-import json
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
 
 from harness.memory import MemoryStore
 
@@ -12,9 +11,9 @@ _store = MemoryStore()
 
 
 class UpdateBody(BaseModel):
-    title:   Optional[str]       = None
-    tags:    Optional[list[str]] = None
-    quality: Optional[int]       = None
+    title:   str | None       = None
+    tags:    list[str] | None = None
+    quality: int | None       = None
 
 
 class FeedbackBody(BaseModel):

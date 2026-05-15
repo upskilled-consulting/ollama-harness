@@ -5,19 +5,16 @@ evaluator rotation, and composite formula.
 All tests are pure-Python: no LLM calls, no file I/O.
 """
 
-import os
 import pytest
 
 from harness.wiggum import (
-    PASS_THRESHOLD,
     _DIM_WEIGHTS,
     _EVAL_DIMS,
+    PASS_THRESHOLD,
     _count_stub_blocks,
     _extract_eval_from_prose,
     detect_task_type,
-    select_evaluator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Dimension weight contract

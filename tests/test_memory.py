@@ -7,13 +7,11 @@ No LLM calls are made.
 """
 
 import json
-import sqlite3
 from unittest.mock import patch
 
 import pytest
 
 from harness.memory import MemoryStore, _fts_query
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

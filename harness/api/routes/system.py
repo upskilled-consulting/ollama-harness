@@ -130,7 +130,11 @@ async def get_config():
 
     synth: dict = {}
     try:
-        from harness.agent import SYNTH_INSTRUCTION, SYNTH_INSTRUCTION_COUNT, SYNTH_INSTRUCTION_PROSE
+        from harness.agent import (
+            SYNTH_INSTRUCTION,
+            SYNTH_INSTRUCTION_COUNT,
+            SYNTH_INSTRUCTION_PROSE,
+        )
         synth = {
             "default": SYNTH_INSTRUCTION,
             "count":   SYNTH_INSTRUCTION_COUNT,

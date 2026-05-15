@@ -21,7 +21,8 @@ Skills are loaded lazily — importing skills.py does not import kg_gen, panel, 
 
 import os
 import re
-from datetime import UTC, datetime as _datetime
+from datetime import UTC
+from datetime import datetime as _datetime
 
 # ---------------------------------------------------------------------------
 # Registry
