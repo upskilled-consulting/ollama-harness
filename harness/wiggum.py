@@ -65,6 +65,26 @@ EVALUATOR_MODEL = (os.environ.get("WIGGUM_EVALUATOR_MODEL")
 MAX_ROUNDS = 3
 PASS_THRESHOLD = 9.0
 
+# Evaluator pool for rotation — comma-separated model names in HARNESS_EVALUATOR_POOL.
+# When set, each run draws one evaluator deterministically from the pool (hash of seed).
+# Falls back to EVALUATOR_MODEL when pool is empty.
+_EVALUATOR_POOL: list[str] = [
+    m.strip() for m in os.environ.get("HARNESS_EVALUATOR_POOL", "").split(",")
+    if m.strip()
+]
+
+
+def select_evaluator(seed: str = "") -> str:
+    """Return an evaluator model name, rotating through HARNESS_EVALUATOR_POOL by hash."""
+    if not _EVALUATOR_POOL:
+        return EVALUATOR_MODEL
+    import hashlib
+    h = hashlib.md5((seed or os.urandom(4).hex()).encode()).hexdigest()
+    idx = int(h, 16) % len(_EVALUATOR_POOL)
+    chosen = _EVALUATOR_POOL[idx]
+    print(f"  [wiggum] evaluator rotation → {chosen} ({idx + 1}/{len(_EVALUATOR_POOL)})", flush=True)
+    return chosen
+
 # ---------------------------------------------------------------------------
 # Hallucination detector
 # ---------------------------------------------------------------------------

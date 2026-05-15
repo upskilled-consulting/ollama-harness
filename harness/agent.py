@@ -1338,7 +1338,7 @@ _LIT_REVIEW_NL_RE = re.compile(
 
 def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, evaluator_model: str | None = None, plan_gate=None, _interactive: bool = True):
     global _KEEP_ALIVE
-    from harness.wiggum import EVALUATOR_MODEL, ANNOTATE_EVALUATOR_MODEL
+    from harness.wiggum import EVALUATOR_MODEL, ANNOTATE_EVALUATOR_MODEL, select_evaluator
     if producer_model is None:
         producer_model = MODEL
 
@@ -1352,7 +1352,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
         task = "/lit-review " + task
         print("[auto] lit-review intent detected — routing to /lit-review")
 
-    _eval_model    = evaluator_model or EVALUATOR_MODEL
+    _eval_model    = evaluator_model or select_evaluator()
     _ann_eval_model = evaluator_model or ANNOTATE_EVALUATOR_MODEL
     trace = RunTrace(
         task=task,

@@ -72,7 +72,8 @@ DEFAULT_MAX_KEEP       = 60     # TF-IDF top-N after fetching DEFAULT_MAX_FETCH
 DEFAULT_ANNOTATE_PARALLEL = 2   # match llama-server --parallel N
 DEFAULT_TEMPLATE     = "survey"
 DEFAULT_PRODUCER     = os.environ.get("PRODUCER_MODEL", "pi-qwen-32b")
-DEFAULT_EVALUATOR    = os.environ.get("EVALUATOR_MODEL", "Qwen3-Coder:30b")
+DEFAULT_EVALUATOR    = (os.environ.get("HARNESS_EVALUATOR_MODEL")
+                        or os.environ.get("EVALUATOR_MODEL", "Qwen3-Coder:30b"))
 DEFAULT_CLUSTER_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("COMPRESS_MODEL", "qwen3-8b"))
 KEEP_ALIVE           = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 
