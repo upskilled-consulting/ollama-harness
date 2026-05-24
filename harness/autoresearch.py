@@ -592,8 +592,8 @@ def propose_instructions(current: dict, history: str, eval_feedback: str, resear
 # Eval
 # ---------------------------------------------------------------------------
 
-def run_eval(task_ids: list[str]) -> float:
-    """Run eval_suite --score --tasks <tasks> and return composite float."""
+def _run_eval_once(task_ids: list[str]) -> float:
+    """Run eval_suite --score --tasks <tasks> once and return composite float."""
     tasks_arg = ",".join(task_ids)
     print(f"  [eval] running eval_suite on {tasks_arg}...")
     # Use a bounded keep_alive (120s) instead of -1 so models unload after eval
@@ -619,6 +619,25 @@ def run_eval(task_ids: list[str]) -> float:
     except (ValueError, IndexError):
         print(f"  [eval] parse error, stdout: {stdout[:400]!r}")
         return 0.0
+
+
+def run_eval(task_ids: list[str], n: int = 1) -> float:
+    """Run eval_suite n times and return the mean score.
+
+    With n=1 (default) behaviour is identical to the old single-sample run.
+    With n>1 the variance is reduced: a real +0.3 improvement is distinguishable
+    from noise even when individual samples span a ±0.5 range.
+    """
+    if n == 1:
+        return _run_eval_once(task_ids)
+    scores = []
+    for i in range(n):
+        print(f"  [eval] sample {i + 1}/{n}")
+        scores.append(_run_eval_once(task_ids))
+    avg = round(sum(scores) / len(scores), 3)
+    lo, hi = min(scores), max(scores)
+    print(f"  [eval] samples: {[round(s, 3) for s in scores]}  avg={avg:.3f}  range=[{lo:.3f},{hi:.3f}]")
+    return avg
 
 
 # ---------------------------------------------------------------------------
@@ -673,6 +692,11 @@ def main():
         if idx + 1 < len(args):
             PROPOSER_MODEL = args[idx + 1]
     reset_baseline = "--reset-baseline" in args
+    eval_n = 1
+    if "--eval-n" in args:
+        idx = args.index("--eval-n")
+        if idx + 1 < len(args):
+            eval_n = max(1, int(args[idx + 1]))
     mode = "auto"
     if "--mode" in args:
         idx = args.index("--mode")
@@ -687,6 +711,7 @@ def main():
     print(f" proposer:    {PROPOSER_MODEL}")
     print(f" eval tasks:  {task_ids}")
     print(f" delta thr:   {delta_threshold}")
+    print(f" eval-n:      {eval_n}{'  (averaged)' if eval_n > 1 else ''}")
     print(f" mode:        {mode}  (explore|exploit|auto)")
     if mode == "auto":
         print(f"   auto-explore after {PLATEAU_DISCARDS} consecutive discards with |delta| < {PLATEAU_DELTA}")
@@ -700,7 +725,7 @@ def main():
     if reset_baseline or task_baseline is None:
         reason = "--reset-baseline requested" if reset_baseline else f"no history for tasks {task_ids}"
         print(f"[baseline] {reason} — running fresh baseline eval...")
-        baseline_score = run_eval(task_ids)
+        baseline_score = run_eval(task_ids, eval_n)
         log_experiment(0, baseline_score, baseline_score, "baseline", "initial baseline", task_ids)
         print(f"[baseline] score: {baseline_score:.3f}\n")
     else:
@@ -766,7 +791,7 @@ def main():
 
         # 3. VERIFY
         n_before_eval = get_run_count()
-        score = run_eval(task_ids)
+        score = run_eval(task_ids, eval_n)
 
         # Capture THIS eval's feedback immediately — it feeds the next proposal
         fresh_feedback = get_recent_eval_feedback(task_ids, n_before_eval)
