@@ -525,10 +525,12 @@ def _extract_discarded(history: str) -> str:
     lines = []
     for row in history.splitlines():
         parts = row.split("\t")
+        # TSV columns: experiment, score, baseline, delta, status, tasks, description
         if len(parts) >= 5 and parts[4].strip().lower() == "discard":
-            desc = parts[5].strip() if len(parts) > 5 else ""
+            score = parts[1].strip() if len(parts) > 1 else "?"
+            desc = parts[6].strip() if len(parts) > 6 else ""
             if desc:
-                lines.append(f"- {desc}")
+                lines.append(f"- [score={score}] {desc}")
     return "\n".join(lines) if lines else "(none yet)"
 
 
@@ -598,16 +600,17 @@ def run_eval(task_ids: list[str]) -> float:
     # completes and don't occupy Ollama slots when the proposer runs next iteration.
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "WIGGUM_MAX_ROUNDS": "1", "OLLAMA_KEEP_ALIVE": "120", "WIGGUM_PANEL": "1", "RESEARCH_CACHE": "1"}
     result = subprocess.run(
-        [PYTHON, "eval_suite.py", "--score", "--tasks", tasks_arg],
+        [PYTHON, "-m", "harness.eval.eval_suite", "--score", "--tasks", tasks_arg],
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=env,
         cwd=str(Path(__file__).parent.parent),
     )
-    if result.returncode != 0 or result.stderr.strip():
+    if result.returncode != 0:
         print(f"  [eval] returncode: {result.returncode}")
-        print(f"  [eval] stderr: {result.stderr[:2000]}")
+        if result.stderr.strip():
+            print(f"  [eval] stderr: {result.stderr[:2000]}")
     stdout = result.stdout.strip()
     try:
         score = float(stdout.split("\n")[-1].strip())
