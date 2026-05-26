@@ -210,7 +210,7 @@ SYNTH_INSTRUCTION_COUNT = (
 # Used when _is_technical_task() returns False so the model doesn't hallucinate code blocks.
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:BEGIN
 SYNTH_INSTRUCTION_PROSE = (
-    "explain each practice as a sequence of reasoning steps that lead to a recommended action, without mentioning tools or frameworks"
+    "write a cohesive narrative that describes how these practices interrelate in sequence, focusing on the logical flow from one to the next without explicit section headers or bullet points"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:END
 
