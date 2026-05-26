@@ -196,13 +196,13 @@ def _synth_options(producer_model: str) -> dict:
 # ---------------------------------------------------------------------------
 # AUTORESEARCH:SYNTH_INSTRUCTION:BEGIN
 SYNTH_INSTRUCTION = (
-    "output ONLY the markdown starting with # and include a brief, concrete example for each practice to illustrate its application in a real-world scenario"
+    "output ONLY the markdown starting with #"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION:END
 
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:BEGIN
 SYNTH_INSTRUCTION_COUNT = (
-    "output ONLY the markdown starting with # and specify exactly 4 practices to cover"
+    "require exactly 5 practices"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:END
 
@@ -210,7 +210,7 @@ SYNTH_INSTRUCTION_COUNT = (
 # Used when _is_technical_task() returns False so the model doesn't hallucinate code blocks.
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:BEGIN
 SYNTH_INSTRUCTION_PROSE = (
-    "output ONLY the markdown starting with # and structure the response as a cohesive narrative that explains why each practice matters, how it builds on the previous one, and what happens if it's ignored"
+    "explain each practice as a sequence of reasoning steps that lead to a recommended action, without mentioning tools or frameworks"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:END
 
