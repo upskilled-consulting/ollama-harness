@@ -196,22 +196,13 @@ def _synth_options(producer_model: str) -> dict:
 # ---------------------------------------------------------------------------
 # AUTORESEARCH:SYNTH_INSTRUCTION:BEGIN
 SYNTH_INSTRUCTION = (
-    "output ONLY the markdown starting with # "
-    "Synthesize the research findings into a comprehensive, well-structured answer to the task. "
-    "Directly address the task using specific evidence, techniques, tools, and data from the research above. "
-    "Use ## sections to organise key themes. Include concrete implementation details, benchmarks, "
-    "or examples wherever the research provides them. "
-    "Every claim must be grounded in the research findings — do not add generic filler content."
+    "output ONLY the markdown starting with # and include a brief, concrete example for each practice to illustrate its application in a real-world scenario"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION:END
 
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:BEGIN
 SYNTH_INSTRUCTION_COUNT = (
-    "output ONLY the markdown starting with # "
-    "Synthesize the research findings into a structured answer to the task. "
-    "Each numbered section must be grounded in specific evidence from the research above. "
-    "Include concrete tools, techniques, benchmarks, and data points found in the research. "
-    "Do not add content that is not supported by the research findings."
+    "output ONLY the markdown starting with # and specify exactly 4 practices to cover"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:END
 
@@ -219,10 +210,7 @@ SYNTH_INSTRUCTION_COUNT = (
 # Used when _is_technical_task() returns False so the model doesn't hallucinate code blocks.
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:BEGIN
 SYNTH_INSTRUCTION_PROSE = (
-    "output ONLY the markdown starting with # "
-    "Write a comprehensive, well-organised answer to the task based on the research findings above. "
-    "Directly address the task using specific facts, examples, and sources found in the research. "
-    "Do not generate generic content — ground every claim in the research findings above."
+    "output ONLY the markdown starting with # and structure the response as a cohesive narrative that explains why each practice matters, how it builds on the previous one, and what happens if it's ignored"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:END
 
@@ -312,6 +300,35 @@ PYTHON_TOOLS = [
         }
     },
 ]
+
+_SEND_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "send_message",
+        "description": (
+            "Send a message to the parent orchestrator. Use to report a key intermediate "
+            "finding, signal a blocker, or share progress while running as a subtask. "
+            "Types: 'progress' (routine update), 'finding' (notable result), 'blocker' (recoverable issue)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "type":    {"type": "string", "enum": ["progress", "finding", "blocker"]},
+                "content": {"type": "string", "description": "Message text (max 300 chars)"},
+            },
+            "required": ["type", "content"],
+        }
+    }
+}
+
+
+def _get_python_tools() -> list[dict]:
+    """Return PYTHON_TOOLS, extended with send_message when running as a subtask."""
+    from harness.agent_channel import channel_path
+    tools = list(PYTHON_TOOLS)
+    if channel_path():
+        tools.append(_SEND_MESSAGE_TOOL)
+    return tools
 
 
 def _browser_state_file() -> str:
@@ -717,12 +734,14 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
         response = ollama.chat(
             model=producer_model,
             messages=messages,
-            tools=PYTHON_TOOLS,
+            tools=_get_python_tools(),
             options={"temperature": 0.1},
         )
         trace.log_usage(response, stage="tool_loop")
         msg = response["message"]
         turn_thinking = getattr(getattr(response, "message", None), "thinking", None) or ""
+        if turn_thinking:
+            _emit("thinking", {"stage": "tool", "text": turn_thinking[:8000], "chars": len(turn_thinking)})
         messages.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])})
 
         tool_calls = msg.get("tool_calls") or []
@@ -737,7 +756,9 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
                 print(f"  [run_python] executing ({len(code)} chars)...")
                 result = execute_python(code)
                 execution_log.append(f"```python\n{code}\n```\nOutput:\n```\n{result}\n```")
-                trace.log_tool_call("run_python", code[:80], len(result))
+                _py_err = result if result.lstrip().startswith(("Traceback", "Error", "Exception")) else None
+                trace.log_tool_call("run_python", code[:80], len(result),
+                                    result_preview=result[:1200], error=_py_err)
                 trace.log_step("tool_loop", thinking=turn_thinking, tool="run_python",
                                query=code[:120], result_chars=len(result))
                 turn_thinking = ""
@@ -754,8 +775,43 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
                 print(f"  [get_current_time] → {result}")
                 trace.log_tool_call("get_current_time", "", len(result))
                 messages.append({"role": "tool", "content": result, "name": "get_current_time"})
+            elif tool_name == "send_message":
+                from harness.agent_channel import send_message as _send_msg
+                msg_type = fn.get("arguments", {}).get("type", "progress")
+                content  = fn.get("arguments", {}).get("content", "")
+                result = _send_msg("parent", msg_type, content)
+                print(f"  [send_message] {msg_type}: {content[:120]}")
+                trace.log_tool_call("send_message", content[:80], len(result))
+                messages.append({"role": "tool", "content": result, "name": "send_message"})
 
     return "\n\n".join(execution_log)
+
+
+def _playwright_fetch_url(url: str) -> str:
+    """Headless Playwright fallback for URLs that block plain HTTP fetches (e.g. 403)."""
+    try:
+        from playwright.sync_api import sync_playwright as _swp
+    except ImportError:
+        return ""
+    try:
+        with _swp() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            )
+            page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+            text = page.inner_text("body").strip()
+            browser.close()
+        if len(text) > URL_ENRICH_MAX_CHARS:
+            text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
+        return text
+    except Exception as e:
+        print(f"    -> playwright fallback error: {type(e).__name__}: {e}")
+        return ""
 
 
 def fetch_url_content(url: str) -> str:
@@ -774,16 +830,19 @@ def fetch_url_content(url: str) -> str:
             print(f"  [media] transcription error (skipping): {e}")
             return ""
     if not MARKITDOWN_AVAILABLE:
-        return ""
+        return _playwright_fetch_url(url)
     try:
         result = _md_converter.convert(url)
         text = (result.text_content or "").strip()
         if len(text) > URL_ENRICH_MAX_CHARS:
             text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
+        if not text:
+            raise ValueError("empty response")
         return text
     except Exception as e:
         print(f"    -> error: {type(e).__name__}: {e}")
-        return ""
+        print("    -> retrying with playwright...")
+        return _playwright_fetch_url(url)
 
 
 def enrich_with_page_content(results: list[dict], count: int, knowledge_state: str = "") -> str:
@@ -983,7 +1042,11 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             results = web_search_raw(query)
 
         _emit("search", {"round": round_num, "query": query, "hits": len(results)})
-        trace.log_tool_call("web_search", query, len(format_results(results)))
+        _fmt = format_results(results)
+        _urls = [{"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")[:200]} for r in results]
+        trace.log_tool_call("web_search", query, len(_fmt),
+                            urls=_urls, result_preview=_fmt[:1200],
+                            error=None if results else "no results returned")
 
         # Domain tracking for oversearch detector (cheap — always run)
         round_domains   = {urlparse(r.get("href", "")).netloc for r in results if r.get("href")}
@@ -1015,6 +1078,9 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
                 print(f"  [oversearch] +0 new domains ({consecutive_zero_domain_rounds} consecutive zero-domain rounds)")
                 if consecutive_zero_domain_rounds >= 2:
                     print("  [oversearch] search saturated — no new sources in 2 consecutive rounds, terminating early")
+                    from harness.agent_channel import send_message as _ch_send
+                    _ch_send("parent", "progress",
+                             f"Search saturated after {round_num} rounds ({len(seen_domains)} domains) — moving to synthesis")
                     break
             else:
                 consecutive_zero_domain_rounds = 0
@@ -1045,7 +1111,11 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
         merged      = merge_results(all_result_sets)
         merged_text = format_results(merged)
         total_chars = len(merged_text)
-        trace.log_tool_call("web_search", fallback_query, len(format_results(results_fallback)))
+        _fmt_fb = format_results(results_fallback)
+        _urls_fb = [{"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")[:200]} for r in results_fallback]
+        trace.log_tool_call("web_search", fallback_query, len(_fmt_fb),
+                            urls=_urls_fb, result_preview=_fmt_fb[:1200],
+                            error=None if results_fallback else "no results returned")
         trace.log_search_quality(total_chars)
         print(f"  [research] after fallback: {len(merged)} results, {total_chars} chars")
 
@@ -1124,6 +1194,8 @@ def synthesize(task: str, research_context: str, vision_context: str = "", file_
         trace.log_usage(response, stage="synth")
         trace.log_synth_cot(_thinking)
         trace.log_llm_turn("synth", prompt, response["message"].get("content", ""), _thinking)
+        if _thinking:
+            _emit("thinking", {"stage": "synth", "text": _thinking[:8000], "chars": len(_thinking)})
     return response["message"].get("content", "")
 
 
@@ -1319,7 +1391,7 @@ def write_output(content: str, path: str, trace: RunTrace):
         print(f"[eval] FAIL — {expanded} not found")
 
 
-def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
+def _estimate_tac_hours(task: str, content: str, model: str, _trace=None) -> float | None:
     """
     Ask the LLM to estimate how long a skilled human researcher would take
     to complete the same task manually. Returns decimal hours or None on error.
@@ -1340,6 +1412,8 @@ def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1, "num_predict": 128},
         )
+        if _trace is not None:
+            _trace.log_usage(resp, stage="tac_estimate")
         import json as _json_tac
         raw = resp["message"].get("content", "").strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
@@ -1356,7 +1430,7 @@ def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
         return None
 
 
-def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: dict, content: str, wiggum_issues: list[str] | None = None):
+def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: dict, content: str, wiggum_issues: list[str] | None = None, _trace=None):
     """Compress a completed run and write it to the memory store."""
     print("\n  [memory] compressing run...")
     try:
@@ -1372,6 +1446,7 @@ def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: di
             final=trace_data.get("final", "PASS"),
             wiggum_issues=[i for i in (wiggum_issues or []) if not any(skip in i for skip in ("parse error", "connection failed", "evaluator connection"))],
             run_id=trace_data.get("run_id"),
+            _trace=_trace,
         )
         print(f"  [memory] stored: {obs['title']!r}")
     except Exception as e:
@@ -1453,8 +1528,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 explicit_skills = list(explicit_skills) + ["playwright"]
                 print("  [auto] playwright intent detected — routing to /playwright")
 
-# Set dynamic keep_alive unless overridden by OLLAMA_KEEP_ALIVE env var
-        if _KEEP_ALIVE_OVERRIDE is None:
+# Set dynamic keep_alive for ollama backend only; vLLM/llamacpp manage their own lifetimes.
+        if _KEEP_ALIVE_OVERRIDE is None and os.environ.get("INFERENCE_BACKEND", "ollama").lower() == "ollama":
             _KEEP_ALIVE = _estimate_keep_alive(
                 task_type="",             # task_type not known yet; refined below after planning
                 explicit_skills=set(explicit_skills),
@@ -1552,7 +1627,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.finish(wiggum_result.get("final", "FAIL"))
             else:
                 trace.finish("PASS")
-            _store_memory(memory, task, "annotate", trace.data, content)
+            _store_memory(memory, task, "annotate", trace.data, content, _trace=trace)
 
         def _handle_email():
             from harness.skills.email_skill import run_email_standalone, generate_single_email
@@ -1812,9 +1887,18 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             trace.data["output_bytes"]        = out_p.stat().st_size if out_p and out_p.exists() else 0
             trace.data["lit_review_papers"]   = result.get("papers", 0)
             trace.data["lit_review_clusters"] = result.get("clusters", 0)
-            trace.data["tool_calls"]          = [
-                {"name": "web_search", "query": t}
-                for t in result.get("paper_titles", [])
+            trace.data["tool_calls"] = [
+                {
+                    "name":           "arxiv_fetch",
+                    "query":          p.get("title", ""),
+                    "result_chars":   p.get("annotation_len", 0),
+                    "urls":           [{"href": p.get("arxiv_url", ""), "title": p.get("title", "")}]
+                                      if p.get("arxiv_url") else [],
+                    "result_preview": p.get("contribution", ""),
+                    "cluster_idx":    p.get("cluster_idx"),
+                    "cluster_name":   p.get("cluster_name", ""),
+                }
+                for p in result.get("papers_data", [])
             ]
             if result.get("error") or not out_path_str:
                 err = result.get("error", "unknown")
@@ -1831,7 +1915,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             else:
                 trace.finish("PASS")
             if out_p and out_p.exists():
-                _store_memory(memory, task, "lit-review", trace.data, out_p.read_text(encoding="utf-8"))
+                _store_memory(memory, task, "lit-review", trace.data, out_p.read_text(encoding="utf-8"), _trace=trace)
 
         def _handle_recall():
             import re as _re
@@ -1953,7 +2037,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 _out_path = str(_out / f"introspect-{_ts}.md")
             write_output(content, _out_path, trace)
             trace.finish("PASS")
-            _store_memory(memory, task, "introspect", trace.data, content)
+            _store_memory(memory, task, "introspect", trace.data, content, _trace=trace)
 
         def _handle_orientation():
             print("\n[skill:orientation] building situational awareness document...")
@@ -2005,7 +2089,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["final_content"] = content[:16_000]
                 trace.data["output_bytes"]  = len(content.encode())
             trace.finish("PASS")
-            _store_memory(memory, task, "orientation", trace.data, content)
+            _store_memory(memory, task, "orientation", trace.data, content, _trace=trace)
 
         def _handle_playwright():
             print("\n[skill:playwright] launching browser navigation...")
@@ -2081,7 +2165,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["final_content"] = content[:16_000]
                 trace.data["output_bytes"]  = len(content.encode())
             trace.finish("PASS")
-            _store_memory(memory, task, "playwright", trace.data, content)
+            _store_memory(memory, task, "playwright", trace.data, content, _trace=trace)
             try:
                 from harness.skill_extractor import extract_browser_skill_and_store as _extract_bskill
                 _extract_bskill(task=task, trace_data=trace.data,
@@ -2228,7 +2312,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
 
             write_output(content, out_path, trace)
             trace.finish("PASS")
-            _store_memory(memory, task, "transcribe", trace.data, content)
+            _store_memory(memory, task, "transcribe", trace.data, content, _trace=trace)
 
         def _handle_reorient():
             import re as _re
@@ -2351,7 +2435,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "re-orient", trace.data, content)
+            _store_memory(memory, task, "re-orient", trace.data, content, _trace=trace)
 
         def _handle_debug():
             print("\n[skill:debug] diagnosing recent failures...")
@@ -2554,7 +2638,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "debug", trace.data, content)
+            _store_memory(memory, task, "debug", trace.data, content, _trace=trace)
 
         def _handle_suggest():
             print("\n[skill:suggest] synthesising next task recommendation...")
@@ -2690,7 +2774,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "suggest", trace.data, content)
+            _store_memory(memory, task, "suggest", trace.data, content, _trace=trace)
 
         def _handle_troubleshoot():
             print("\n[skill:troubleshoot] diagnosing failures and planning next step...")
@@ -2936,7 +3020,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "troubleshoot", trace.data, content)
+            _store_memory(memory, task, "troubleshoot", trace.data, content, _trace=trace)
 
         def _handle_sync_wiki():
             print("\n[skill:sync-wiki] extracting implementation facts from source code...")
@@ -3168,7 +3252,7 @@ Rules:
                     write_output(design_system_text, _out, trace)
                     print(f"\n  [design] design system -> {_out}")
                     trace.finish("PASS")
-                    _store_memory(memory, task, "design", trace.data, design_system_text)
+                    _store_memory(memory, task, "design", trace.data, design_system_text, _trace=trace)
                     return
 
             # ── Phase 2: generate HTML page ──────────────────────────────────
@@ -3221,7 +3305,7 @@ Rules:
                 write_output(html, _out, trace)
                 print(f"\n  [{_skill_name}] page -> {_out}")
                 trace.finish("PASS")
-                _store_memory(memory, task, _skill_name, trace.data, html[:8000])
+                _store_memory(memory, task, _skill_name, trace.data, html[:8000], _trace=trace)
 
         def _handle_deck():
             import re as _re
@@ -3303,6 +3387,7 @@ Rules:
             _store_memory(
                 memory, task, "deck", trace.data,
                 f"Deck: {_title or 'untitled'} | {len(content_pages)} source(s) | design: {_design_src or 'default'} | out: {out_path}",
+                _trace=trace,
             )
             print(f"\n  [deck] → {out_path}")
 
@@ -3410,6 +3495,9 @@ Rules:
             if _planner_resp is not None:
                 trace.log_usage(_planner_resp, stage="planner")
                 trace.log_planner_cot(_planner_resp)
+                _plan_thinking = getattr(getattr(_planner_resp, "message", None), "thinking", None) or ""
+                if _plan_thinking:
+                    _emit("thinking", {"stage": "plan", "text": _plan_thinking[:8000], "chars": len(_plan_thinking)})
             _emit("plan", {
                 "task_type":  plan.task_type,
                 "complexity": plan.complexity,
@@ -3417,6 +3505,10 @@ Rules:
                 "gaps":       plan.knowledge_gaps or [],
                 "notes":      plan.notes or "",
             })
+            from harness.agent_channel import send_message as _ch_send
+            _q_count = len(plan.search_queries or [])
+            _ch_send("parent", "progress",
+                     f"Plan ready: {plan.task_type}/{plan.complexity}, {_q_count} queries")
             # Plan approval gate — blocks until the dashboard user approves or edits queries
             if plan_gate is not None:
                 approved = plan_gate(plan.search_queries or [])
@@ -3429,8 +3521,8 @@ Rules:
             auto_skills   = auto_activate(task, plan)
             active_skills = merge_skills(explicit_skills, auto_skills)
 
-        # Refine keep_alive now that task_type and active_skills are known
-        if _KEEP_ALIVE_OVERRIDE is None:
+        # Refine keep_alive now that task_type and active_skills are known (ollama only)
+        if _KEEP_ALIVE_OVERRIDE is None and os.environ.get("INFERENCE_BACKEND", "ollama").lower() == "ollama":
             _KEEP_ALIVE = _estimate_keep_alive(
                 task_type=plan.task_type,
                 explicit_skills=set(active_skills),
@@ -3558,6 +3650,8 @@ Rules:
         trace.set_stage("synth")
         print("\n  [synth] synthesizing from merged results...")
         _emit("synth", {"stage": "start", "task_type": plan.task_type, "tokens_in": len(context) // 4})
+        from harness.agent_channel import send_message as _ch_send
+        _ch_send("parent", "progress", f"Synthesis started — {len(context) // 4} tokens in")
         if expected_count is not None:
             print(f"  [count] detected count constraint: {expected_count} — using count-aware synthesis")
             with trace.span("synthesize", model=producer_model):
@@ -3648,11 +3742,11 @@ Rules:
                     except Exception as _gap_err:
                         print(f"  [sync-wiki:gaps] error (non-fatal): {_gap_err}")
 
-            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL)
+            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL, _trace=trace)
             if tac is not None:
                 trace.data["tac_hours"] = tac
+            _store_memory(memory, task, wiggum_trace.get("task_type") or "", trace.data, content, wiggum_issues=all_wiggum_issues, _trace=trace)
             trace.finish()
-            _store_memory(memory, task, wiggum_trace.get("task_type") or "", trace.data, content, wiggum_issues=all_wiggum_issues)
 
             # Post-run skill extraction — non-blocking
             try:
@@ -3669,12 +3763,12 @@ Rules:
             except Exception as _skill_err:
                 print(f"  [skill] extraction error (non-fatal): {_skill_err}")
         else:
-            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL)
+            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL, _trace=trace)
             if tac is not None:
                 trace.data["tac_hours"] = tac
-            trace.finish("PASS")
             from harness.wiggum import detect_task_type
-            _store_memory(memory, task, detect_task_type(task), trace.data, content)
+            _store_memory(memory, task, detect_task_type(task), trace.data, content, _trace=trace)
+            trace.finish("PASS")
 
     except Exception as e:
         print(f"[error] unhandled exception: {e}")
