@@ -82,3 +82,6 @@ notebooks/
 
 # TTS training artifacts
 speecht5_nicho/
+
+# Demo recordings (raw .webm intermediates; commit only docs/demos/*.gif)
+docs/demos/raw/

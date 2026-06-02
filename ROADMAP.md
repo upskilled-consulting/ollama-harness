@@ -150,9 +150,11 @@ After fine-tune v2 completes:
 3. Benchmark: `/annotate /wiggum --producer nanda-annotator` on held-out papers vs base
 
 ### DPO training loop closure
-`build_dpo_dataset.py` exports cross-run preference pairs. When N ≥ 50 pairs:
-`trl dpo --model <sft-checkpoint> --dataset hf_datasets/dpo.jsonl`
-Re-import via Ollama Modelfile and benchmark against base producer.
+`build_dpo_dataset.py` exports cross-run preference pairs; `extract_rag_dpo.py` exports
+RAG A/B experiment pairs. Full training pipeline in `scripts/train_dpo.py` (QLoRA DPOTrainer,
+same LoRA config as SFT). Cold-start path via UltraFeedback documented in 0.3.9 below.
+Trigger condition: ≥ 200 own pairs with score_delta ≥ 0.5, OR revision depth experiment
+confirms 3-round wiggum reliably produces ≥ 8.5 outputs (those become SFT targets).
 
 ### ✓ Submit: live output streaming
 `POST /api/tasks` returns an `item_id`. The Submit view opens an SSE connection to
@@ -679,6 +681,114 @@ step before any bulk delete; the agent never auto-deletes.
 
 ---
 
+## 0.3.8 — Autoresearch loop upgrades
+
+Three convergence failures documented across 100+ experiments — oscillation (exps 20–38), plateau below 9.0, and proposer cycling on banned angles (exps 105–106) — point to structural gaps in the loop that the Kimi unblock addresses only reactively. This milestone closes them proactively, drawing on the SkillOpt (arXiv 2605.23904) and GEPA design patterns analyzed in the blog series.
+
+### Validation gating (SkillOpt gap 1)
+
+Currently: a proposal is accepted if its composite score exceeds baseline by `DELTA_THRESHOLD` on a single eval run. Both training and acceptance use the same task suite. Noise-accepted proposals enter the history and mislead the proposer into treating variance as signal — the root cause of the exps 105–106 cycling.
+
+Fix: require any accepted proposal to clear the eval on two independent random seeds before committing. A proposal that improves on seed A but not seed B is a noise accept; reject it and do not add it to the history.
+
+```python
+VALIDATION_SEED_COUNT = int(os.environ.get("VALIDATION_SEED_COUNT", "2"))
+
+def accept_proposal(score_seed_a: float, baseline: float) -> bool:
+    """Re-run with a different seed before accepting. Returns True only if both pass."""
+    score_seed_b = _run_eval_once(task_ids)
+    return score_seed_a > baseline + DELTA_THRESHOLD and \
+           score_seed_b > baseline + DELTA_THRESHOLD
+```
+
+Cost: one extra eval run per accepted proposal (~15 min). With >80% discard rate this adds roughly one extra run per five experiments — well within budget.
+
+### Minibatch floor screening (GEPA gap)
+
+Currently: every experiment incurs a full eval regardless of whether the candidate is clearly broken. Broken candidates (those that pass the length check but produce nonsense outputs) cost as much as genuine proposals.
+
+Fix: run a single-task, single-sample eval before the full eval. If the quick score falls below `MINIBATCH_FLOOR`, discard immediately without a full eval run.
+
+```python
+MINIBATCH_FLOOR = float(os.environ.get("MINIBATCH_FLOOR", "6.5"))
+
+def run_eval_screened(task_ids, n, baseline):
+    quick = _run_eval_once([task_ids[0]])
+    if quick < MINIBATCH_FLOOR:
+        return quick, False   # skip full eval
+    return run_eval(task_ids, n), True
+```
+
+Expected saving: ~30–40 min per clearly-broken candidate that currently clears the length check. On long autoresearch runs this compounds.
+
+### Pareto pool (GEPA gap)
+
+Currently: scalar-best selection (`baseline_score` scalar). When two strategies A and B each win on different task subsets, the loop alternates between them without keeping either — the oscillation pattern in exps 20–38.
+
+Fix: maintain a `ParetoPool` of up to 4 candidates. A candidate survives if it ever scored best on at least one task run. The proposer samples parents proportionally-by-score rather than always mutating the global best. Scalar-best `baseline_score` still drives the keep/discard decision; the pool is in-memory and drives parent selection only.
+
+See `blog/gepa-autoresearch.html` for the complete `ParetoPool` implementation.
+
+### Fast/slow epoch structure (SkillOpt gap 2)
+
+Currently: one timescale — every experiment is both a fast (per-run) and a slow (commit) update. The proposer sees a rolling 5-experiment window rather than a batch summary, making it reactive to last-run noise.
+
+Fix: define an epoch as N experiments (default `EPOCH_SIZE=10`). Within the epoch, the loop runs as normal. At epoch boundary, the proposer receives a full epoch summary (all keeps and discards, not just the last 5) and generates an epoch-level candidate. The epoch-level candidate is then subject to validation gating (two seeds). If it clears, it becomes the new baseline for the next epoch.
+
+```python
+EPOCH_SIZE = int(os.environ.get("EPOCH_SIZE", "10"))
+
+# In main loop, after each experiment:
+if experiment % EPOCH_SIZE == 0:
+    epoch_summary = format_epoch_summary(experiment - EPOCH_SIZE, experiment)
+    epoch_candidate = propose_epoch_instruction(current, epoch_summary)
+    if epoch_candidate and accept_proposal(...):
+        commit_and_keep(epoch_candidate)
+```
+
+### Skill-as-artifact (SkillOpt gap 3)
+
+Currently: `SYNTH_INSTRUCTION`, `SYNTH_COUNT`, `SYNTH_PROSE` are Python string constants embedded in `agent.py`. The best instruction is recoverable only via `git log`. If the process crashes or a new agent process starts, there is no single loadable file representing the current best skill.
+
+Fix: on each validated keep, write the accepted instructions to `skills/synthesis.md` with YAML front matter recording experiment number, score, and validation seed count. `agent.py` loads from this file at startup rather than reading embedded string constants.
+
+```markdown
+---
+experiment: 112
+score: 8.91
+tasks: [T_B, T_D, T_E]
+validated: true
+date: 2026-05-25
+---
+
+# Synthesis Instruction
+[instruction text here]
+```
+
+```python
+def load_synthesis_skill(path="skills/synthesis.md") -> dict:
+    with open(path) as f:
+        raw = f.read()
+    front, _, body = raw.partition("\n---\n")
+    meta = yaml.safe_load(front.lstrip("---\n"))
+    meta["instruction"] = body.strip()
+    return meta
+```
+
+This also makes the AIBOM entry for the synthesis skill concrete: `skills/synthesis.md` is the artifact; its front matter is the provenance record.
+
+### AIBOM maintenance (ongoing)
+
+`AIBOM.md` in the repo root records the model inventory. It is a living document — it must be updated any time:
+- A model is updated via `ollama pull` (Ollama manifest ID changes)
+- A custom Modelfile system prompt is changed (system prompt hash changes)
+- A new model role is added to the codebase
+- A cloud endpoint is added or removed (`KIMI_MODEL`, etc.)
+
+Regeneration procedure: `ollama list` → update manifest IDs; `ollama show <tag>` → verify architecture fields; SHA256 of system prompt text for Modelfile entries. See `AIBOM.md` for the full procedure.
+
+---
+
 ## 0.4.0 — Personal TTS model
 
 Fine-tune `microsoft/speecht5_tts` on local voice recordings to produce a personalized
@@ -713,6 +823,99 @@ Record the passages in `reading_scripts.md`, rebuild the manifest, and run a con
 training pass on top of `checkpoint-500` (not from base). Target: 200+ utterances before
 the second pass, 500+ before evaluating voice character transfer. Wiggum-style eval for
 voice: MOS proxy via preference comparison against the base SpeechT5 output.
+
+---
+
+## 0.3.9 — DPO cold-start and producer improvement
+
+**Goal:** fine-tune the producer model to measurably improve wiggum scores on research
+synthesis tasks, using a cold-start blend of UltraFeedback and own pairs that shifts
+toward own data as the pipeline accumulates signal.
+
+### Prerequisites (gate conditions)
+
+Before running any training:
+
+1. **Revision depth result** — `run_revision_depth.py` must complete across 12 diverse
+   tasks. If mean r1→best lift ≥ 0.5 and ≥ 40% of tasks break 8.5, 3-round wiggum
+   revision becomes the harvest strategy for SFT targets. If not, the quality ceiling
+   is a model limitation and the path shifts to teacher distillation from a stronger model.
+
+2. **Own pair count** — `python scripts/build_dpo_dataset.py --stats` should show
+   ≥ 200 pairs with score_delta ≥ 0.5 before training has meaningful signal. Track
+   with `python scripts/mix_dpo_dataset.py` (prints own vs cold-start counts).
+
+### Data pipeline (all scripts exist)
+
+```
+# One-time: filter UltraFeedback to format-compatible DPO pairs
+python scripts/prepare_ultrafeedback.py
+# → scripts/hf_datasets/ultrafeedback_cold_start.jsonl  (~2000 pairs, delta ≥ 1.0)
+
+# Before each training run: recompute mixing ratio based on own pair count
+python scripts/mix_dpo_dataset.py
+# → scripts/hf_datasets/dpo_mixed.jsonl  (ratio shifts automatically)
+
+# After each experiment run: extract RAG A/B pairs
+python scripts/extract_rag_dpo.py --append-to scripts/hf_datasets/dpo.jsonl
+```
+
+### Mixing ratio schedule
+
+| Own pairs | Own% | Cold-start% | What the model learns |
+|-----------|------|-------------|----------------------|
+| < 50      | 10%  | 90%         | General preference alignment |
+| 50–200    | 30%  | 70%         | Starting to weight synthesis style |
+| 200–500   | 60%  | 40%         | Predominantly own task distribution |
+| 500+      | 90%  | 10%         | Own signal dominates; cold-start as regularizer against forgetting |
+
+Keep 10% cold-start even at 500+ pairs to prevent catastrophic forgetting of general
+instruction-following outside the training distribution.
+
+### Training
+
+```
+python scripts/train_dpo.py
+# QLoRA DPOTrainer, r=16, lora_alpha=32, beta=0.1, lr=5e-5
+# Reads dpo_mixed.jsonl, writes dpo_output/merged/
+# DashboardCallback emits [EVENT] lines — live loss/rewards visible in Fine-tune panel
+```
+
+Key DPO-specific metrics to watch in `data/dpo_metrics.jsonl`:
+- `rewards/margins` increasing → model is learning the preference direction
+- `rewards/chosen` increasing while `rewards/rejected` stays flat → clean signal
+- If both decrease together → beta too high (too conservative); lower to 0.05
+
+### Deployment
+
+```
+python llama.cpp/convert_hf_to_gguf.py dpo_output/merged --outfile dpo_output/dpo-producer-q8.gguf --outtype q8_0
+echo 'FROM dpo_output/dpo-producer-q8.gguf' > dpo_output/Modelfile
+ollama create dpo-producer -f dpo_output/Modelfile
+# In .env:
+HARNESS_PRODUCER_MODEL=dpo-producer
+```
+
+### Benchmark after deployment
+
+Run the same 12 revision_depth tasks against `dpo-producer` vs the base model:
+
+```
+python run_revision_depth.py --resume   # with HARNESS_PRODUCER_MODEL=dpo-producer
+python eval_revision_depth.py
+```
+
+Promote if mean r1 score improves by ≥ 0.3 over base on held-out tasks not in training.
+Revert via `HARNESS_PRODUCER_MODEL=pi-qwen-32b` in `.env` — no Ollama changes needed.
+
+### SFT path (alternative to DPO if revision depth confirms 8.5 reach)
+
+If 3-round wiggum reliably produces ≥ 8.5 outputs, harvest a SFT dataset instead:
+run the batch harvest script (to be written) over 200+ diverse tasks with `WIGGUM_MAX_ROUNDS=3`,
+keep only outputs scoring ≥ 8.5, feed to `finetune_annotate.py`-style SFTTrainer.
+This teaches the model to produce 8.5-quality output directly (imitation) rather than
+learning it through preference comparison. SFT and DPO can be chained: SFT first to
+lift the output distribution, then DPO to sharpen preferences.
 
 ---
 
