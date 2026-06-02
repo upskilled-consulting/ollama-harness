@@ -20,6 +20,7 @@ Environment:
     conda activate ollama-pi
 """
 
+import datetime
 import json
 import os
 import re
@@ -28,7 +29,7 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
-from harness.inference import OllamaLike as _OllamaLike
+from harness.inference import OllamaLike as _OllamaLike, list_endpoints as _list_endpoints
 from harness.summarizer import summarize_for_eval, summarize_for_revision
 
 
@@ -62,8 +63,9 @@ PRODUCER_MODEL = (os.environ.get("WIGGUM_PRODUCER_MODEL")
 EVALUATOR_MODEL = (os.environ.get("WIGGUM_EVALUATOR_MODEL")
                    or os.environ.get("HARNESS_EVALUATOR_MODEL")
                    or os.environ.get("HARNESS_PRODUCER_MODEL", "atla/selene-mini"))
-MAX_ROUNDS = 3
-PASS_THRESHOLD = 9.0
+from harness.config import settings as _settings
+MAX_ROUNDS     = _settings.wiggum_max_rounds
+PASS_THRESHOLD = _settings.pass_threshold
 
 # Evaluator pool for rotation — comma-separated model names in HARNESS_EVALUATOR_POOL.
 # When set, each run draws one evaluator deterministically from the pool (hash of seed).
@@ -215,6 +217,14 @@ def _extract_eval_from_prose(text: str) -> dict | None:
 
 EVAL_PROMPT = """You are a strict evaluator. Score this output across five dimensions, then compute a weighted composite.
 
+Today's date: {today}
+Temporal reference guide — use these exact years for relative terms in both the task and output:
+  "this year"   = {this_year}   (the current calendar year)
+  "last year"   = {last_year}   (the year before the current year)
+  "recent"      = {last_year}–{this_year}
+
+Knowledge-cutoff rule: your training data may not include works, events, or releases from {last_year} onward. When scoring completeness, evaluate whether the output covers the expected TOPIC AREAS and depth — do NOT penalize for omitting specific named papers, products, or events that you cannot independently verify exist in {last_year}. If the output's year references conflict with the temporal guide above, flag the year error in issues but score completeness on coverage, not on named items you happen to know from earlier years.
+
 Task:
 {task}
 
@@ -284,6 +294,7 @@ Universal rules:
 - Do not give 10 on any dimension unless it is genuinely exceptional — find at least one thing that could be improved
 - For every dimension you scored 8 or below, include at least one specific issue describing exactly what would raise the score
 - Be a strict grader. When in doubt, score lower rather than higher.
+- Do NOT cite specific papers or products as "missing" from the output unless they are explicitly named in the task — your training data may not represent {last_year} accurately.
 - Language consistency: if any portion of the output is not in English (e.g. Chinese, French, Arabic characters appear), cap structure at 3 and add an issue flagging the language switch. The document must be entirely in English."""
 
 
@@ -303,16 +314,45 @@ TASK_CRITERIA = {
         "- More practices is not better if they are shallow — depth over breadth."
     ),
     "research": (
-        "This is a research synthesis task.\n"
-        "- The output should synthesize findings, not just list facts — explain why each point matters and how a practitioner would apply it.\n"
-        "- Each section should have enough context that a reader unfamiliar with the topic could act on it.\n"
-        "- Flag missing nuance or important caveats that affect how the information should be used."
+        "This is a research synthesis task — NOT a software engineering or coding task.\n"
+        "DO NOT penalize for missing 'implementation notes', 'code examples', or 'named tools/APIs' — "
+        "those criteria do not apply here.\n\n"
+        "Reinterpret the depth and grounded dimensions as follows for this task type:\n"
+        "- depth: Does each section provide specific supporting evidence — data points, statistics, "
+        "named regions/sectors/entities, direct quotes from sources, or mechanisms that explain "
+        "the 'why'? A section that names a region but gives no figures, dates, or causal explanation "
+        "is depth=6. A section with specific numbers, named actors, and causal reasoning is depth=8.\n"
+        "- grounded: Are empirical claims traceable to named real-world sources — specific reports, "
+        "datasets, agencies, or publications a reader could look up? Penalize claims that assert "
+        "facts without naming any source. Do NOT require code citations or API references.\n\n"
+        "Other criteria:\n"
+        "- The output should synthesize findings across sources, not just list facts — explain why "
+        "each point matters and what it implies.\n"
+        "- Flag claims that introduce information not supported by any source named in the output "
+        "(e.g. a global comparison added without citation).\n"
+        "- Flag missing nuance or important caveats that affect how the findings should be interpreted."
+    ),
+    "osint": (
+        "This is an OSINT / open-source intelligence task.\n"
+        "- Information scarcity is a valid finding — if the subject has a minimal public footprint, "
+        "the correct output states this clearly with evidence, rather than inventing verification steps or fabricating specifics.\n"
+        "- Penalize fabricated search steps, invented profiles, or unverifiable claims about the subject. "
+        "Do NOT penalize for lacking 'concrete LinkedIn examples' when the subject has no public profile — "
+        "that absence IS the finding.\n"
+        "- Reward accurate disambiguation (correctly distinguishing two people with similar names is high-value work).\n"
+        "- Depth means covering all available passive data sources exhaustively, not inventing depth through speculation.\n"
+        "- Grounded means every claim traces to a named public source (RDAP, crt.sh, Wayback, LinkedIn, etc.) — "
+        "not to steps the investigator should take in the future."
     ),
 }
 
 
 def detect_task_type(task: str) -> str:
-    """Classify the task into one of three types for criteria selection."""
+    """Classify the task into one of four types for criteria selection."""
+    if re.search(r'\bosint\b|\bopen.source intelligence\b|\bwhois\b|\bdomain investigation\b'
+                 r'|\bip investigation\b|\bthreat intel\b|\bpassive recon\b'
+                 r'|\bbackground.check\b|\bpublic.record', task, re.IGNORECASE):
+        return "osint"
     if re.search(r'\btop\s+\d+\b|\b\d+\s+most\b|\b\d+\s+(?:best|key|common|main)\b', task, re.IGNORECASE):
         return "enumerated"
     if re.search(r'\bbest practices?\b|\bhow to\b|\bstrategies? for\b|\bguide\b|\btips?\b', task, re.IGNORECASE):
@@ -320,19 +360,40 @@ def detect_task_type(task: str) -> str:
     return "research"
 
 
-def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=None) -> dict:
+def _pick_llamacpp_fallback(exclude: str = "") -> str | None:
+    """Return a llamacpp-backed model tag for eval fallback when the primary evaluator is unavailable."""
+    endpoints = _list_endpoints()
+    # Prefer known-good eval-capable models in size order
+    for preferred in ("qwen3-14b", "qwen3-8b", "qwen3-7b"):
+        if preferred in endpoints and preferred != exclude:
+            ep = endpoints[preferred]
+            if ep.get("backend", "") in ("llamacpp", "openai"):
+                return preferred
+    # Generic fallback: any llamacpp endpoint that isn't the excluded model
+    for tag, ep in endpoints.items():
+        if ep.get("backend") == "llamacpp" and tag != exclude:
+            return tag
+    return None
+
+
+def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=None, _msg_trace=None) -> dict:
     """Call the evaluator model. Returns parsed result dict."""
     task_type = detect_task_type(task)
     print(f"  [evaluate] task_type={task_type}  scoring output...")
 
-    eval_content = summarize_for_eval(content, task, _trace)
+    eval_content = summarize_for_eval(content, task, _msg_trace or _trace)
     # Hard cap: keep eval prompt well within VRAM budget regardless of summarizer output.
     # The eval rubric alone is ~900 tokens; 4000 chars ≈ 1000 tokens leaves ~2000 tokens
     # of headroom for both input + JSON output without competing with the producer weights.
     _EVAL_CONTENT_CAP = 4000
     if len(eval_content) > _EVAL_CONTENT_CAP:
         eval_content = eval_content[:_EVAL_CONTENT_CAP] + "\n…[truncated for eval]…"
+    _today     = datetime.date.today()
+    _this_year = _today.year
     prompt = EVAL_PROMPT.format(
+        today=_today.isoformat(),
+        this_year=_this_year,
+        last_year=_this_year - 1,
         task=task,
         content=eval_content,
         task_criteria=TASK_CRITERIA[task_type],
@@ -340,16 +401,24 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
 
     result = None
     raw = ""
+    _conn_failed = False
     for _eval_attempt in range(2):
+        _eval_model = EVALUATOR_MODEL
+        if _eval_attempt == 1 and _conn_failed:
+            fallback = _pick_llamacpp_fallback(exclude=PRODUCER_MODEL)
+            if fallback and fallback != EVALUATOR_MODEL:
+                _eval_model = fallback
+                print(f"  [evaluate] primary evaluator unavailable — switching to llamacpp fallback: {_eval_model}")
         try:
             response = ollama.chat(
-                model=EVALUATOR_MODEL,
+                model=_eval_model,
                 messages=[{"role": "user", "content": prompt}],
                 options={"temperature": 0.0, "num_predict": 512, "num_ctx": 4096},
                 format="json",
             )
         except Exception as _conn_err:
             print(f"  [warn] evaluator connection error (attempt {_eval_attempt+1}): {_conn_err!s:.120}")
+            _conn_failed = True
             if _eval_attempt == 0:
                 time.sleep(8)
             continue
@@ -359,6 +428,8 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
 
         # Capture thinking content if the evaluator model supports it
         thinking = getattr(response.message, "thinking", None) or ""
+        if thinking:
+            _emit("thinking", {"stage": "eval", "text": thinking[:8000], "chars": len(thinking)})
 
         raw = response["message"]["content"].strip()
 
@@ -368,8 +439,9 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
         # Strip <think>...</think> blocks some models prepend
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
-        if _trace is not None:
-            _trace.log_llm_turn("wiggum_eval", prompt, raw, thinking=thinking)
+        _turn_trace = _msg_trace or _trace
+        if _turn_trace is not None:
+            _turn_trace.log_llm_turn("wiggum_eval", prompt, raw, thinking=thinking)
 
         try:
             result = json.loads(raw)
@@ -456,13 +528,13 @@ def _revise_style_reminder() -> str:
     return f"Original output instructions (maintain these constraints while fixing issues):\n{instr}\n\n"
 
 
-def revise(task: str, content: str, eval_result: dict, _trace=None) -> str:
+def revise(task: str, content: str, eval_result: dict, _trace=None, _msg_trace=None) -> str:
     """Ask the producer model to revise the output given evaluator feedback."""
     print("  [revise] asking producer to fix issues...")
 
     issues_list = eval_result.get("issues", [])
     issues_text = "\n".join(f"- {i}" for i in issues_list)
-    revision_content = summarize_for_revision(content, task, issues_list, _trace)
+    revision_content = summarize_for_revision(content, task, issues_list, _msg_trace or _trace)
     # Hard cap: even if summarizer fails and returns full content, cap the revision
     # prompt to ~2 000 tokens so the producer's KV cache stays bounded.
     # num_ctx: 16384 is silently dropped by _chat_vllm (not translated to OpenAI API),
@@ -486,7 +558,9 @@ def revise(task: str, content: str, eval_result: dict, _trace=None) -> str:
     )
     if _trace is not None:
         _trace.log_usage(response, stage="wiggum_revise")
-        _trace.log_llm_turn("wiggum_revise", prompt, response["message"]["content"].strip())
+    _turn_trace = _msg_trace or _trace
+    if _turn_trace is not None:
+        _turn_trace.log_llm_turn("wiggum_revise", prompt, response["message"]["content"].strip())
 
     return response["message"]["content"].strip()
 
@@ -536,17 +610,17 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
     best_round = 0
 
     # Attempt to unload the producer from VRAM before evaluation.
-    # Works for ollama backend (keep_alive=0 is forwarded); silently no-ops for
-    # vLLM and llamacpp (keep_alive is dropped in _chat_vllm).  The primary OOM
-    # defense for non-ollama backends is the hard eval-content cap in evaluate().
-    try:
-        ollama.chat(model=producer_model,
-                    messages=[{"role": "user", "content": ""}],
-                    options={"num_predict": 1},
-                    keep_alive=0)
-        print("  [wiggum] producer unload requested (effective for ollama backend)")
-    except Exception:
-        pass
+    # Only meaningful for ollama backend (keep_alive=0 is forwarded); vLLM ignores it
+    # and will OOM on any request — skip entirely to avoid noisy failed retries.
+    if _list_endpoints().get(producer_model, {}).get("backend") != "vllm":
+        try:
+            ollama.chat(model=producer_model,
+                        messages=[{"role": "user", "content": "x"}],
+                        options={"num_predict": 1},
+                        keep_alive=0)
+            print("  [wiggum] producer unload requested (effective for ollama backend)")
+        except Exception:
+            pass
 
     for round_num in range(1, max_rounds + 1):
         print(f"--- round {round_num} ---")
@@ -557,7 +631,7 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
 
         # 2. Evaluate
         with (parent_trace.span("wiggum_eval", round=round_num) if parent_trace else _nullspan()):
-            result = evaluate(task, content, _trace=_local_trace)
+            result = evaluate(task, content, _trace=_local_trace, _msg_trace=parent_trace)
         score = result.get("score", 0.0)
         passed = result.get("passed", False)
         issues = [i for i in result.get("issues", []) if i and str(i).strip().lower() not in ("none", "n/a", "")]
@@ -653,18 +727,20 @@ def loop(task: str, output_path: str, producer_model: str = PRODUCER_MODEL, eval
             continue
 
         # 3. Revise — unload evaluator first to free VRAM before reloading the producer.
-        # keep_alive=0 works for ollama and llamacpp backends; silently dropped for vLLM.
-        try:
-            ollama.chat(model=evaluator_model,
-                        messages=[{"role": "user", "content": ""}],
-                        options={"num_predict": 1},
-                        keep_alive=0)
-            print("  [wiggum] evaluator unloaded before revision")
-        except Exception:
-            pass
+        # keep_alive=0 works for ollama and llamacpp backends; vLLM ignores it and OOMs
+        # on any request — skip entirely for vLLM-backed evaluators.
+        if _list_endpoints().get(evaluator_model, {}).get("backend") != "vllm":
+            try:
+                ollama.chat(model=evaluator_model,
+                            messages=[{"role": "user", "content": "x"}],
+                            options={"num_predict": 1},
+                            keep_alive=0)
+                print("  [wiggum] evaluator unloaded before revision")
+            except Exception:
+                pass
 
         with (parent_trace.span("wiggum_revise", round=round_num) if parent_trace else _nullspan()):
-            revised_content = revise(task, content, result, _trace=_local_trace)
+            revised_content = revise(task, content, result, _trace=_local_trace, _msg_trace=parent_trace)
 
         if not revised_content.strip():
             print("  [warn] producer returned empty revision, stopping loop")

@@ -77,7 +77,7 @@ DEFAULT_EVALUATOR    = (os.environ.get("HARNESS_EVALUATOR_MODEL")
 DEFAULT_CLUSTER_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("COMPRESS_MODEL", "qwen3-8b"))
 KEEP_ALIVE           = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 
-ANNOTATE_MODEL = "nanda-annotator-v2-q4km:latest"
+ANNOTATE_MODEL = os.environ.get("HARNESS_ANNOTATE_MODEL", "nanda-annotator-v2-q4km:latest")
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +476,9 @@ def step_cluster(papers: list[dict], model: str = DEFAULT_CLUSTER_MODEL, _trace=
         if _trace:
             _trace.log_usage(resp, stage="cluster")
     raw = resp["message"]["content"].strip()
+    _cluster_thinking = (resp.get("message") or {}).get("thinking") or ""
+    if _trace:
+        _trace.log_llm_turn("cluster", prompt, raw, thinking=_cluster_thinking)
     # Strip markdown fences if present
     raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
 
@@ -553,9 +556,13 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
             options={"temperature": 0.2, "num_predict": 512},
             keep_alive=KEEP_ALIVE,
         )
+        _synth_text = resp["message"]["content"].strip()
+        _synth_thinking = (resp.get("message") or {}).get("thinking") or ""
         if _trace:
             _trace.log_usage(resp, stage="synthesize")
-        cluster_summaries[cluster["name"]] = resp["message"]["content"].strip()
+            _trace.log_llm_turn("synthesize", paper_blurbs, _synth_text,
+                                thinking=_synth_thinking)
+        cluster_summaries[cluster["name"]] = _synth_text
         print(f"  cluster '{cluster['name']}': synthesized")
 
     # Cross-cluster synthesis
@@ -577,6 +584,10 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
         if _trace:
             _trace.log_usage(resp, stage="synthesize")
     cross_raw = resp["message"]["content"].strip()
+    _cross_thinking = (resp.get("message") or {}).get("thinking") or ""
+    if _trace:
+        _trace.log_llm_turn("synthesize", all_summaries, cross_raw,
+                            thinking=_cross_thinking)
 
     overview_m = re.search(r"OVERVIEW:\s*\n(.*?)(?=OPEN QUESTIONS:|$)", cross_raw, re.DOTALL)
     questions_m = re.search(r"OPEN QUESTIONS:\s*\n(.*)", cross_raw, re.DOTALL)
@@ -643,7 +654,7 @@ def step_render(papers: list[dict], clusters: list[dict], synthesis_data: dict,
                     "arxiv_url":  p.get("arxiv_url", ""),
                     "published":  p.get("published", ""),
                     "annotation": p.get("annotation", {}),
-                    "wiggum_score": p.get("wiggum_score"),
+                    "wiggum_score": p.get("wiggum_score") or 0.0,
                     "hub_score":  p.get("hub_score", 0),
                     "unresolved_refs": 0,
                 }
@@ -764,12 +775,30 @@ def run_lit_review(
     elapsed = round(time.monotonic() - t0, 1)
     print(f"\n[lit-review] done in {elapsed}s")
 
+    paper_to_cluster: dict[str, tuple[int, str]] = {}
+    for ci, cluster in enumerate(clusters):
+        for pid in cluster.get("paper_ids", []):
+            base_pid = pid.split("v")[0]
+            paper_to_cluster[base_pid] = (ci, cluster.get("name", f"Cluster {ci + 1}"))
+
     return {
         "papers":       len(papers),
         "clusters":     len(clusters),
         "out_path":     str(out_path),
         "elapsed_s":    elapsed,
         "paper_titles": [p.get("title", "") for p in papers if p.get("title")],
+        "papers_data":  [
+            {
+                "title":          p.get("title", ""),
+                "arxiv_url":      p.get("arxiv_url", ""),
+                "contribution":   (p.get("annotation") or {}).get("contribution", "")
+                                  or p.get("summary", "")[:200],
+                "annotation_len": len((p.get("annotation_raw") or "").encode()),
+                "cluster_idx":    paper_to_cluster.get(p.get("arxiv_id", "").split("v")[0], (None, ""))[0],
+                "cluster_name":   paper_to_cluster.get(p.get("arxiv_id", "").split("v")[0], (None, ""))[1],
+            }
+            for p in papers
+        ],
     }
 
 

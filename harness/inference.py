@@ -333,6 +333,7 @@ def _chat_vllm(
     # We truncate head (60%) + tail (20%) so both instruction preamble and recent context survive.
     # Never truncate system prompt — truncate the longest non-system message instead.
     _messages = list(messages)
+    _rate_limit_attempts = 0
     for attempt in range(3):
         try:
             msg, ptok, ctok, total_ns, prompt_ns, eval_ns = _stream_vllm_call(
@@ -340,6 +341,17 @@ def _chat_vllm(
             )
             return _OllamaResponse(msg, ptok, ctok, total_ns, prompt_ns, eval_ns)
         except Exception as exc:
+            try:
+                from openai import RateLimitError as _RateLimitError
+                if isinstance(exc, _RateLimitError) and _rate_limit_attempts < 6:
+                    retry_after = int(getattr(getattr(exc, "response", None), "headers", {}).get("retry-after", 0) or 0)
+                    wait = retry_after if retry_after > 0 else min(4 ** _rate_limit_attempts, 60)
+                    _rate_limit_attempts += 1
+                    print(f"  [inference] rate limited — waiting {wait}s (attempt {_rate_limit_attempts}/6)")
+                    time.sleep(wait)
+                    continue
+            except ImportError:
+                pass
             exc_str = str(exc)
             _is_ctx_err = (
                 "maximum context length" in exc_str
@@ -388,7 +400,14 @@ def _chat_vllm(
                 content  = str(_messages[longest_idx].get("content", "") or "")
                 keep_head = int(len(content) * 0.60)
                 keep_tail = int(len(content) * 0.20)
-                truncated = content[:keep_head] + "\n…[truncated]…\n" + content[-keep_tail:]
+                # Guard: if content is already empty/tiny, don't add the separator string
+                # (it would grow the content on every retry, which is the opposite of truncation).
+                if keep_head == 0 and keep_tail == 0:
+                    truncated = ""
+                elif keep_tail == 0:
+                    truncated = content[:keep_head]
+                else:
+                    truncated = content[:keep_head] + "\n…[truncated]…\n" + content[-keep_tail:]
                 _messages[longest_idx] = {**_messages[longest_idx], "content": truncated}
                 if "max_tokens" in oai_kwargs:
                     oai_kwargs = dict(oai_kwargs)

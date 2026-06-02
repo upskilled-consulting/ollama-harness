@@ -42,6 +42,7 @@ TRANSCRIPTS_DIR           = DATA_DIR / "transcripts"
 MCP_LOG                   = DATA_DIR / "mcp_tasks.jsonl"
 SECURITY_LOG              = DATA_DIR / "security_events.jsonl"
 LIVE_RUN_FILE             = DATA_DIR / "live_run.json"
+LIVE_TASK_FILE            = DATA_DIR / "live_task.json"
 TASK_LOGS_DIR             = DATA_DIR / "task_logs"
 BRIEFS_DIR                = DATA_DIR / "briefs"
 USER_PROFILE_PATH         = DATA_DIR / "user_profile.md"
@@ -99,6 +100,15 @@ class Settings(BaseSettings):
 
     # API keys
     semantic_scholar_api_key: str = ""
+    fred_api_key: str = ""
+    bea_api_key: str = ""
+    trading_api_key: str = ""
+    trading_api_secret: str = ""
+    is_paper_trading: bool = True
+    ipinfo_token: str = ""
+    urlscan_api_key: str = ""
+    otx_api_key: str = ""
+    hibp_api_key: str = ""
 
     # Server
     port: int  = 7860

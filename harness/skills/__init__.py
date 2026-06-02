@@ -452,6 +452,54 @@ REGISTRY: dict[str, dict] = {
         "auto": None,  # explicit only — user opts in when they need deterministic values
     },
 
+    "beige-book": {
+        "description": (
+            "Pre-synthesis: inject relevant Federal Reserve Beige Book passages into the "
+            "synthesis context. Performs semantic + keyword search over the local 1996-present "
+            "corpus (SQLite FTS5 + ChromaDB), auto-filtered by year and district hints from task."
+        ),
+        "hook":       "pre_synthesis",
+        "prompt":     None,
+        "context_fn": lambda task, _plan: _beige_book_context(task),
+        "auto": lambda task, _plan: bool(re.search(
+            r"\b(federal reserve|beige book|fomc|monetary policy|"
+            r"inflation|labor market|employment|gdp|interest rate|"
+            r"consumer spending|manufacturing|housing market|"
+            r"credit condition|economic activit|recession|dot.com|dotcom|"
+            r"fed\b)",
+            task, re.IGNORECASE,
+        )),
+    },
+
+    "execute-trades": {
+        "description": (
+            "Standalone: open bracket positions from a validated trading thesis file. "
+            "Dry-run by default (prints order params). Add --live to submit to Alpaca. "
+            "Skips any thesis with validation FLAGS. Appends an ## Orders section to the file. "
+            "Invocation: /execute-trades <thesis.md> [--live]"
+        ),
+        "hook": "standalone",
+        "prompt": None,
+        "auto": None,   # explicit only -- never auto-execute trades
+    },
+
+    "validate-trades": {
+        "description": (
+            "Post-wiggum: deterministic TA validation for trading thesis outputs. "
+            "Parses [THESIS:...] citations, loads signals from DB, and applies "
+            "rule-based PASS/WARN/FLAG checks (momentum rank, Hurst, BB z-score, "
+            "SMA cross, volatility, R/R ratio, position sizing). "
+            "Appends a ## Trade Validation section to the thesis file. No LLM involved."
+        ),
+        "hook": "post_wiggum",
+        "prompt": None,
+        "auto": lambda task, _plan: any(kw in task.lower() for kw in (
+            "trading thesis", "trade thesis", "trading theses", "paper trade",
+            "alpaca", "long thesis", "short thesis", "trade idea", "trade setup",
+            "actionable trade", "trade recommendation",
+        )),
+    },
+
 }
 
 # ---------------------------------------------------------------------------
@@ -608,6 +656,32 @@ def skills_at_hook(active_skills: list[str], hook: str) -> list[str]:
     return [n for n in active_skills if REGISTRY.get(n, {}).get("hook") == hook]
 
 
+def get_context_injections(active_skills: list[str], task: str, plan=None) -> str:
+    """
+    Call context_fn for any active pre_synthesis skill that has one.
+    Returns concatenated context string, or empty string if none.
+    """
+    parts = []
+    for name in active_skills:
+        skill = REGISTRY.get(name, {})
+        if skill.get("hook") == "pre_synthesis" and skill.get("context_fn"):
+            try:
+                result = skill["context_fn"](task, plan)
+                if result:
+                    parts.append(result)
+            except Exception as exc:
+                print(f"  [skills] context_fn error for '{name}': {exc}")
+    return "\n\n".join(parts)
+
+
+def _beige_book_context(task: str) -> str:
+    try:
+        from harness.beige_book_tool import query_beige_book
+        return query_beige_book(task)
+    except Exception as exc:
+        return f"[beige_book] retrieval failed: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Post-synthesis handler
 # ---------------------------------------------------------------------------
@@ -628,6 +702,38 @@ def run_post_synthesis(
         if name == "knowledge-graph":
             results["knowledge-graph"] = _handle_kg(content, task, output_path, producer_model)
     return results
+
+
+def run_post_wiggum(
+    active_skills: list[str],
+    content:       str,
+    task:          str,
+    output_path:   str,
+    producer_model: str,
+) -> dict:
+    """
+    Run all post_wiggum skill handlers that are not handled inline by the wiggum loop.
+    Returns a dict of results keyed by skill name.
+    """
+    results = {}
+    for name in skills_at_hook(active_skills, "post_wiggum"):
+        if name == "panel":
+            continue   # handled via WIGGUM_PANEL env var inside wiggum.py
+        if name == "validate-trades":
+            results["validate-trades"] = _handle_trade_validation(output_path)
+    return results
+
+
+def _handle_trade_validation(output_path: str) -> str | None:
+    if not output_path:
+        print("  [skill:validate-trades] no output path - skipping")
+        return None
+    try:
+        from harness.trade_validator import validate_thesis_file
+        return validate_thesis_file(output_path)
+    except Exception as e:
+        print(f"  [skill:validate-trades] failed: {e}")
+        return None
 
 
 def _handle_kg(content: str, task: str, output_path: str, producer_model: str) -> str | None:

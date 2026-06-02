@@ -154,7 +154,7 @@ def fetch(
         _status = getattr(feed, "status", 200)
         if _status == 429:
             _gave_up = True
-            for _wait in (30, 60, 120):
+            for _wait in (120, 300, 600):
                 print(f"429 rate-limited — waiting {_wait}s", flush=True)
                 time.sleep(_wait)
                 feed = feedparser.parse(url)

@@ -42,8 +42,11 @@ async def get_prune_candidates():
 
 
 @router.get("/memories/graph")
-async def get_memory_graph():
-    return _store.get_graph()
+async def get_memory_graph(limit: int = Query(600, ge=5, le=2000)):
+    import asyncio
+    from functools import partial
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(_store.get_graph, max_nodes=limit))
 
 
 @router.get("/memories/{memory_id}")

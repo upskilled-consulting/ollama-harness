@@ -95,6 +95,12 @@ class RunTrace:
 
             "input_tokens":     0,
             "output_tokens":    0,
+            "total_tokens":     0,
+
+            "total_eval_ms":        None,
+            "total_prompt_ms":      None,
+            "generation_tok_s":     None,
+            "total_thinking_chars": 0,
 
             "tokens_by_stage":  {},
 
@@ -279,12 +285,18 @@ class RunTrace:
     # Existing log methods
     # ------------------------------------------------------------------
 
-    def log_tool_call(self, name: str, query: str, result_chars: int):
-        self.data["tool_calls"].append({
-            "name": name,
-            "query": query,
-            "result_chars": result_chars,
-        })
+    def log_tool_call(self, name: str, query: str, result_chars: int,
+                      urls: list[dict] | None = None,
+                      result_preview: str | None = None,
+                      error: str | None = None):
+        entry: dict = {"name": name, "query": query, "result_chars": result_chars}
+        if urls:
+            entry["urls"] = urls[:12]
+        if result_preview:
+            entry["result_preview"] = result_preview[:1200]
+        if error:
+            entry["error"] = error
+        self.data["tool_calls"].append(entry)
 
     def log_synth_forced(self):
         self.data["synth_forced"] = True
@@ -485,11 +497,17 @@ class RunTrace:
             self.data["tac_hours"] = wiggum_trace["tac_hours"]
 
         for stage, vals in wiggum_trace.get("tokens_by_stage", {}).items():
-            s = self.data["tokens_by_stage"].setdefault(stage, {"input": 0, "output": 0, "calls": 0, "total_ms": 0})
-            s["input"]    += vals.get("input", 0)
-            s["output"]   += vals.get("output", 0)
-            s["calls"]    += vals.get("calls", 0)
-            s["total_ms"] += vals.get("total_ms", 0)
+            s = self.data["tokens_by_stage"].setdefault(
+                stage, {"input": 0, "output": 0, "calls": 0,
+                        "total_ms": 0, "eval_ms": 0, "prompt_ms": 0, "thinking_chars": 0}
+            )
+            s["input"]          += vals.get("input", 0)
+            s["output"]         += vals.get("output", 0)
+            s["calls"]          += vals.get("calls", 0)
+            s["total_ms"]       += vals.get("total_ms", 0)
+            s["eval_ms"]        += vals.get("eval_ms", 0)
+            s["prompt_ms"]      += vals.get("prompt_ms", 0)
+            s["thinking_chars"] += vals.get("thinking_chars", 0)
         self.data["input_tokens"]  += wiggum_trace.get("input_tokens", 0)
         self.data["output_tokens"] += wiggum_trace.get("output_tokens", 0)
 
@@ -540,13 +558,36 @@ class RunTrace:
             # Proxy: score × lines / (runtime_hours) — derivable from every run
             self.data["leverage"] = round(scores[-1] * output_lines / max(runtime_s / 3600.0, 1e-6), 2)
 
+        # Derived timing + throughput metrics
+        stages = self.data["tokens_by_stage"].values()
+        total_eval_ms   = sum(s.get("eval_ms",   0) for s in stages)
+        total_prompt_ms = sum(s.get("prompt_ms", 0) for s in stages)
+        total_thinking_chars = sum(s.get("thinking_chars", 0) for s in stages)
+
+        self.data["total_tokens"]          = self.data["input_tokens"] + self.data["output_tokens"]
+        self.data["total_eval_ms"]         = round(total_eval_ms, 1)
+        self.data["total_prompt_ms"]       = round(total_prompt_ms, 1)
+        self.data["total_thinking_chars"]  = total_thinking_chars
+
+        if total_eval_ms > 0:
+            self.data["generation_tok_s"] = round(
+                self.data["output_tokens"] / (total_eval_ms / 1000), 1
+            )
+            # Per-stage tok/s
+            for s in self.data["tokens_by_stage"].values():
+                e = s.get("eval_ms", 0)
+                if e > 0 and s.get("output", 0) > 0:
+                    s["tok_s"] = round(s["output"] / (e / 1000), 1)
+
         tok_in   = self.data["input_tokens"]
         tok_out  = self.data["output_tokens"]
+        tok_s    = self.data.get("generation_tok_s")
         dur      = self.data["run_duration_s"]
         leverage = self.data.get("leverage")
         lev_str  = f"  leverage={leverage:.1f}x" if leverage is not None else ""
         tac_str  = f"  tac={tac_hours}h" if tac_hours else ""
-        print(f"  [log] {dur}s  in={tok_in} out={tok_out} tok{tac_str}{lev_str}")
+        tps_str  = f"  {tok_s:.0f} tok/s" if tok_s else ""
+        print(f"  [log] {dur}s  in={tok_in} out={tok_out} tok{tps_str}{tac_str}{lev_str}")
         if not self._is_sub:
             try:
                 LIVE_RUN_FILE.unlink(missing_ok=True)

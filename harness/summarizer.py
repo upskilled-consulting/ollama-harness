@@ -137,6 +137,7 @@ def summarize_for_eval(content: str, task: str, trace=None) -> str:
         )
         if trace is not None:
             trace.log_usage(response, stage="summarize_eval")
+            trace.log_llm_turn("summarize_eval", prompt, response["message"]["content"].strip())
         summary = response["message"]["content"].strip()
     except Exception as e:
         print(f"  [summarizer] eval failed ({e}) — falling back to head+tail excerpt")
@@ -189,6 +190,7 @@ def summarize_for_revision(content: str, task: str, issues: list[str], trace=Non
         )
         if trace is not None:
             trace.log_usage(response, stage="summarize_revise")
+            trace.log_llm_turn("summarize_revise", prompt, response["message"]["content"].strip())
         compressed = response["message"]["content"].strip()
         print(f"  [summarizer] revise: {len(content)} -> {len(compressed)} chars  "
               f"(preserved sections: {issue_sections or 'all'})")

@@ -179,7 +179,7 @@ def _format_annotation(row: dict) -> str:
 # LLM scoring
 # ---------------------------------------------------------------------------
 
-def _llm(system: str, user: str, model: str, _trace=None) -> tuple[str, int, int]:
+def _llm(system: str, user: str, model: str, _trace=None) -> tuple[str, int, int, str]:
     resp = _llm_chat(
         model=model,
         messages=[
@@ -191,10 +191,12 @@ def _llm(system: str, user: str, model: str, _trace=None) -> tuple[str, int, int
     )
     if _trace is not None:
         _trace.log_usage(resp, stage="curate")
-    text    = resp["message"]["content"].strip()
-    in_tok  = resp.get("prompt_eval_count", 0) or 0
-    out_tok = resp.get("eval_count", 0) or 0
-    return text, in_tok, out_tok
+    msg      = resp.get("message") or {}
+    text     = (msg.get("content") or "").strip()
+    thinking = (msg.get("thinking") or "")
+    in_tok   = resp.get("prompt_eval_count", 0) or 0
+    out_tok  = resp.get("eval_count", 0) or 0
+    return text, in_tok, out_tok, thinking
 
 
 def _parse_score_reason(text: str) -> tuple[int | None, str]:
@@ -225,7 +227,7 @@ def score_paper(
     total_in = total_out = 0
 
     for persona in PERSONAS:
-        text, in_tok, out_tok = _llm(persona["system"], user_prompt, model, _trace=_trace)
+        text, in_tok, out_tok, thinking = _llm(persona["system"], user_prompt, model, _trace=_trace)
         score, reason = _parse_score_reason(text)
         scores.append({
             "persona": persona["name"],
@@ -234,6 +236,8 @@ def score_paper(
         })
         total_in  += in_tok
         total_out += out_tok
+        if _trace is not None:
+            _trace.log_llm_turn("curate", f"[{persona['name']}] {title}", text, thinking=thinking)
 
     valid_scores: list[int] = [s["score"] for s in scores if isinstance(s["score"], int)]
     mean = round(sum(valid_scores) / len(valid_scores), 2) if valid_scores else 0.0

@@ -125,7 +125,7 @@ from harness.logger import RunTrace
 from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
 from harness.security import check_file_path, check_output_path, check_python_code, scan_for_injection, strip_injection_candidates
-from harness.skills import auto_activate, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, skills_at_hook
+from harness.skills import auto_activate, get_context_injections, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, run_post_wiggum, skills_at_hook
 from harness.utils import current_date_context
 from harness.vision import detect_image_paths, extract_image_context
 from harness.wiggum import loop as wiggum_loop
@@ -244,13 +244,114 @@ def _is_technical_task(task: str) -> bool:
     return any(kw in lower for kw in _TECHNICAL_KEYWORDS)
 
 
+_TRADING_TASK_KEYWORDS = frozenset({
+    "trading thesis", "trade thesis", "trading theses", "paper trade",
+    "alpaca", "buy signal", "sell signal", "long thesis", "short thesis",
+    "entry point", "exit point", "position size", "trade idea", "trade setup",
+    "actionable trade", "trade recommendation", "portfolio allocation",
+})
+
+def _is_trading_task(task: str) -> bool:
+    lower = task.lower()
+    return any(kw in lower for kw in _TRADING_TASK_KEYWORDS)
+
+
+# Research/analysis tasks: economic, policy, data-driven analysis that should
+# cite retrieved sources rather than narrate best practices.
+_RESEARCH_TASK_VERBS = frozenset({
+    "analyze ", "analyse ", "assess ", "evaluate ", "examine ", "investigate ",
+    "compare ", "what factors", "what drove", "what caused", "why did",
+    "how has ", "how did ", "how have ", "explain why", "identify which",
+    "regional variation", "inflation dynamics", "price pressures",
+    "federal reserve", "economic conditions", "monetary policy",
+})
+_BEST_PRACTICES_SIGNALS = frozenset({
+    "best practice", "best-practice", "technique", "how to ", "list the",
+    "enumerate", "tips for", "guidelines for",
+})
+
+def _is_research_task(task: str) -> bool:
+    lower = task.lower()
+    if any(kw in lower for kw in _BEST_PRACTICES_SIGNALS):
+        return False
+    return any(kw in lower for kw in _RESEARCH_TASK_VERBS)
+
+
+# Research synthesis instruction — requires citation discipline and specificity.
+# Not an autoresearch target; intentionally separate from SYNTH_INSTRUCTION_PROSE.
+SYNTH_INSTRUCTION_RESEARCH = """\
+Output a structured research report in markdown starting with # (no preamble).
+
+Citation requirement: every empirical claim must be anchored to the retrieved context.
+Use inline citations: [FRED:SERIES:DATE] for FRED data, [BEA:DATASET:TABLE:GEO:PERIOD] for BEA data,
+"Beige Book (Month Year, District)" for Beige Book passages, or (Source: domain) for web sources.
+Do not assert facts that are not traceable to the retrieved context.
+
+District/entity attribution: never refer to "some regions" or "certain districts" —
+always name the specific district, sector, or entity. If the source names it, you must name it.
+
+Quote requirement: for each major finding, include at least one direct quote or verbatim
+figure from the retrieved source. Paraphrase is not sufficient when the source gives specific
+language, numbers, or named cost categories — reproduce them.
+Format quotes as: > "exact quote" — Beige Book (Month Year, District)
+
+Specificity requirement: name specific figures, percentages, district names, sector names,
+and time periods. Vague characterizations ("elevated", "strong", "persistent pressure")
+must be replaced with the concrete data point or direct quote that justifies them.
+
+Structure: use ## section headers. Cover the question's key dimensions in full.
+Depth over breadth: for each finding, show the specific evidence — exact values,
+named regions, named sectors, verbatim source language.
+"""
+
+SYNTH_INSTRUCTION_TRADING = """\
+Output a trading thesis report in markdown starting with # (no preamble).
+
+Structure each thesis exactly as follows — include ALL sections:
+
+## Thesis N: [Direction] [TICKER] — [One-line rationale]
+**Direction**: Long | Short
+**Ticker**: SYMBOL
+**Conviction**: High | Medium | Low
+[THESIS:{direction}:{ticker}:{rationale-slug}:{date}]
+
+**Macro context**: cite relevant [FRED:...], [BEA:...], or Beige Book signals that support the thesis
+**Signal support**: cite [SIGNAL:momentum_rank:...], [SIGNAL:hurst:...], [SIGNAL:bb_zscore:...] from market signals data
+**Fundamentals**: cite [YF:{ticker}:snapshot:{date}] — P/E, revenue growth, analyst target, upside %, short ratio
+**Risk factors**: 2-3 specific bearish counters to the thesis
+
+**Entry**: price level or range (market/limit)
+**Target**: price target with basis (e.g., analyst mean, prior high, valuation multiple)
+**Stop**: stop-loss level with basis (% below entry, support level)
+**Time horizon**: weeks | 1-3 months | 3-6 months | 6-12 months
+**Suggested position size**: % of paper portfolio
+
+---
+
+Generate 3-5 theses. Rank by conviction. Only cite signals that appear in the provided context — do not invent citations.
+At the end, add a ## Portfolio Summary section showing total suggested allocation and cash remaining.
+
+PRICE ANCHORING (mandatory): Entry, target, and stop prices MUST be derived from the
+current price shown in the [YF:{ticker}:snapshot:{date}] context block, not from memory.
+- Long: entry at or near current price (or below for a pullback limit); target = current * (1 + upside%); stop = current * (1 - risk%)
+- Short: entry at or near current price (or above for a bounce limit); target = current * (1 - downside%); stop = current * (1 + risk%)
+- If no [YF:...] block exists for a ticker, state the current price is unavailable and omit that thesis.
+"""
+
+
 def _synth_instruction(task: str) -> str:
     # HARNESS_SYNTH_INSTRUCTION env var overrides the experiment instruction — used by
     # RL data collection so diverse tasks aren't forced into the autoresearch template.
     override = os.environ.get("HARNESS_SYNTH_INSTRUCTION", "")
     if override:
         return override
-    return SYNTH_INSTRUCTION if _is_technical_task(task) else SYNTH_INSTRUCTION_PROSE
+    if _is_trading_task(task):
+        return SYNTH_INSTRUCTION_TRADING
+    if _is_technical_task(task):
+        return SYNTH_INSTRUCTION
+    if _is_research_task(task):
+        return SYNTH_INSTRUCTION_RESEARCH
+    return SYNTH_INSTRUCTION_PROSE
 
 
 SEARCHES_PER_TASK = 2        # minimum searches before novelty gating kicks in
@@ -951,6 +1052,9 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
         f"{current_date_context()}\n"
         f"Task: {task}\n\n"
         f"What is already known:\n{knowledge_state}\n\n"
+        "IMPORTANT: Your query must only be about the specific people, organizations, and subjects "
+        "explicitly named in the task above. Do NOT introduce any new person, organization, "
+        "or subject not mentioned in the task.\n\n"
         "Generate ONE search query to find important information about the task NOT yet covered above. "
         "Output ONLY the query string, nothing else."
     )
@@ -1011,6 +1115,18 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
     novelty_gate     = NOVELTY_THRESHOLD if not force_deep else -1   # -1 = never gate
     seen_domains:    set[str] = set()
     consecutive_zero_domain_rounds = 0
+
+    # OSINT pre-flight: generate dork queries when no planned_queries provided
+    if not planned_queries and not force_deep and os.environ.get("HARNESS_OSINT_DISABLE") != "1":
+        try:
+            from harness.osint_tool import _osint_themes, generate_dork_queries
+            if _osint_themes(task):
+                _dorks = generate_dork_queries(task, model=producer_model, n=2)
+                if _dorks:
+                    planned_queries = _dorks
+                    print(f"  [osint] dork queries: {_dorks}")
+        except Exception as _osint_pre_err:
+            print(f"  [osint] dork generation skipped: {_osint_pre_err}", file=sys.stderr)
 
     # Fan-out: pre-fetch all planned queries in parallel.
     # Gap-targeted rounds stay sequential — each query depends on knowledge_state
@@ -1141,6 +1257,91 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
         merged_text, removed = strip_injection_candidates(merged_text)
         print(f"  [security] removed {removed} line(s)")
         trace.log_injection_stripped(len(injection_matches))
+
+    # FRED enrichment — append live economic data for finance/econ tasks
+    if os.environ.get("FRED_API_KEY") or os.environ.get("HARNESS_FRED_DISABLE") != "1":
+        try:
+            from harness.fred_tool import query_fred as _query_fred, _themes_for_query as _fred_themes
+            _themes = _fred_themes(task)
+            if _themes:
+                print(f"  [fred] economic intent detected (themes: {_themes[:3]}) — fetching live data...")
+                _fred_block = _query_fred(task, start=None, end=None, max_series=5)
+                if _fred_block:
+                    merged_text = merged_text + "\n\n" + _fred_block
+                    print(f"  [fred] appended {len(_fred_block)} chars of FRED data")
+                    trace.log_tool_call("fred", task, len(_fred_block),
+                                        result_preview=_fred_block[:600], error=None)
+        except Exception as _fred_err:
+            print(f"  [fred] skipped: {_fred_err}", file=sys.stderr)
+
+    # BEA enrichment — append live BEA economic data for macro/regional/trade tasks
+    if os.environ.get("HARNESS_BEA_DISABLE") != "1":
+        try:
+            from harness.bea_tool import query_bea as _query_bea, _themes_for_query as _bea_themes
+            _bea_intents_found = _bea_themes(task)
+            if _bea_intents_found:
+                print(f"  [bea] economic intent detected (themes: {_bea_intents_found[:3]}) — fetching live data...")
+                _bea_block = _query_bea(task)
+                if _bea_block:
+                    merged_text = merged_text + "\n\n" + _bea_block
+                    print(f"  [bea] appended {len(_bea_block)} chars of BEA data")
+                    trace.log_tool_call("bea", task, len(_bea_block),
+                                        result_preview=_bea_block[:600], error=None)
+        except Exception as _bea_err:
+            print(f"  [bea] skipped: {_bea_err}", file=sys.stderr)
+
+    # Alpaca enrichment — inject current portfolio state for trading/thesis queries
+    if os.environ.get("HARNESS_ALPACA_DISABLE") != "1":
+        try:
+            from harness.alpaca_tool import format_portfolio_context as _alpaca_ctx, _has_trading_intent as _alpaca_intent
+            if _alpaca_intent(task):
+                print("  [alpaca] trading intent detected — injecting portfolio context...")
+                _alpaca_block = _alpaca_ctx()
+                if _alpaca_block:
+                    merged_text = merged_text + "\n\n" + _alpaca_block
+                    print(f"  [alpaca] appended {len(_alpaca_block)} chars of portfolio context")
+                    trace.log_tool_call("alpaca", task, len(_alpaca_block),
+                                        result_preview=_alpaca_block[:600], error=None)
+        except Exception as _alpaca_err:
+            print(f"  [alpaca] skipped: {_alpaca_err}", file=sys.stderr)
+
+    # yfinance enrichment — equity fundamentals for ticker/trading queries.
+    # Always fires for trading thesis tasks so the model has live prices to anchor entry/target/stop.
+    if os.environ.get("HARNESS_YFINANCE_DISABLE") != "1":
+        try:
+            from harness.yfinance_tool import query_yfinance as _query_yf, _has_equity_intent as _yf_intent, _extract_tickers_from_query as _yf_tickers
+            if _yf_intent(task) or _is_trading_task(task):
+                _explicit = _yf_tickers(task)
+                # For trading thesis tasks with no explicit tickers in the task string,
+                # extract tickers from the research results so the model gets live price
+                # data for the specific stocks it discovered, not just trending-DB tickers.
+                if not _explicit and _is_trading_task(task):
+                    _from_research = _yf_tickers(merged_text)
+                    _explicit = _from_research[:10] if _from_research else None
+                _yf_block = _query_yf(task, tickers=_explicit or None, top=10)
+                if _yf_block:
+                    merged_text = merged_text + "\n\n" + _yf_block
+                    print(f"  [yfinance] appended {len(_yf_block)} chars of equity fundamentals")
+                    trace.log_tool_call("yfinance", task, len(_yf_block),
+                                        result_preview=_yf_block[:600], error=None)
+        except Exception as _yf_err:
+            print(f"  [yfinance] skipped: {_yf_err}", file=sys.stderr)
+
+    # OSINT enrichment — WHOIS, DNS, certs, threat intel for domain/IP targets
+    if os.environ.get("HARNESS_OSINT_DISABLE") != "1":
+        try:
+            from harness.osint_tool import query_osint as _query_osint, _detect_targets as _osint_targets
+            _osint_tgts = _osint_targets(task)
+            if _osint_tgts["domains"] or _osint_tgts["ips"]:
+                print(f"  [osint] targets detected — fetching enrichment data...")
+                _osint_block, _ = _query_osint(task)
+                if _osint_block:
+                    merged_text = merged_text + "\n\n" + _osint_block
+                    print(f"  [osint] appended {len(_osint_block)} chars of OSINT data")
+                    trace.log_tool_call("osint", task, len(_osint_block),
+                                        result_preview=_osint_block[:600], error=None)
+        except Exception as _osint_err:
+            print(f"  [osint] skipped: {_osint_err}", file=sys.stderr)
 
     # Store in research cache for future autoresearch experiments on the same task
     if _research_cache_enabled:
@@ -3422,6 +3623,29 @@ Rules:
             run_onboarding(ask_fn, producer_model, trace)
             trace.finish("PASS")
 
+        def _handle_execute_trades():
+            trace.data["task_type"] = "execute-trades"
+            from harness.alpaca_orders import execute_from_thesis_file
+
+            tokens    = task.split()
+            live_mode = "--live" in tokens
+            # First non-flag token that looks like a file path
+            thesis_path = next(
+                (t for t in tokens if not t.startswith("--") and ("/" in t or "\\" in t or t.endswith(".md"))),
+                path or "",
+            )
+            if not thesis_path:
+                print("[execute-trades] specify thesis file path in task: /execute-trades path/to/thesis.md [--live]")
+                trace.finish("ERROR")
+                return
+
+            results = execute_from_thesis_file(thesis_path, live=live_mode)
+            submitted = sum(1 for r in results if r.status == "submitted")
+            dry_run   = sum(1 for r in results if r.status == "dry_run")
+            skipped   = sum(1 for r in results if r.status == "skipped")
+            print(f"\n[execute-trades] done: {submitted} submitted, {dry_run} dry-run, {skipped} skipped")
+            trace.finish("PASS")
+
         _STANDALONE = {
             "annotate":     _handle_annotate,
             "email":        _handle_email,
@@ -3448,8 +3672,9 @@ Rules:
             "site":         _handle_site,
             "deck":         _handle_deck,
             "test-harness": _handle_test_harness,
-            "grill-me":     _handle_grill_me,
-            "onboarding":   _handle_onboarding,
+            "grill-me":       _handle_grill_me,
+            "onboarding":     _handle_onboarding,
+            "execute-trades": _handle_execute_trades,
         }
 
         for _skill in explicit_skills:
@@ -3619,6 +3844,10 @@ Rules:
 
         # Pre-synthesis skill injections
         skill_context = get_prompt_injections(active_skills, "pre_synthesis")
+        beige_ctx = get_context_injections(active_skills, task, plan)
+        if beige_ctx:
+            print("  [skills] injecting beige book context...")
+            context = context + "\n\n" + beige_ctx
 
         # Plugin command template injection
         if _plugin_cmd_context:
@@ -3769,6 +3998,11 @@ Rules:
             from harness.wiggum import detect_task_type
             _store_memory(memory, task, detect_task_type(task), trace.data, content, _trace=trace)
             trace.finish("PASS")
+
+        # Post-wiggum skills (e.g. /validate-trades) — run regardless of wiggum on/off
+        if skills_at_hook(active_skills, "post_wiggum"):
+            with trace.span("post_wiggum_skills"):
+                run_post_wiggum(active_skills, content, task, path or "", producer_model)
 
     except Exception as e:
         print(f"[error] unhandled exception: {e}")
