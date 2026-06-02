@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from harness.api.routes import (
+    autoresearch,
     data,
     feedback,
     github,
@@ -22,6 +23,7 @@ from harness.api.routes import (
     mcp,
     memory,
     queue,
+    research_history,
     runs,
     security,
     system,
@@ -47,18 +49,21 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:7860"],
+    allow_origins=["null"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # API routes
+app.include_router(autoresearch.router, prefix="/api")
 app.include_router(runs.router,     prefix="/api")
 app.include_router(data.router,     prefix="/api")
 app.include_router(queue.router,    prefix="/api")
 app.include_router(tasks.router,    prefix="/api")
 app.include_router(mcp.router,      prefix="/api/mcp")
-app.include_router(history.router,  prefix="/api")
+app.include_router(history.router,          prefix="/api")
+app.include_router(research_history.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
 app.include_router(voice.router,    prefix="/api")
 app.include_router(memory.router,   prefix="/api")
