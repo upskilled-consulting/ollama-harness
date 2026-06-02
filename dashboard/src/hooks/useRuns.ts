@@ -77,6 +77,10 @@ export function useQueue() {
   return useQuery({ queryKey: ["queue"], queryFn: api.queue, refetchInterval: 3_000 });
 }
 
+export function useAutoresearch() {
+  return useQuery({ queryKey: ["autoresearch"], queryFn: api.autoresearch, refetchInterval: 5_000 });
+}
+
 export function useGates() {
   return useQuery({
     queryKey:       ["gates"],

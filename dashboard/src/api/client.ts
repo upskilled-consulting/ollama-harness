@@ -1,4 +1,4 @@
-import type { AnalyticsData, ArtifactContent, Artifact, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhCommitDetail, GhFileContent, GhIssue, GhPr, GhRepo, GhRun, GhTreeEntry, LiveRun, McpLogEntry, McpTool, MemoryDetail, MemoryGraph, MemoryList, MemoryRow, PlanRecord, QueueItem, RunRecord, SecurityEvent, SecuritySummary, Session, SkillEntry, SystemConfig, SystemFileContent, SystemFileMeta } from "@/types";
+import type { AnalyticsData, ArtifactContent, Artifact, AutoresearchData, CurationEntry, DashboardData, FeedbackRecord, GhCommit, GhCommitDetail, GhFileContent, GhIssue, GhPr, GhRepo, GhRun, GhTreeEntry, IngestResult, LiveRun, McpLogEntry, McpTool, MemoryDetail, MemoryGraph, MemoryList, MemoryRow, PlanRecord, QueueItem, ResearchHistoryItem, RunRecord, SecurityEvent, SecuritySummary, Session, SkillEntry, SystemConfig, SystemFileContent, SystemFileMeta } from "@/types";
 
 const BASE = "/api";
 
@@ -112,6 +112,18 @@ export const api = {
     post<MemoryRow>(`/memories/${id}/feedback`, { rating, comment }),
   memory_prune_candidates: () => get<{ candidates: MemoryRow[] }>("/memories/prune-candidates"),
   memory_graph:    () => get<MemoryGraph>("/memories/graph"),
+  autoresearch:    () => get<AutoresearchData>("/autoresearch"),
+  research_history: (params: { q?: string; since?: number; source?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (params.q)      p.set("q",      params.q);
+    if (params.since)  p.set("since",  String(params.since));
+    if (params.source) p.set("source", params.source);
+    if (params.limit)  p.set("limit",  String(params.limit));
+    const qs = p.toString();
+    return get<ResearchHistoryItem[]>(`/research-history${qs ? `?${qs}` : ""}`);
+  },
+  research_history_ingest: (urls: string[]) =>
+    post<{ results: IngestResult[] }>("/research-history/ingest", { urls }),
 };
 
 export function createRunsSocket(onMessage: (run: RunRecord) => void): WebSocket {

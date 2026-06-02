@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Hand, Crosshair, Maximize2, ZoomIn, X } from "lucide-react";
+import { zoom as d3Zoom, zoomIdentity, brush as d3Brush, select as d3Select } from "d3";
+import type { ZoomBehavior } from "d3";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemories, useMemory, useMemoryGraph, useMemoryPruneCandidates } from "@/hooks/useRuns";
 import { api } from "@/api/client";
@@ -385,59 +387,147 @@ function ReviewPane() {
 }
 
 // ---------------------------------------------------------------------------
-// Graph tab (UMAP ontology)
+// Graph tab — D3 zoom + brush interactive canvas
 // ---------------------------------------------------------------------------
 
+type GraphMode = "pan" | "select";
+
 function GraphPane() {
-  const { data: graph, isLoading } = useMemoryGraph();
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const dragging = useRef(false);
-  const lastPos = useRef({ x: 0, y: 0 });
+  const { data: graph, isLoading, isError } = useMemoryGraph();
+  const svgRef    = useRef<SVGSVGElement>(null);
+  const gMainRef  = useRef<SVGGElement>(null);
+  const gBrushRef = useRef<SVGGElement>(null);
+  const zoomBehavior    = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const currentTransform = useRef(zoomIdentity);
+  const pendingTransform = useRef<typeof zoomIdentity | null>(null);
 
-  const W = 700, H = 500;
+  const [mode,           setMode]           = useState<GraphMode>("pan");
+  const [selectedId,     setSelectedId]     = useState<number | null>(null);
+  const [hoveredId,      setHoveredId]      = useState<number | null>(null);
+  const [brushedIds,     setBrushedIds]     = useState<Set<number> | null>(null);
+  const [hiddenClusters, setHiddenClusters] = useState<Set<number>>(new Set());
+  const [zoomPct,        setZoomPct]        = useState(100);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; node: MemoryGraphNode } | null>(null);
 
-  const nodes = graph?.nodes ?? [];
+  const W = 720, H = 520, PAD = 40;
+
+  const nodes    = graph?.nodes    ?? [];
   const clusters = graph?.clusters ?? [];
 
-  // Normalize UMAP coords to SVG viewport
-  const xs = nodes.map((n) => n.x);
-  const ys = nodes.map((n) => n.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const rangeX = (maxX - minX) || 1, rangeY = (maxY - minY) || 1;
-  const pad = 40;
-
+  // UMAP → SVG pixel coords
+  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+  const minX = xs.length ? Math.min(...xs) : 0, maxX = xs.length ? Math.max(...xs) : 1;
+  const minY = ys.length ? Math.min(...ys) : 0, maxY = ys.length ? Math.max(...ys) : 1;
+  const rX = (maxX - minX) || 1,  rY = (maxY - minY) || 1;
   const toSvg = (n: MemoryGraphNode) => ({
-    x: pad + ((n.x - minX) / rangeX) * (W - 2 * pad),
-    y: pad + ((n.y - minY) / rangeY) * (H - 2 * pad),
+    x: PAD + ((n.x - minX) / rX) * (W - 2 * PAD),
+    y: PAD + ((n.y - minY) / rY) * (H - 2 * PAD),
   });
 
-  const onMouseDown = (e: React.MouseEvent) => {
-    dragging.current = true;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-  };
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (!dragging.current) return;
-    setPan((p) => ({ x: p.x + e.clientX - lastPos.current.x, y: p.y + e.clientY - lastPos.current.y }));
-    lastPos.current = { x: e.clientX, y: e.clientY };
-  };
-  const onMouseUp = () => { dragging.current = false; };
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom((z) => Math.max(0.3, Math.min(4, z * (e.deltaY < 0 ? 1.12 : 0.9))));
+  // ── D3 Zoom ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!svgRef.current || !gMainRef.current) return;
+    const svgEl = svgRef.current;
+    const gEl   = gMainRef.current;
+
+    if (mode !== "pan") {
+      // Detach zoom events in select mode
+      d3Select(svgEl)
+        .on("mousedown.zoom", null).on("touchstart.zoom", null)
+        .on("wheel.zoom",     null).on("dblclick.zoom",   null);
+      return;
+    }
+
+    const z = d3Zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 12])
+      .on("zoom", (ev) => {
+        currentTransform.current = ev.transform;
+        d3Select(gEl).attr("transform", String(ev.transform));
+        setZoomPct(Math.round(ev.transform.k * 100));
+      });
+
+    zoomBehavior.current = z;
+    d3Select(svgEl).call(z);
+    return () => { d3Select(svgEl).on(".zoom", null); };
+  }, [mode]);
+
+  // Apply a pending zoom transform after mode switches to pan
+  useEffect(() => {
+    if (mode !== "pan" || !svgRef.current || !zoomBehavior.current || !pendingTransform.current) return;
+    d3Select(svgRef.current).transition().duration(420)
+      .call(zoomBehavior.current.transform, pendingTransform.current);
+    pendingTransform.current = null;
+  }, [mode]);
+
+  // ── D3 Brush ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!gBrushRef.current) return;
+    const gEl = gBrushRef.current;
+
+    if (mode !== "select") {
+      d3Select(gEl).on(".brush", null).selectAll("*").remove();
+      return;
+    }
+
+    const b = d3Brush()
+      .extent([[0, 0], [W, H]])
+      .on("end", (ev) => {
+        if (!ev.selection) { setBrushedIds(null); return; }
+        const [[x0, y0], [x1, y1]] = ev.selection as [[number, number], [number, number]];
+        const t = currentTransform.current;
+        const ids = new Set(
+          nodes
+            .filter((n) => {
+              if (hiddenClusters.has(n.cluster)) return false;
+              const p = toSvg(n);
+              return t.applyX(p.x) >= x0 && t.applyX(p.x) <= x1
+                  && t.applyY(p.y) >= y0 && t.applyY(p.y) <= y1;
+            })
+            .map((n) => n.id)
+        );
+        setBrushedIds(ids.size ? ids : null);
+      });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    d3Select(gEl).call(b as any);
+    return () => { d3Select(gEl).on(".brush", null).selectAll("*").remove(); };
+  }, [mode, nodes, hiddenClusters]); // toSvg is derived from nodes — safe to omit
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const resetZoom = () => {
+    if (!svgRef.current || !zoomBehavior.current) return;
+    d3Select(svgRef.current).transition().duration(380)
+      .call(zoomBehavior.current.transform, zoomIdentity);
   };
 
+  const zoomToSelection = () => {
+    if (!brushedIds?.size) return;
+    const pts = nodes.filter((n) => brushedIds.has(n.id)).map(toSvg);
+    const x0 = Math.min(...pts.map((p) => p.x)) - 30, x1 = Math.max(...pts.map((p) => p.x)) + 30;
+    const y0 = Math.min(...pts.map((p) => p.y)) - 30, y1 = Math.max(...pts.map((p) => p.y)) + 30;
+    const s  = Math.min(10, 0.88 * Math.min(W / (x1 - x0), H / (y1 - y0)));
+    pendingTransform.current = zoomIdentity
+      .translate(W / 2 - s * (x0 + x1) / 2, H / 2 - s * (y0 + y1) / 2)
+      .scale(s);
+    setBrushedIds(null);
+    setMode("pan");
+  };
+
+  const toggleCluster = (id: number) =>
+    setHiddenClusters((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // ── Guard states ───────────────────────────────────────────────────────────
   if (isLoading) return <div className="loading">Loading graph…</div>;
+  if (isError) return (
+    <div style={{ textAlign: "center", padding: "60px 0", color: "var(--dim)" }}>
+      <div style={{ fontSize: 13 }}>Graph unavailable — server may be busy.</div>
+      <div style={{ fontSize: 11, marginTop: 6 }}>Switch away and back to retry.</div>
+    </div>
+  );
   if (graph?.error) return (
     <div style={{ textAlign: "center", padding: "60px 0", color: "var(--dim)" }}>
-      <div style={{ fontSize: 13, marginBottom: 8 }}>{graph.error}</div>
-      {graph.error.includes("umap-learn") && (
-        <code style={{ fontSize: 11 }}>pip install umap-learn scikit-learn</code>
-      )}
+      <div style={{ fontSize: 13 }}>{graph.error}</div>
+      {graph.error.includes("umap-learn") && <code style={{ fontSize: 11 }}>pip install umap-learn scikit-learn</code>}
     </div>
   );
   if (nodes.length === 0) return (
@@ -447,87 +537,204 @@ function GraphPane() {
     </div>
   );
 
-  const hoveredNode = nodes.find((n) => n.id === hoveredId) ?? null;
+  const visibleNodes = nodes.filter((n) => !hiddenClusters.has(n.cluster));
+  const hoveredNode  = nodes.find((n) => n.id === hoveredId) ?? null;
 
   return (
     <div>
-      {/* Cluster legend */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        {clusters.map((c) => (
-          <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color }} />
-            <span style={{ color: "var(--dim)" }}>{c.label}</span>
-          </div>
-        ))}
+      {/* ── Toolbar ── */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>
+        <button title="Pan / Zoom" onClick={() => setMode("pan")} style={graphToolBtn(mode === "pan")}>
+          <Hand size={12} /> Pan
+        </button>
+        <button title="Draw a box to select nodes" onClick={() => { setMode("select"); setBrushedIds(null); }} style={graphToolBtn(mode === "select")}>
+          <Crosshair size={12} /> Select
+        </button>
+        <div style={{ width: 1, height: 14, background: "var(--border)", margin: "0 2px" }} />
+        <button title="Fit all nodes" onClick={resetZoom} style={graphToolBtn(false)}>
+          <Maximize2 size={12} /> Fit
+        </button>
+        {brushedIds && brushedIds.size > 0 && (
+          <>
+            <button onClick={zoomToSelection} style={graphToolBtn(false, "var(--accent)")}>
+              <ZoomIn size={12} /> Zoom to {brushedIds.size}
+            </button>
+            <button onClick={() => setBrushedIds(null)} style={graphToolBtn(false, "#ef4444")}>
+              <X size={12} />
+            </button>
+          </>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+          {zoomPct}%
+        </span>
       </div>
 
-      <div style={{ display: "flex", gap: 20 }}>
-        {/* SVG canvas */}
-        <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "var(--surface2, rgba(255,255,255,0.03))", border: "1px solid var(--border, rgba(255,255,255,0.07))" }}>
+      {/* ── Cluster legend — click to toggle ── */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        {clusters.map((c) => {
+          const hidden = hiddenClusters.has(c.id);
+          return (
+            <button key={c.id} onClick={() => toggleCluster(c.id)} style={{
+              display: "flex", alignItems: "center", gap: 4, fontSize: 11,
+              border: "1px solid " + (hidden ? "transparent" : c.color + "44"),
+              cursor: "pointer", padding: "2px 8px", borderRadius: 10,
+              background: hidden ? "rgba(255,255,255,0.03)" : c.color + "18",
+              color: hidden ? "var(--dim)" : c.color,
+              opacity: hidden ? 0.45 : 1, transition: "opacity 0.15s",
+            }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: hidden ? "var(--dim)" : c.color }} />
+              {c.label}
+            </button>
+          );
+        })}
+        {hiddenClusters.size > 0 && (
+          <button onClick={() => setHiddenClusters(new Set())} style={{
+            fontSize: 10, border: "none", cursor: "pointer",
+            padding: "2px 6px", borderRadius: 6, background: "none", color: "var(--dim)",
+          }}>show all</button>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+        {/* ── SVG canvas ── */}
+        <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", flexShrink: 0, background: "var(--surface2)", border: "1px solid var(--border)" }}>
           <svg
             ref={svgRef}
             width={W} height={H}
-            style={{ cursor: dragging.current ? "grabbing" : "grab", display: "block" }}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
-            onWheel={onWheel}
+            style={{ display: "block", cursor: mode === "select" ? "crosshair" : "grab" }}
           >
-            <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
-              {nodes.map((n) => {
+            {/* Nodes — inside zoom transform group */}
+            <g ref={gMainRef}>
+              {visibleNodes.map((n) => {
                 const { x, y } = toSvg(n);
-                const color = CLUSTER_COLORS[n.cluster % CLUSTER_COLORS.length];
-                const isHov = n.id === hoveredId;
-                const isSel = n.id === selectedId;
-                const r = 5 + Math.max(0, n.quality) * 1.5;
+                const color   = CLUSTER_COLORS[n.cluster % CLUSTER_COLORS.length];
+                const isHov   = n.id === hoveredId;
+                const isSel   = n.id === selectedId;
+                const isBrush = brushedIds?.has(n.id) ?? false;
+                const r       = 5 + Math.max(0, n.quality) * 1.5;
+                const fOpacity = brushedIds
+                  ? (isBrush ? 1 : 0.12)
+                  : (isHov || isSel ? 0.92 : 0.65);
                 return (
-                  <g key={n.id}
-                    onMouseEnter={() => setHoveredId(n.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    onClick={() => setSelectedId(n.id === selectedId ? null : n.id)}
-                    style={{ cursor: "pointer" }}
+                  <g key={n.id} style={{ cursor: "pointer" }}
+                    onMouseEnter={(e) => {
+                      setHoveredId(n.id);
+                      const rect = svgRef.current!.getBoundingClientRect();
+                      setTooltip({ x: e.clientX - rect.left + 14, y: e.clientY - rect.top - 8, node: n });
+                    }}
+                    onMouseMove={(e) => {
+                      const rect = svgRef.current!.getBoundingClientRect();
+                      setTooltip((t) => t ? { ...t, x: e.clientX - rect.left + 14, y: e.clientY - rect.top - 8 } : null);
+                    }}
+                    onMouseLeave={() => { setHoveredId(null); setTooltip(null); }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedId(n.id === selectedId ? null : n.id); }}
                   >
                     <circle
-                      cx={x} cy={y} r={isSel ? r + 3 : r}
+                      cx={x} cy={y}
+                      r={isSel ? r + 3 : r}
                       fill={color}
-                      fillOpacity={isHov || isSel ? 0.9 : 0.6}
-                      stroke={isSel ? "#fff" : "none"}
-                      strokeWidth={1.5}
+                      fillOpacity={fOpacity}
+                      stroke={isSel ? "#fff" : isBrush ? color : "none"}
+                      strokeWidth={isSel ? 2 : isBrush ? 1.5 : 0}
+                      style={{ transition: "fill-opacity 0.12s, r 0.1s" }}
                     />
                     {(isHov || isSel) && (
-                      <text x={x} y={y - r - 4} textAnchor="middle" fill="#e2e8f0" fontSize={9} style={{ pointerEvents: "none" }}>
-                        {n.label.slice(0, 28)}{n.label.length > 28 ? "…" : ""}
+                      <text x={x} y={y - r - 5} textAnchor="middle" fill="var(--text)"
+                        fontSize={9} style={{ pointerEvents: "none", userSelect: "none" }}>
+                        {n.label.length > 32 ? n.label.slice(0, 31) + "…" : n.label}
                       </text>
                     )}
                   </g>
                 );
               })}
             </g>
+
+            {/* Brush overlay — outside zoom group, screen-space coords */}
+            <g ref={gBrushRef} style={{ pointerEvents: mode === "select" ? "all" : "none" }} />
           </svg>
-          <div style={{ position: "absolute", bottom: 8, right: 10, fontSize: 10, color: "var(--dim)", userSelect: "none" }}>
-            scroll to zoom · drag to pan · click to select
+
+          {/* Floating tooltip */}
+          {tooltip && !selectedId && (
+            <div style={{
+              position: "absolute", left: tooltip.x, top: tooltip.y,
+              pointerEvents: "none", zIndex: 20,
+              background: "var(--surface)", border: "1px solid rgba(100,200,180,0.25)",
+              borderRadius: 8, padding: "8px 12px", fontSize: 11, maxWidth: 210,
+              boxShadow: "0 4px 18px rgba(0,0,0,0.45)",
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 3 }}>{tooltip.node.label}</div>
+              <div style={{ color: "var(--dim)", display: "flex", gap: 8 }}>
+                {tooltip.node.task_type && <span>{tooltip.node.task_type}</span>}
+                <span>q: {tooltip.node.quality > 0 ? "+" : ""}{tooltip.node.quality}</span>
+              </div>
+              <div style={{ fontSize: 9, color: "var(--dim)", marginTop: 4, letterSpacing: "0.5px" }}>
+                CLICK TO OPEN
+              </div>
+            </div>
+          )}
+
+          <div style={{ position: "absolute", bottom: 8, right: 10, fontSize: 9, color: "var(--dim)", userSelect: "none", letterSpacing: "0.4px" }}>
+            {mode === "pan" ? "SCROLL → ZOOM · DRAG → PAN" : "DRAG → SELECT NODES"}
           </div>
         </div>
 
-        {/* Detail panel for selected node */}
-        {selectedId ? (
-          <div style={{ width: 320, flexShrink: 0 }}>
+        {/* ── Right panel ── */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {selectedId ? (
             <DetailPane memId={selectedId} onDeleted={() => setSelectedId(null)} />
-          </div>
-        ) : hoveredNode ? (
-          <div style={{ width: 320, flexShrink: 0, padding: 16, background: "var(--surface2, rgba(255,255,255,0.04))", borderRadius: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{hoveredNode.label}</div>
-            <div style={{ fontSize: 11, color: "var(--dim)", display: "flex", gap: 8 }}>
-              {hoveredNode.task_type && <span>{hoveredNode.task_type}</span>}
-              <span>quality: {hoveredNode.quality > 0 ? "+" : ""}{hoveredNode.quality}</span>
+          ) : brushedIds && brushedIds.size > 0 ? (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)", marginBottom: 10, letterSpacing: "0.5px" }}>
+                {brushedIds.size} NODE{brushedIds.size !== 1 ? "S" : ""} SELECTED
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 420, overflowY: "auto" }}>
+                {nodes.filter((n) => brushedIds.has(n.id)).map((n) => (
+                  <button key={n.id} onClick={() => setSelectedId(n.id)} style={{
+                    textAlign: "left", border: "1px solid var(--border)", cursor: "pointer",
+                    padding: "7px 10px", borderRadius: 7, fontSize: 11,
+                    background: "var(--surface2)", color: "var(--text)",
+                    display: "flex", alignItems: "center", gap: 8,
+                    transition: "background 0.1s",
+                  }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: CLUSTER_COLORS[n.cluster % CLUSTER_COLORS.length] }} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.label}</span>
+                    <QualityBadge q={n.quality} />
+                  </button>
+                ))}
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 6 }}>Click to open detail</div>
-          </div>
-        ) : null}
+          ) : hoveredNode ? (
+            <div style={{ padding: "4px 0" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{hoveredNode.label}</div>
+              <div style={{ fontSize: 11, color: "var(--dim)", display: "flex", gap: 8, alignItems: "center" }}>
+                {hoveredNode.task_type && <span>{hoveredNode.task_type}</span>}
+                <QualityBadge q={hoveredNode.quality} />
+              </div>
+              <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 8, letterSpacing: "0.4px" }}>CLICK NODE TO OPEN</div>
+            </div>
+          ) : (
+            <div style={{ paddingTop: 40, color: "var(--dim)", fontSize: 12 }}>
+              <div>Pan: drag or scroll</div>
+              <div style={{ marginTop: 6 }}>Select: switch mode, drag a box</div>
+              <div style={{ marginTop: 6 }}>Click cluster labels to hide/show</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function graphToolBtn(active: boolean, color?: string): React.CSSProperties {
+  return {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    fontSize: 11, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+    border: "1px solid " + (active ? "var(--accent)" : "var(--border)"),
+    background: active ? "rgba(100,200,180,0.1)" : "transparent",
+    color: color ?? (active ? "var(--accent)" : "var(--dim)"),
+    fontWeight: active ? 600 : 400, fontFamily: "var(--font-mono)",
+    transition: "all 0.12s",
+  };
 }
 
 // ---------------------------------------------------------------------------
