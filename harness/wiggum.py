@@ -413,7 +413,7 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
             response = ollama.chat(
                 model=_eval_model,
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.0, "num_predict": 512, "num_ctx": 4096},
+                options={"temperature": 0.0, "num_predict": 1024, "num_ctx": 4096},
                 format="json",
             )
         except Exception as _conn_err:

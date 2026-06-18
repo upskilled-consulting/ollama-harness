@@ -313,11 +313,15 @@ def _chat_vllm(
         oai_kwargs["presence_penalty"] = options["presence_penalty"]
     if "top_k" in options:
         oai_kwargs.setdefault("extra_body", {})["top_k"] = options["top_k"]
-    if fmt == "json" and backend == "vllm":
+    if fmt == "json" and backend in ("vllm", "llamacpp"):
+        # llama-server honors OpenAI response_format too. Without this, any
+        # llama.cpp judge that emits a preamble (e.g. a CoT model like Gemma)
+        # produces unparseable output and silently scores 0 — only non-thinking
+        # Qwen survived because the harness forces enable_thinking=False for it.
         oai_kwargs["response_format"] = {"type": "json_object"}
 
     vllm_model = model_id if model_id else _resolve_model(model)
-    if backend in ("vllm", "llamacpp") and any(k in vllm_model.lower() for k in ("qwen", "qwq")):
+    if backend in ("vllm", "llamacpp") and any(k in vllm_model.lower() for k in ("qwen", "qwq", "gemma")):
         chat_tmpl: dict = {}
         if "think" in options:
             chat_tmpl["enable_thinking"] = bool(options["think"])
@@ -333,6 +337,7 @@ def _chat_vllm(
     # We truncate head (60%) + tail (20%) so both instruction preamble and recent context survive.
     # Never truncate system prompt — truncate the longest non-system message instead.
     _messages = list(messages)
+    _orig_content = [str(m.get("content", "") or "") for m in messages]
     _rate_limit_attempts = 0
     for attempt in range(3):
         try:
@@ -385,29 +390,36 @@ def _chat_vllm(
                             time.sleep(5)
                     if not _recovered:
                         print("  [inference] vLLM health check timed out — retrying anyway")
-                candidates = [
-                    (i, len(str(_messages[i].get("content", "") or "")))
-                    for i, m in enumerate(_messages)
-                    if _messages[i].get("role") != "system"
-                ]
-                if not candidates:
-                    candidates = [(i, len(str(_messages[i].get("content", "") or "")))
-                                  for i in range(len(_messages))]
+                # Choose the longest truncatable message, measured against its
+                # ORIGINAL length. Prefer not to touch the system prompt or the
+                # most-recent message (the live instruction / latest tool result).
+                n = len(_messages)
+                trunc_idx = [i for i in range(n)
+                             if _messages[i].get("role") != "system" and i != n - 1]
+                if not trunc_idx:
+                    trunc_idx = [i for i in range(n)
+                                 if _messages[i].get("role") != "system"]
+                if not trunc_idx:
+                    trunc_idx = list(range(n))
                     print("  [inference] WARNING: only system messages remain — "
                           "truncating system prompt to fit context window")
 
-                longest_idx = max(candidates, key=lambda x: x[1])[0]
-                content  = str(_messages[longest_idx].get("content", "") or "")
-                keep_head = int(len(content) * 0.60)
-                keep_tail = int(len(content) * 0.20)
-                # Guard: if content is already empty/tiny, don't add the separator string
-                # (it would grow the content on every retry, which is the opposite of truncation).
+                longest_idx = max(trunc_idx, key=lambda i: len(_orig_content[i]))
+                orig = _orig_content[longest_idx]
+                # Rebuild from the ORIGINAL every attempt — never re-truncate an
+                # already-truncated string. Re-splicing compounds the marker and
+                # makes the surviving prefix non-deterministic across retries,
+                # which needlessly busts the server's prompt cache. keep_frac is
+                # monotonic in the attempt; attempt 0 reproduces the old 60/20.
+                keep_frac = 0.8 * (0.5 ** attempt)   # 0 -> 0.80, 1 -> 0.40
+                keep_head = int(len(orig) * keep_frac * 0.75)
+                keep_tail = int(len(orig) * keep_frac * 0.25)
                 if keep_head == 0 and keep_tail == 0:
                     truncated = ""
                 elif keep_tail == 0:
-                    truncated = content[:keep_head]
+                    truncated = orig[:keep_head]
                 else:
-                    truncated = content[:keep_head] + "\n…[truncated]…\n" + content[-keep_tail:]
+                    truncated = orig[:keep_head] + "\n...[truncated]...\n" + orig[-keep_tail:]
                 _messages[longest_idx] = {**_messages[longest_idx], "content": truncated}
                 if "max_tokens" in oai_kwargs:
                     oai_kwargs = dict(oai_kwargs)
