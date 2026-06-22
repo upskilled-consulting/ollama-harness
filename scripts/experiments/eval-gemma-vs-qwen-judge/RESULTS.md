@@ -55,6 +55,29 @@ this does NOT establish they are "blind." Re-run required after Bug 2 is fixed.
 `kimi-k2.5:cloud` via Ollama returns HTTP 403 "this model requires a subscription". GLM-5.1
 cloud likely same. Needs an entitled endpoint before a cloud judge can be tested.
 
+## CORRECTED RUN — after both bugs fixed (this is the real answer)
+Re-scored the same 8 files with correct per-type rubrics + head/tail content
+(results.jsonl; the confounded run is kept as results_v1_confounded.jsonl).
+
+| judge      | mean | range   | corr vs 35B | MAE  |
+|------------|------|---------|-------------|------|
+| 35B anchor | 6.03 | 5.1–6.8 | —           | —    |
+| qwen3-8b   | 7.85 | 7.5–8.4 | **+0.54**   | 1.83 |
+
+**The rubric fix flipped the conclusion.** qwen3-8b's correlation with the strong
+judge went from **-0.62 (anti-correlated, wrong rubric) to +0.54 (positively
+correlated, correct rubric)**. The earlier "small judges are blind" was largely an
+artifact of the rubric bug, NOT a real property of the judges.
+
+What remains is a **consistent leniency offset**: the 8B sits ~1.8 pts above the 35B
+but now rank-orders broadly with it, and the gap is stable (+0.9 to +2.4). A stable
+offset is correctable (stricter pass threshold, or subtract a calibration constant);
+an anti-correlation is not. So qwen3-8b is a **viable judge with calibration** — the
+opposite of what the confounded run suggested. gemma/selene/14b were only tested under
+the wrong rubric; re-test them the same way before ranking, but the 8B alone may now
+suffice as a cheap independent-enough judge (it is the same family as the producer, so
+a cross-family option still has value for de-biasing DPO labels).
+
 ## Status / next
 1. Bug 1 fixed + tested (wiggum detection tests pass; 2 pre-existing threshold-test failures
    are unrelated WIP).
