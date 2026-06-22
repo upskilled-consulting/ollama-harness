@@ -450,13 +450,36 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
         task_type = detect_task_type(task)
     print(f"  [evaluate] task_type={task_type}  scoring output...")
 
-    eval_content = summarize_for_eval(content, task, _msg_trace or _trace)
-    # Hard cap: keep eval prompt well within VRAM budget regardless of summarizer output.
-    # The eval rubric alone is ~900 tokens; 4000 chars ≈ 1000 tokens leaves ~2000 tokens
-    # of headroom for both input + JSON output without competing with the producer weights.
-    _EVAL_CONTENT_CAP = 4000
+    # Code-bearing tasks: do NOT prose-summarize — that strips the actual code,
+    # which IS the deliverable, leaving the judge to grade a description. Keep the
+    # source verbatim and rely on head+tail truncation below to fit the budget.
+    if task_type == "coding":
+        eval_content = content
+    else:
+        eval_content = summarize_for_eval(content, task, _msg_trace or _trace)
+
+    # Hard cap so the prompt fits the evaluator's per-slot context. Budget is
+    # num_ctx tokens: rubric ~900 + JSON output ~1024 + this content. We reserve
+    # ~2000 tokens for rubric+output and give the rest (~3 chars/token) to content.
+    # num_ctx defaults to 4096 (matches an 8B server at --ctx-size 16384 --parallel
+    # 4 -> 4096/slot). Raise HARNESS_EVAL_NUM_CTX only if the eval server's per-slot
+    # context is larger (e.g. --parallel 2 -> 8192/slot); a value the server can't
+    # honor truncates server-side. A bigger budget lets the judge see long code in
+    # full instead of with an elided middle.
+    _EVAL_NUM_CTX = int(os.environ.get("HARNESS_EVAL_NUM_CTX", "4096"))
+    # 4000 chars is the validated safe budget at the 4096 default; grow only the
+    # extra context (~3 chars/token) so default behavior is unchanged and a raised
+    # num_ctx buys proportionally more visible content.
+    _EVAL_CONTENT_CAP = 4000 + max(0, _EVAL_NUM_CTX - 4096) * 3
+    # Truncate head+tail rather than head-only: the tail carries conclusions and —
+    # for coding tasks — the required test, which a head-only cut silently drops
+    # (scoring completeness as if the test were missing). Keep 65% head / 35% tail.
     if len(eval_content) > _EVAL_CONTENT_CAP:
-        eval_content = eval_content[:_EVAL_CONTENT_CAP] + "\n…[truncated for eval]…"
+        _keep_head = int(_EVAL_CONTENT_CAP * 0.65)
+        _keep_tail = _EVAL_CONTENT_CAP - _keep_head
+        eval_content = (eval_content[:_keep_head]
+                        + "\n…[middle truncated for eval]…\n"
+                        + eval_content[-_keep_tail:])
     _today     = datetime.date.today()
     _this_year = _today.year
     prompt = EVAL_PROMPT.format(
@@ -482,7 +505,7 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
             response = ollama.chat(
                 model=_eval_model,
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.0, "num_predict": 1024, "num_ctx": 4096},
+                options={"temperature": 0.0, "num_predict": 1024, "num_ctx": _EVAL_NUM_CTX},
                 format="json",
             )
         except Exception as _conn_err:
