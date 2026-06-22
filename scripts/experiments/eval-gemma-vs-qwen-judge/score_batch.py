@@ -31,7 +31,7 @@ def load_pairs(limit):
         tid = r["task_id"]
         f = EVALDIR / f"benchmark_{tid}.md"
         if f.exists() and f.stat().st_size > 400:
-            pairs.append((tid, r["task"], f))
+            pairs.append((tid, r["task"], f, r.get("task_type")))
     # spread across the list rather than first-N of one type
     if limit and len(pairs) > limit:
         step = len(pairs) / limit
@@ -50,10 +50,10 @@ def main():
     print(f"[score] judge={args.judge}  files={len(pairs)}")
 
     out = open(RESULTS, "a", encoding="utf-8")
-    for tid, task, f in pairs:
+    for tid, task, f, task_type in pairs:
         content = f.read_text(encoding="utf-8", errors="replace")
         try:
-            res = w.evaluate(task, content)
+            res = w.evaluate(task, content, task_type=task_type)
         except Exception as e:
             print(f"  ! {tid}: {e!s:.120}")
             continue

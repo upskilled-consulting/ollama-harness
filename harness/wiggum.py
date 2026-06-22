@@ -332,6 +332,49 @@ TASK_CRITERIA = {
         "(e.g. a global comparison added without citation).\n"
         "- Flag missing nuance or important caveats that affect how the findings should be interpreted."
     ),
+    "coding": (
+        "This is a software engineering / coding task — the deliverable is WORKING CODE.\n"
+        "- The output MUST contain actual code that implements the request, not a prose description "
+        "of what the code would do. A description without runnable code is a hard cap of 4 and passed=false.\n"
+        "- completeness: every explicit requirement in the task (each feature, parameter, edge case, and "
+        "any requested test) must be implemented. Name each missing requirement in issues.\n"
+        "- depth: the code must handle the non-trivial parts the task calls out (concurrency, retries, "
+        "error paths, resource cleanup), not just the happy path. Stubs or 'TODO' for required logic = depth<=4.\n"
+        "- grounded: code must use real, documented APIs of the named libraries/language correctly. "
+        "Penalize invented method names, wrong signatures, or calls that would not run. Source/citation "
+        "criteria DO NOT apply — do not penalize for missing references.\n"
+        "- Reward correctness and runnability over verbosity; a concise correct solution beats a long broken one."
+    ),
+    "comparison": (
+        "This is a comparison task — the output must actually COMPARE the items, not describe each in isolation.\n"
+        "- completeness: every item the task names must be covered, AND the axes of comparison the task asks "
+        "for (performance, cost, trade-offs, when-to-use) must each be addressed across all items.\n"
+        "- depth: reward concrete differentiators — specific numbers, thresholds, or scenarios where one option "
+        "wins over another. A side-by-side that never states a trade-off or a 'choose X when…' is depth<=5.\n"
+        "- grounded: claims of superiority must be backed by a specific mechanism, benchmark, or named property, "
+        "not vague assertion. Do not require academic citations; do require the reasoning be checkable.\n"
+        "- A decision/recommendation (which to pick, and under what conditions) should be present and justified."
+    ),
+    "analysis": (
+        "This is an analysis task — explain WHY, with specifics, not just describe WHAT.\n"
+        "- depth: each claim should carry a mechanism or causal explanation plus concrete evidence — numbers, "
+        "named entities, dates, or worked reasoning. Description without causal 'why' is depth<=5.\n"
+        "- grounded: empirical claims should trace to specific data, named systems, or documented behavior. "
+        "Penalize hand-wavy assertions; do not require formal citations for reasoning that is self-evidently derived.\n"
+        "- completeness: the analysis should address the dimensions an expert would expect for this topic and "
+        "surface important caveats or failure modes, not only the obvious angle.\n"
+        "- Reward synthesis (connecting factors into a coherent account) over a flat list of observations."
+    ),
+    "planning": (
+        "This is a planning / design task — the output must be an ACTIONABLE plan, not a description of the problem.\n"
+        "- completeness: cover the concrete elements the task asks for (components, steps, configs, sequencing); "
+        "name any required element that is missing.\n"
+        "- depth: steps must be specific enough to act on — named tools, concrete settings/commands, ordering, "
+        "and what to do at decision points. Generic advice ('monitor performance') with no mechanism is depth<=5.\n"
+        "- grounded: recommended tools/approaches must be real and used correctly; penalize invented tools or "
+        "configs that would not work. Source citations are not required.\n"
+        "- Reward a plan a competent practitioner could execute without having to fill in the hard parts themselves."
+    ),
     "osint": (
         "This is an OSINT / open-source intelligence task.\n"
         "- Information scarcity is a valid finding — if the subject has a minimal public footprint, "
@@ -348,7 +391,23 @@ TASK_CRITERIA = {
 
 
 def detect_task_type(task: str) -> str:
-    """Classify the task into one of four types for criteria selection."""
+    """Classify the task for criteria selection.
+
+    Detection is a best-effort FALLBACK. Callers that know the type (e.g. a
+    task-suite record's `task_type`) should pass it to evaluate() directly —
+    that path is exact and bypasses these heuristics.
+
+    Conservative on purpose: only `coding` is added beyond the original buckets,
+    because grading code under the research rubric (which demands source
+    citations and rejects implementation detail) catastrophically tanks correct
+    code. The softer prose types (comparison/analysis/planning) have criteria in
+    TASK_CRITERIA but are NOT auto-detected — their verbs ("compare", "analyze",
+    "design") appear in ordinary research prompts too, so regex routing there
+    caused more misclassification than it fixed. Use explicit task_type for them.
+
+    Order: instructional ('how to'/'guide') and enumerated ('top N') are matched
+    BEFORE coding so "how to implement X" stays a guide, while a bare
+    "implement X" request is correctly routed to coding."""
     if re.search(r'\bosint\b|\bopen.source intelligence\b|\bwhois\b|\bdomain investigation\b'
                  r'|\bip investigation\b|\bthreat intel\b|\bpassive recon\b'
                  r'|\bbackground.check\b|\bpublic.record', task, re.IGNORECASE):
@@ -357,6 +416,10 @@ def detect_task_type(task: str) -> str:
         return "enumerated"
     if re.search(r'\bbest practices?\b|\bhow to\b|\bstrategies? for\b|\bguide\b|\btips?\b', task, re.IGNORECASE):
         return "best_practices"
+    if re.search(r'\bimplement\b|\bwrite (?:a |an )?(?:function|class|script|program|module|test)\b'
+                 r'|\bin python\b|\bin (?:rust|go|java|c\+\+|typescript|javascript)\b'
+                 r'|\brefactor\b|\bfix the bug\b|\bconnection pool\b|\brate limiter\b', task, re.IGNORECASE):
+        return "coding"
     return "research"
 
 
@@ -376,9 +439,15 @@ def _pick_llamacpp_fallback(exclude: str = "") -> str | None:
     return None
 
 
-def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=None, _msg_trace=None) -> dict:
-    """Call the evaluator model. Returns parsed result dict."""
-    task_type = detect_task_type(task)
+def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=None,
+             _msg_trace=None, task_type: str = None) -> dict:
+    """Call the evaluator model. Returns parsed result dict.
+
+    task_type: pass explicitly when the caller knows it (e.g. a task-suite
+    record's `task_type`); otherwise it is detected from the task text. An
+    unknown/unmapped type safely falls back to the research rubric."""
+    if task_type is None:
+        task_type = detect_task_type(task)
     print(f"  [evaluate] task_type={task_type}  scoring output...")
 
     eval_content = summarize_for_eval(content, task, _msg_trace or _trace)
@@ -396,7 +465,7 @@ def evaluate(task: str, content: str, prior_issues: list[str] = None, _trace=Non
         last_year=_this_year - 1,
         task=task,
         content=eval_content,
-        task_criteria=TASK_CRITERIA[task_type],
+        task_criteria=TASK_CRITERIA.get(task_type, TASK_CRITERIA["research"]),
     )
 
     result = None
