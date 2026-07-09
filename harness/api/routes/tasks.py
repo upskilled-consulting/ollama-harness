@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from harness.config import TASK_LOGS_DIR, LIVE_TASK_FILE
+from harness.config import LIVE_TASK_FILE, TASK_LOGS_DIR
 from harness.schema import QueueItem, TaskRequest
 
 router = APIRouter(tags=["tasks"])

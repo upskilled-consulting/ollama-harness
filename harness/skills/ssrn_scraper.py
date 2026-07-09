@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import time
 from pathlib import Path
@@ -221,7 +222,8 @@ def _fetch_via_playwright(ssrn_id: str) -> dict:
     and (ideally) existing ssrn.com cookies from a prior real session.
     """
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright
     except ImportError:
         return {}
 
@@ -303,6 +305,7 @@ def _fetch_pdf_text(pdf_url: str) -> str:
         return ""
     try:
         import io
+
         from markitdown import MarkItDown
         resp = requests.get(pdf_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
@@ -314,6 +317,7 @@ def _fetch_pdf_text(pdf_url: str) -> str:
     # pdfminer fallback
     try:
         import io
+
         import pdfminer.high_level as pdfminer
         resp = requests.get(pdf_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
@@ -518,7 +522,7 @@ def fetch_paper(
             print(f"  [ssrn] Playwright: {len(pw_data['abstract'])} chars")
             return SSRNPaper(**merged)
 
-        print(f"  [ssrn] all abstract strategies failed -- returning title-only from OA")
+        print("  [ssrn] all abstract strategies failed -- returning title-only from OA")
         return paper
 
     # Strategy 2: PDF (bypasses Cloudflare, good for full text)

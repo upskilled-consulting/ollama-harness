@@ -38,8 +38,8 @@ import sys
 import time
 from pathlib import Path
 
-from harness.inference import OllamaLike as _OllamaLike
 from harness.agent import _is_technical_task, extract_count_constraint
+from harness.inference import OllamaLike as _OllamaLike
 
 _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 ollama = _OllamaLike(keep_alive=_KEEP_ALIVE)

@@ -23,12 +23,17 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from harness.trade_validator import Thesis, ThesisValidation, parse_theses, validate_thesis, load_signals
-
+from harness.trade_validator import (
+    Thesis,
+    ThesisValidation,
+    load_signals,
+    parse_theses,
+    validate_thesis,
+)
 
 # ---------------------------------------------------------------------------
 # Price helpers
@@ -246,7 +251,7 @@ def _format_spec_preview(spec: OrderSpec) -> str:
         f"  Take profit:   ${spec.take_profit}",
         f"  Stop loss:     ${spec.stop_loss}",
         f"  Notional:      ~${spec.notional:,.0f} ({spec.qty} x ${spec.current_price:.2f})",
-        f"  TIF:           GTC (bracket)",
+        "  TIF:           GTC (bracket)",
     ]
     return "\n".join(lines)
 
@@ -305,7 +310,7 @@ def execute_from_thesis_file(
 
     existing_positions = _get_existing_positions()
     results: list[OrderResult] = []
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     for t in theses:
         v = validations.get(t.ticker)
@@ -400,7 +405,7 @@ def _append_order_section(p: Path, results: list[OrderResult], timestamp: str, m
         "",
         "---",
         "",
-        f"## Orders",
+        "## Orders",
         f"*{mode} run at {timestamp}*",
         "",
         "| # | Ticker | Dir | Status | Detail |",

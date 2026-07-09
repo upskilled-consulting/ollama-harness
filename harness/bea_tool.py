@@ -31,7 +31,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, date, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -582,7 +582,7 @@ def query_bea(
         print("  [bea] BEA_API_KEY not configured — skipping", file=sys.stderr)
         return ""
 
-    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    retrieved_at = datetime.now(UTC).strftime("%Y-%m-%d")
 
     targets = catalogue_keys or _themes_for_query(query)
     if not targets:
@@ -656,7 +656,7 @@ def query_bea(
     header = [
         "### BEA Economic Data",
         f"*Retrieved: {retrieved_at} | Query: \"{query}\"*",
-        f"*Cite as [BEA:{{dataset}}:{{table}}:{{geo}}:{{period}}] — all data via BEA API*",
+        "*Cite as [BEA:{dataset}:{table}:{geo}:{period}] — all data via BEA API*",
         "",
     ]
     return "\n".join(header) + "\n\n".join(blocks)

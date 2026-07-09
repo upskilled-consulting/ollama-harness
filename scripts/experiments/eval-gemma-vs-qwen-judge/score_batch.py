@@ -7,14 +7,17 @@ judge; results append to results.jsonl keyed by (task_id, judge) for offline com
 
     python scripts/experiments/eval-gemma-vs-qwen-judge/score_batch.py --judge qwen3-8b --limit 8
 """
-import argparse, json, os, sys
+import argparse
+import json
+import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]   # harness-refactor/
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
-import harness.wiggum as w
+import harness.wiggum as w  # noqa: E402
 
 BENCH = ROOT / "data" / "task_suite" / "benchmark.jsonl"
 EVALDIR = ROOT / "data" / "eval"

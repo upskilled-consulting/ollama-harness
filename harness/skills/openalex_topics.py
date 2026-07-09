@@ -139,7 +139,9 @@ def _search_topics(query: str, n: int = 10) -> list[dict]:
 
 
 def _list_subfield(subfield_id: str, n: int = 30) -> list[dict]:
-    import requests, time
+    import time
+
+    import requests
     results = []
     for page in range(1, 5):
         r = requests.get("https://api.openalex.org/topics",

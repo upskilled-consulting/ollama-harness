@@ -1350,7 +1350,7 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             from harness.osint_tool import query_osint as _query_osint, _detect_targets as _osint_targets
             _osint_tgts = _osint_targets(task)
             if _osint_tgts["domains"] or _osint_tgts["ips"]:
-                print(f"  [osint] targets detected — fetching enrichment data...")
+                print("  [osint] targets detected — fetching enrichment data...")
                 _osint_block, _ = _query_osint(task)
                 if _osint_block:
                     merged_text = merged_text + "\n\n" + _osint_block

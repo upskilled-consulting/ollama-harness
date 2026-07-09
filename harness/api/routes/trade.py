@@ -41,7 +41,7 @@ class TradeFeedbackBody(BaseModel):
 async def trade_execute(body: TradeExecuteBody):
     """Execute the recommended trade via Alpaca."""
     try:
-        from harness.alpaca_tool import place_order, get_account
+        from harness.alpaca_tool import get_account, place_order
     except ImportError as e:
         raise HTTPException(status_code=503, detail=f"alpaca_tool unavailable: {e}")
 

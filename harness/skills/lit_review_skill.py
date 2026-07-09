@@ -174,7 +174,7 @@ def step_fetch(
         arxiv_field = "raw"
         oa_source   = "any"
         oa_extra    = _oa_filter("finance")
-        print(f"  arxiv : q-fin category filter + keywords")
+        print("  arxiv : q-fin category filter + keywords")
         print(f"  oa    : topic filter = {oa_extra[:60]}")
     else:
         arxiv_q     = _arxiv_query(query) if len(query.split()) > 5 else query
@@ -296,6 +296,7 @@ def step_web_enrich(
         return []
 
     import requests as _req
+
     from harness.skills.arxiv_fetch import _parse_date
     from harness.skills.openalex_fetch import _work_to_row
 
@@ -1296,8 +1297,8 @@ def main() -> None:
     else:
         sources = ["arxiv"]
 
-    from harness.logger import RunTrace
     from harness.config import LIT_REVIEWS_DIR
+    from harness.logger import RunTrace
 
     if not out_path.is_absolute():
         out_path = LIT_REVIEWS_DIR / out_path.name

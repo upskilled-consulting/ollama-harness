@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -605,7 +605,7 @@ def validate_thesis_file(path: str) -> str | None:
         print(f"    Thesis {v.thesis.n} {v.thesis.direction.upper()} {v.thesis.ticker}: "
               f"{v.overall} ({v.warn_count}W/{v.flag_count}F)")
 
-    computed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    computed_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     report      = _render_report(validations, computed_at)
 
     # Replace any existing validation section

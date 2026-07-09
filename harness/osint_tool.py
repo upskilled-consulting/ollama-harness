@@ -29,8 +29,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any
 
 _TIMEOUT = 10  # seconds per HTTP call
@@ -40,7 +40,7 @@ _TODAY   = ""  # filled lazily
 def _today() -> str:
     global _TODAY
     if not _TODAY:
-        _TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _TODAY = datetime.now(UTC).strftime("%Y-%m-%d")
     return _TODAY
 
 
@@ -580,7 +580,7 @@ def _fmt_dns(d: dict, domain: str) -> list[str]:
 
 def _fmt_brief(target: str, results: dict, is_domain: bool) -> str:
     today   = _today()
-    cite    = lambda src: f"[OSINT:{src}:{target}:{today}]"
+    def cite(src): return f"[OSINT:{src}:{target}:{today}]"
     blocks  = [f"### OSINT Brief: `{target}`\n"]
 
     if is_domain:

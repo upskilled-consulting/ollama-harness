@@ -29,7 +29,9 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
-from harness.inference import OllamaLike as _OllamaLike, list_endpoints as _list_endpoints
+from harness.config import settings as _settings
+from harness.inference import OllamaLike as _OllamaLike
+from harness.inference import list_endpoints as _list_endpoints
 from harness.summarizer import summarize_for_eval, summarize_for_revision
 
 
@@ -63,7 +65,7 @@ PRODUCER_MODEL = (os.environ.get("WIGGUM_PRODUCER_MODEL")
 EVALUATOR_MODEL = (os.environ.get("WIGGUM_EVALUATOR_MODEL")
                    or os.environ.get("HARNESS_EVALUATOR_MODEL")
                    or os.environ.get("HARNESS_PRODUCER_MODEL", "atla/selene-mini"))
-from harness.config import settings as _settings
+
 MAX_ROUNDS     = _settings.wiggum_max_rounds
 PASS_THRESHOLD = _settings.pass_threshold
 

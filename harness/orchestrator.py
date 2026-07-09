@@ -37,7 +37,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from harness import agent_channel as _channel
-
 from harness import inference as ollama
 from harness.agent import (
     count_output_items,

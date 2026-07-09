@@ -169,7 +169,7 @@ def query_beige_book(query: str, districts: list[str] | None = None,
         return ""
 
     lines = [
-        f"### Beige Book Context",
+        "### Beige Book Context",
         f"*{len(hits)} passage(s) — query: \"{query}\"*\n",
     ]
     for h in hits:

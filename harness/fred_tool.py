@@ -25,8 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
-from functools import lru_cache
+from datetime import UTC, datetime
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -424,7 +423,7 @@ def _fmt_block(series_list: list[dict], query: str, retrieved_at: str) -> str:
     header = [
         "### FRED Economic Data",
         f"*Retrieved: {retrieved_at} | Query: \"{query}\"*",
-        f"*Cite as [FRED:{{series_id}}:{{last_updated}}] — all data via St. Louis Fed FRED API*",
+        "*Cite as [FRED:{series_id}:{last_updated}] — all data via St. Louis Fed FRED API*",
         "",
     ]
     body = []
@@ -459,7 +458,7 @@ def query_fred(
         print("  [fred] FRED_API_KEY not configured — skipping", file=sys.stderr)
         return ""
 
-    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    retrieved_at = datetime.now(UTC).strftime("%Y-%m-%d")
 
     # Determine which series to fetch
     if series_ids:

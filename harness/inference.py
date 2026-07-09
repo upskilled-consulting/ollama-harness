@@ -426,7 +426,7 @@ def _chat_vllm(
                     oai_kwargs["max_tokens"] = max(256, oai_kwargs["max_tokens"] // 2)
                 role = _messages[longest_idx].get("role", "?")
                 print(f"  [inference] {reason} — truncated {role} msg[{longest_idx}] "
-                      f"({len(content)}→{len(truncated)} chars), "
+                      f"({len(orig)}→{len(truncated)} chars), "
                       f"max_tokens={oai_kwargs.get('max_tokens', '?')}, retry {attempt+1}/2")
             else:
                 raise

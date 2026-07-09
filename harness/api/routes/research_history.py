@@ -5,7 +5,6 @@ import os
 import shutil
 import sqlite3
 import tempfile
-import time
 from datetime import UTC, datetime
 from urllib.error import URLError
 from urllib.request import Request, urlopen
