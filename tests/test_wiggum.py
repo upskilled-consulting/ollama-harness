@@ -32,8 +32,8 @@ class TestDimWeights:
     def test_depth_is_heaviest(self):
         assert _DIM_WEIGHTS["depth"] == max(_DIM_WEIGHTS.values())
 
-    def test_pass_threshold_is_nine(self):
-        assert PASS_THRESHOLD == 9.0
+    def test_pass_threshold_is_eight(self):
+        assert PASS_THRESHOLD == 8.0
 
 
 # ---------------------------------------------------------------------------
@@ -62,11 +62,11 @@ class TestCompositeFormula:
         assert _composite(dims) == 8.5
 
     def test_just_below_pass_threshold(self):
-        # All dims at 8.9 would require fractional ints — use mix that gives 8.9
-        # 9+9+8+9+9+9 = 0.20*9 + 0.20*9 + 0.25*8 + 0.15*9 + 0.10*9 + 0.10*9
-        # = 1.8 + 1.8 + 2.0 + 1.35 + 0.9 + 0.9 = 8.75
-        dims = {"relevance": 9, "completeness": 9, "depth": 8,
-                "grounded": 9, "specificity": 9, "structure": 9}
+        # Drop the lowest-weight dim by 1 to land just under 8.0:
+        # 0.20*8 + 0.20*8 + 0.25*8 + 0.15*8 + 0.10*7 + 0.10*8
+        # = 1.6 + 1.6 + 2.0 + 1.2 + 0.7 + 0.8 = 7.9
+        dims = {"relevance": 8, "completeness": 8, "depth": 8,
+                "grounded": 8, "specificity": 7, "structure": 8}
         score = _composite(dims)
         assert score < PASS_THRESHOLD
 
