@@ -42,6 +42,11 @@ jobs:
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
           inputs: .
+          # PYSEC-2026-311: chromadb server-endpoint RCE (trust_remote_code).
+          # Harness uses embedded PersistentClient/EphemeralClient only — never
+          # runs the chromadb HTTP server — so the vulnerable path is unreachable.
+          # No fixed release exists yet; revisit when one ships.
+          ignore-vulns: PYSEC-2026-311
 
       - name: Test with coverage
         run: |
