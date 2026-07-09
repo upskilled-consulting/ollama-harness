@@ -28,6 +28,7 @@ from harness.api.routes import (
     security,
     system,
     tasks,
+    trade,
     voice,
 )
 from harness.api.ws import router as ws_router
@@ -70,6 +71,7 @@ app.include_router(memory.router,   prefix="/api")
 app.include_router(github.router,   prefix="/api")
 app.include_router(security.router, prefix="/api")
 app.include_router(system.router,   prefix="/api")
+app.include_router(trade.router,    prefix="/api")
 app.include_router(ws_router)
 
 # Serve compiled dashboard at root (production)

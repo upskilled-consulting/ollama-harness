@@ -917,6 +917,15 @@ def _playwright_fetch_url(url: str) -> str:
 
 def fetch_url_content(url: str) -> str:
     """Fetch a URL and convert its HTML to markdown via MarkItDown. Returns empty string on failure."""
+    # SSRN: bypass Cloudflare via OpenAlex API + cloudscraper waterfall
+    if re.search(r"ssrn\.com|papers\.ssrn", url, re.IGNORECASE):
+        try:
+            from harness.skills.ssrn_scraper import fetch_for_agent
+            return fetch_for_agent(url)
+        except Exception as e:
+            print(f"  [ssrn] fetch failed: {e}")
+            return ""
+
     from harness.skills.youtube_transcribe import is_youtube_url, is_media_url, transcribe_youtube, transcribe_media_url
     if is_youtube_url(url):
         try:
@@ -933,8 +942,16 @@ def fetch_url_content(url: str) -> str:
     if not MARKITDOWN_AVAILABLE:
         return _playwright_fetch_url(url)
     try:
-        result = _md_converter.convert(url)
-        text = (result.text_content or "").strip()
+        import threading
+        result_holder: list = []
+        def _convert():
+            result_holder.append(_md_converter.convert(url))
+        t = threading.Thread(target=_convert, daemon=True)
+        t.start()
+        t.join(timeout=15)
+        if not result_holder:
+            raise TimeoutError("markitdown fetch timed out after 15s")
+        text = (result_holder[0].text_content or "").strip()
         if len(text) > URL_ENRICH_MAX_CHARS:
             text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
         if not text:
@@ -1559,6 +1576,102 @@ def extract_path(task: str) -> str | None:
     return all_paths[-1] if all_paths else None
 
 
+def _anchor_thesis_prices(content: str, path: str | None, producer_model: str, trace) -> str:
+    """
+    Deterministic price correction for trading theses.
+
+    Extracts tickers from [THESIS:direction:TICKER:...] or **Ticker**: SYMBOL lines,
+    fetches real prices via yfinance, and for any thesis where Entry is >10% off the
+    real price, scales Entry/Target/Stop proportionally without an LLM call.
+    """
+    # Extract tickers from [THESIS:...] citations OR **Ticker**: SYMBOL lines
+    tickers_from_citations = [
+        m.group(1).upper()
+        for m in re.finditer(r'\[THESIS:[^:]+:([A-Z]{1,6}):', content, re.IGNORECASE)
+    ]
+    tickers_from_headers = [
+        m.group(1).upper()
+        for m in re.finditer(r'\*\*Ticker\*\*\s*:\s*([A-Z]{1,6})\b', content)
+    ]
+    tickers = list(dict.fromkeys(tickers_from_citations + tickers_from_headers))
+    if not tickers:
+        return content
+
+    # Fetch real prices
+    real_prices: dict[str, float] = {}
+    try:
+        import yfinance as yf
+        for ticker in tickers[:8]:
+            try:
+                from harness.trade_validator import _normalize_yf_ticker
+                yf_ticker = _normalize_yf_ticker(ticker)
+                info  = yf.Ticker(yf_ticker).fast_info
+                price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+                if price and float(price) > 0:
+                    real_prices[ticker] = float(price)
+            except Exception:
+                pass
+    except ImportError:
+        return content
+
+    if not real_prices:
+        return content
+
+    # Split into thesis sections and patch prices section-by-section
+    # Sections are delimited by "## Thesis N:" or "## Portfolio" / "## Trade Validation"
+    section_re = re.compile(r'(?=^## )', re.MULTILINE)
+    parts = section_re.split(content)
+    changed = False
+
+    for i, part in enumerate(parts):
+        # Identify which ticker this section belongs to
+        ticker_m = re.search(r'\*\*Ticker\*\*\s*:\s*([A-Z]{1,6})\b', part)
+        if not ticker_m:
+            continue
+        ticker = ticker_m.group(1).upper()
+        real = real_prices.get(ticker)
+        if not real:
+            continue
+
+        # Parse Entry from "**Entry**: $XXX.XX"
+        entry_m = re.search(r'\*\*Entry\*\*\s*:\s*\$([0-9,]+\.?[0-9]*)', part)
+        if not entry_m:
+            continue
+        stated_entry = float(entry_m.group(1).replace(',', ''))
+        if stated_entry <= 0:
+            continue
+
+        pct_off = abs(real - stated_entry) / real
+        if pct_off <= 0.10:
+            continue  # price is close enough
+
+        print(f"  [price-anchor] {ticker}: entry=${stated_entry:.2f} vs real=${real:.2f} "
+              f"({pct_off*100:.0f}% off) — rescaling")
+
+        scale = real / stated_entry
+
+        def _scale_price(m: re.Match) -> str:
+            val = float(m.group(1).replace(',', ''))
+            new_val = round(val * scale, 2)
+            return m.group(0).replace(m.group(1), f"{new_val:.2f}")
+
+        # Scale all $X.XX values in this section
+        patched = re.sub(r'\$([0-9,]+\.?[0-9]*)', _scale_price, part)
+        if patched != part:
+            parts[i] = patched
+            changed = True
+
+    if not changed:
+        return content
+
+    revised = "".join(parts)
+    if path:
+        from pathlib import Path as _P
+        _P(path).write_text(revised, encoding="utf-8")
+    print(f"  [price-anchor] prices rescaled for {len(real_prices)} ticker(s)")
+    return revised
+
+
 def write_output(content: str, path: str, trace: RunTrace):
     print("\n[turn 2] writing file...\n")
 
@@ -2019,6 +2132,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             max_f_m    = _re.search(r"--max-fetch\s+(\d+)",    task)
             max_a_m    = _re.search(r"--max-annotate\s+(\d+)", task)
             tmpl_m     = _re.search(r"--template\s+(\S+)",     task)
+            domain_m   = _re.search(r"--domain\s+(cs|health|finance)", task)
+            source_m   = _re.findall(r"--source\s+(arxiv|openalex)", task)
             all_time   = "--all-time" in task
             after      = "all" if all_time else (after_m.group(1) if after_m else None)
             before     = before_m.group(1) if before_m else None
@@ -2026,6 +2141,15 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             max_fetch  = int(max_f_m.group(1)) if max_f_m else 100
             max_ann    = int(max_a_m.group(1)) if max_a_m else 20
             template   = tmpl_m.group(1) if tmpl_m else "survey"
+            domain     = domain_m.group(1) if domain_m else "cs"
+            if source_m:
+                sources = source_m
+            elif domain == "finance":
+                sources = ["openalex"]
+            elif domain == "health":
+                sources = ["openalex"]
+            else:
+                sources = ["arxiv"]
             # Natural language overrides for max_fetch / max_annotate when no CLI flags given
             if not max_f_m:
                 _nl_f = _re.search(r'\bfetch\s+(?:up\s+to\s+)?(\d+)\b', task, _re.IGNORECASE)
@@ -2045,6 +2169,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 r"|--after\s+\S+|--before\s+\S+|--csv\s+\S+"
                 r"|--max-fetch\s+\d+|--max-annotate\s+\d+"
                 r"|--template\s+\S+"
+                r"|--domain\s+\S+|--source\s+\S+"
                 r"|[Ss]ave\s+(?:(?:\w+\s+){0,10})?(?:as|to|at)\s+\S+"
                 r"|\S+\.(?:md|html))",
                 "", task, flags=_re.IGNORECASE,
@@ -2057,6 +2182,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 _slug = _re.sub(r"[^\w]+", "_", query.lower() if query else "review")[:50].strip("_")
                 out = LIT_REVIEWS_DIR / f"{_slug}.md"
             trace.data["task_type"] = "lit-review"
+            trace.data["domain"]    = domain
             try:
                 result = run_lit_review(
                     query=query,
@@ -2072,6 +2198,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                     template=template,
                     producer_model=producer_model,
                     evaluator_model=_ann_eval_model,
+                    sources=sources,
+                    domain=domain,
                     _trace=trace,
                 )
             except Exception as _lr_err:
@@ -3934,6 +4062,10 @@ Rules:
         else:
             trace.finish("PASS")
 
+        # Price anchor correction — fix hallucinated prices before wiggum evaluates
+        if path and _is_trading_task(task):
+            content = _anchor_thesis_prices(content, path, producer_model, trace)
+
         # Post-synthesis skill handlers (e.g. /knowledge-graph)
         if skills_at_hook(active_skills, "post_synthesis"):
             with trace.span("post_synthesis_skills"):
@@ -3998,6 +4130,15 @@ Rules:
             from harness.wiggum import detect_task_type
             _store_memory(memory, task, detect_task_type(task), trace.data, content, _trace=trace)
             trace.finish("PASS")
+
+        # Re-anchor prices post-wiggum: revision passes may re-hallucinate prices.
+        # Read the wiggum-revised file and reapply deterministic price scaling.
+        if path and _is_trading_task(task):
+            try:
+                post_wiggum_content = Path(path).read_text(encoding="utf-8")
+                _anchor_thesis_prices(post_wiggum_content, path, producer_model, trace)
+            except Exception as _pa_err:
+                print(f"  [price-anchor] post-wiggum pass failed (non-fatal): {_pa_err}")
 
         # Post-wiggum skills (e.g. /validate-trades) — run regardless of wiggum on/off
         if skills_at_hook(active_skills, "post_wiggum"):

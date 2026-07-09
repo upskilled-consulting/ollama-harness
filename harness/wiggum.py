@@ -877,6 +877,75 @@ def _attach_token_stats(trace: dict, local_trace):
 # Annotation evaluation loop (/annotate /wiggum)
 # ---------------------------------------------------------------------------
 
+EVAL_PROMPT_PICO = """You are evaluating a PICO biomedical annotation against the original paper content.
+
+The PICO framework produces a structured annotation with EXACTLY these six bold section headers:
+  **Population** | **Intervention** | **Comparison** | **Outcome** | **Study Type** | **Evidence Grade**
+
+Each section should have 1-2 sentences of prose grounded in the paper.
+
+Paper content (ground truth):
+{paper_context}
+
+PICO annotation to evaluate:
+{content}
+
+Score across four dimensions (0-10 integer each):
+- section_accuracy (weight 0.35): Does each section correctly capture the right PICO element? Key distinctions: Population = who (n, health status, species); Intervention = compound+dose+duration; Comparison = control condition; Outcome = measured endpoint and effect direction/magnitude; Study Type = design category; Evidence Grade = High/Moderate/Low/Very Low based on design.
+- coverage (weight 0.25): Are all 6 sections present with substantive prose? Penalty for missing sections or "Not reported" where data exists in the paper.
+- faithfulness (weight 0.25): Is the prose grounded in the paper content — no hallucinated doses, fabricated effect sizes, or invented controls?
+- structure (weight 0.15): Does the output start with a # heading and use exactly the 6 bold headers in order?
+
+Dimension score guide (be strict):
+- 10:  perfect — all 6 sections present, correctly characterized, grounded in the paper
+- 8-9: near-perfect — one minor characterization issue; all 6 sections present
+- 6-7: acceptable — one clear section mismatch or one missing/empty section
+- 4-5: weak — two or more mismatches or multiple missing sections
+- 1-3: failing — most sections wrong, missing, or not grounded in the paper
+
+Compute composite = round(0.35*section_accuracy + 0.25*coverage + 0.25*faithfulness + 0.15*structure, 1)
+
+Respond with valid JSON only — no preamble, no explanation:
+{{
+  "section_accuracy": integer 0-10,
+  "coverage": integer 0-10,
+  "faithfulness": integer 0-10,
+  "structure": integer 0-10,
+  "score": composite as a number with one decimal place,
+  "issues": ["brief note on biggest problem, or empty list if perfect"]
+}}"""
+
+EVAL_PROMPT_FINANCE = """You are evaluating a finance/quant strategy annotation against the original paper content.
+
+The framework produces a structured annotation with EXACTLY these eight bold section headers:
+  **Strategy** | **Signal** | **Asset Class** | **Backtest** | **Performance** | **Limitations** | **Implementation** | **Outlook**
+
+Each section should have 1-2 sentences of prose grounded in the paper.
+
+Paper content (ground truth):
+{paper_context}
+
+Finance annotation to evaluate:
+{content}
+
+Score across four dimensions (0-10 integer each):
+- section_accuracy (weight 0.35): Does each section correctly capture the right element? Key distinctions: Strategy = core approach; Signal = specific predictive factor/indicator; Backtest = sample period and OOS methodology; Performance = Sharpe/return/drawdown metrics; Limitations = data snooping, costs, capacity; Outlook = alpha decay and regime risk.
+- coverage (weight 0.25): Are all 8 sections present with substantive prose? Penalty for missing sections or "Not reported" where data exists.
+- faithfulness (weight 0.25): Is the prose grounded in the paper — no invented Sharpe ratios, fabricated returns, or hallucinated backtests?
+- structure (weight 0.15): Does the output start with a # heading and use exactly the 8 bold headers in order?
+
+Compute composite = round(0.35*section_accuracy + 0.25*coverage + 0.25*faithfulness + 0.15*structure, 1)
+
+Respond with valid JSON only:
+{{
+  "section_accuracy": integer 0-10,
+  "coverage": integer 0-10,
+  "faithfulness": integer 0-10,
+  "structure": integer 0-10,
+  "score": composite as a number with one decimal place,
+  "issues": ["brief note on biggest problem, or empty list if perfect"]
+}}"""
+
 EVAL_PROMPT_ANNOTATE = """You are evaluating a Nanda Annotated Abstract against the original paper content.
 
 The Nanda framework produces a structured abstract with EXACTLY these eight bold section headers:
@@ -958,6 +1027,7 @@ def loop_annotate(
     paper_context: str,
     producer_model: str = PRODUCER_MODEL,
     evaluator_model: str = ANNOTATE_EVALUATOR_MODEL,
+    domain: str = "cs",
     parent_trace=None,
 ) -> dict:
     """
@@ -1013,7 +1083,10 @@ def loop_annotate(
 
         # 2. Evaluate against paper content
         print("  [evaluate] task_type=annotate  scoring annotation...")
-        eval_prompt = EVAL_PROMPT_ANNOTATE.format(
+        _ann_eval_template = (EVAL_PROMPT_PICO    if domain == "health"
+                              else EVAL_PROMPT_FINANCE if domain == "finance"
+                              else EVAL_PROMPT_ANNOTATE)
+        eval_prompt = _ann_eval_template.format(
             paper_context=paper_context[:4000],
             content=summarize_for_eval(content, task),
         )

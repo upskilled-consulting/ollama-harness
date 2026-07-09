@@ -1,0 +1,75 @@
+{# lit_review_survey_health.j2 -- PICO-annotated health/nutrition literature review
+   Annotation dict keys: population, intervention, comparison, outcome,
+                         study_type, evidence_grade
+   Same meta/clusters/synthesis/open_questions structure as lit_review_survey.j2
+#}
+# Literature Review: {{ meta.query }}
+
+*Generated {{ meta.generated_at }} · {{ meta.paper_count }} fetched · {{ meta.annotated }} annotated*
+{% if meta.date_range %}*Date range: {{ meta.date_range }}*{% endif %}
+
+---
+
+## Overview
+
+{{ synthesis }}
+
+---
+
+{% for cluster in clusters %}
+## {{ loop.index }}. {{ cluster.name }}
+
+{{ cluster.summary }}
+
+{% if cluster.hub_paper %}
+**Hub paper**: [{{ cluster.hub_paper.title }}]({{ cluster.hub_paper.arxiv_url }}){% if cluster.hub_paper.hub_score %} — cited ×{{ cluster.hub_paper.hub_score }} in this corpus{% endif %}
+{% endif %}
+
+{% for paper in cluster.papers | sort(attribute='wiggum_score', reverse=True) %}
+### {{ paper.title }}
+
+*[{{ paper.arxiv_id }}]({{ paper.arxiv_url }}) · {{ paper.published[:10] if paper.published else '' }}{% if paper.wiggum_score %} · score {{ paper.wiggum_score }}/10{% endif %}*
+
+{% set ann = paper.annotation %}
+{% if ann.population %}
+**Population**: {{ ann.population }}
+{% endif %}
+{% if ann.intervention %}
+**Intervention**: {{ ann.intervention }}
+{% endif %}
+{% if ann.comparison %}
+**Comparison**: {{ ann.comparison }}
+{% endif %}
+{% if ann.outcome %}
+**Outcome**: {{ ann.outcome }}
+{% endif %}
+{% if ann.study_type or ann.evidence_grade %}
+**Study type**: {{ ann.study_type }}{% if ann.evidence_grade %} · **Evidence**: {{ ann.evidence_grade }}{% endif %}
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+
+---
+
+## Open Questions
+
+{% for q in open_questions %}
+- {{ q }}
+{% endfor %}
+
+---
+
+## Gap Candidates
+
+Papers heavily cited within this corpus but not yet annotated:
+
+| # | ID | Cited by |
+|---|----|----------|
+{% for g in gaps[:15] %}
+| {{ loop.index }} | [{{ g.arxiv_id }}]({{ g.arxiv_url }}) | {{ g.cited_by_count }} |
+{% endfor %}
+
+---
+
+*Built with [harness-engineering](https://github.com/nickmccarty/ollama-pi-harness) · /lit-review skill*

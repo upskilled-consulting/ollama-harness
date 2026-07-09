@@ -71,13 +71,15 @@ DEFAULT_AFTER_YEARS    = 2      # default recency window; pass after="" to disab
 DEFAULT_MAX_KEEP       = 60     # TF-IDF top-N after fetching DEFAULT_MAX_FETCH
 DEFAULT_ANNOTATE_PARALLEL = 2   # match llama-server --parallel N
 DEFAULT_TEMPLATE     = "survey"
-DEFAULT_PRODUCER     = os.environ.get("PRODUCER_MODEL", "pi-qwen-32b")
+DEFAULT_PRODUCER     = (os.environ.get("HARNESS_PRODUCER_MODEL")
+                        or os.environ.get("PRODUCER_MODEL", "pi-qwen-32b"))
 DEFAULT_EVALUATOR    = (os.environ.get("HARNESS_EVALUATOR_MODEL")
                         or os.environ.get("EVALUATOR_MODEL", "Qwen3-Coder:30b"))
 DEFAULT_CLUSTER_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("COMPRESS_MODEL", "qwen3-8b"))
 KEEP_ALIVE           = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
 
-ANNOTATE_MODEL = os.environ.get("HARNESS_ANNOTATE_MODEL", "nanda-annotator-v2-q4km:latest")
+ANNOTATE_MODEL      = os.environ.get("HARNESS_ANNOTATE_MODEL", "nanda-annotator-v2-q4km:latest")
+PICO_ANNOTATE_MODEL = os.environ.get("HARNESS_PICO_ANNOTATE_MODEL", DEFAULT_PRODUCER)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +138,16 @@ def _tfidf_rank(query: str, rows: list[dict], max_keep: int) -> list[dict]:
     return kept
 
 
+def _finance_arxiv_query(natural: str) -> str:
+    """
+    Build a compound arXiv query: q-fin category AND keyword terms.
+    Uses cat:q-fin (parent category) which matches all q-fin.* subcategories
+    without the expensive multi-OR chain that triggers 429 rate limiting.
+    """
+    kw = _arxiv_query(natural)
+    return f"cat:q-fin AND all:({kw})"
+
+
 def step_fetch(
     query:     str,
     max_fetch: int,
@@ -143,20 +155,37 @@ def step_fetch(
     before:    str | None,
     field:     str  = "abs",
     max_keep:  int  = DEFAULT_MAX_KEEP,
+    sources:   list[str] | None = None,   # ["arxiv"] | ["openalex"] | ["arxiv", "openalex"]
+    domain:    str  = "cs",
     _trace=None,
 ) -> list[dict]:
-    from harness.skills.arxiv_fetch import _parse_date, fetch_cached
+    from harness.skills.arxiv_fetch import _parse_date
+    from harness.skills.arxiv_fetch import fetch_cached as arxiv_fetch_cached
+    from harness.skills.openalex_fetch import fetch_cached as openalex_fetch_cached
 
-    arxiv_q = _arxiv_query(query) if len(query.split()) > 5 else query
-    if arxiv_q != query:
-        print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers")
-        print(f"  query : {query!r}")
-        print(f"  arxiv : {arxiv_q!r}")
+    if sources is None:
+        sources = ["arxiv"]
+
+    print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers  sources={sources}  domain={domain}")
+
+    if domain == "finance":
+        from harness.skills.openalex_topics import openalex_filter as _oa_filter
+        arxiv_q     = _finance_arxiv_query(query)
+        arxiv_field = "raw"
+        oa_source   = "any"
+        oa_extra    = _oa_filter("finance")
+        print(f"  arxiv : q-fin category filter + keywords")
+        print(f"  oa    : topic filter = {oa_extra[:60]}")
     else:
-        print(f"\n[lit-review] Step 1: fetching up to {max_fetch} papers for {query!r}...")
+        arxiv_q     = _arxiv_query(query) if len(query.split()) > 5 else query
+        arxiv_field = field
+        oa_source   = "any"
+        oa_extra    = None
+        if arxiv_q != query:
+            print(f"  query : {query!r}")
+            print(f"  terms : {arxiv_q!r}")
 
-    # Default recency window: last DEFAULT_AFTER_YEARS years unless caller overrides.
-    # Pass after="all" (or --all-time flag) to fetch across all time.
+    # Default recency window
     if after is None:
         cutoff  = datetime.now(UTC) - timedelta(days=DEFAULT_AFTER_YEARS * 365)
         after_dt: datetime | None = cutoff
@@ -169,33 +198,187 @@ def step_fetch(
 
     before_dt = _parse_date(before) if before else None
 
-    with (_trace.span("fetch", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
-        rows = fetch_cached(
-            query=arxiv_q,
-            max_results=max_fetch,
-            batch_size=100,
-            field=field,
-            sort_by=False,
-            after=after_dt,
-            before=before_dt,
-            sleep_s=5.0,
-        )
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
 
-    # Retry with field=all when abs search returns nothing
-    if not rows and field != "all":
-        print("  [lit-review] abs search returned 0 — retrying with field=all")
-        with (_trace.span("fetch_retry", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
-            rows = fetch_cached(
-                query=arxiv_q, max_results=max_fetch, batch_size=100,
-                field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=5.0,
+    if "arxiv" in sources:
+        with (_trace.span("fetch_arxiv", query=arxiv_q, max_fetch=max_fetch) if _trace else _nullctx()):
+            arxiv_rows = arxiv_fetch_cached(
+                query=arxiv_q,
+                max_results=max_fetch,
+                batch_size=100,
+                field=arxiv_field,
+                sort_by=False,
+                after=after_dt,
+                before=before_dt,
+                sleep_s=5.0,
             )
+        if not arxiv_rows and arxiv_field not in ("all", "raw"):
+            print("  [lit-review] arxiv abs search returned 0 -- retrying with field=all")
+            with (_trace.span("fetch_arxiv_retry", query=arxiv_q) if _trace else _nullctx()):
+                arxiv_rows = arxiv_fetch_cached(
+                    query=arxiv_q, max_results=max_fetch, batch_size=100,
+                    field="all", sort_by=False, after=after_dt, before=before_dt, sleep_s=5.0,
+                )
+        for r in arxiv_rows:
+            pid = r.get("arxiv_id", "")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                rows.append(r)
+        print(f"  [lit-review] arxiv: {len(arxiv_rows)} papers")
 
-    print(f"[lit-review] fetched {len(rows)} papers")
+    if "openalex" in sources:
+        oa_max = max_fetch if "arxiv" not in sources else max(max_fetch - len(rows), 0)
+        if oa_max > 0:
+            with (_trace.span("fetch_openalex", query=query, max_fetch=oa_max) if _trace else _nullctx()):
+                oa_rows = openalex_fetch_cached(
+                    query=query,
+                    max_results=oa_max,
+                    source=oa_source,
+                    after=after_dt,
+                    before=before_dt,
+                    existing_ids=seen_ids,
+                    extra_filter=oa_extra,
+                )
+            deduped = [r for r in oa_rows if r.get("arxiv_id", "") not in seen_ids]
+            for r in deduped:
+                seen_ids.add(r.get("arxiv_id", ""))
+            rows.extend(deduped)
+            print(f"  [lit-review] openalex: {len(oa_rows)} fetched, {len(deduped)} new after dedup")
 
-    # Re-rank by TF-IDF relevance and trim to max_keep before expensive enrichment
+    print(f"[lit-review] fetched {len(rows)} papers total")
     rows = _tfidf_rank(query, rows, max_keep)
-
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Step 1.5: Web enrichment — targeted searches for high-quality missed papers
+# ---------------------------------------------------------------------------
+
+_WEB_ENRICH_SEARCHES = {
+    "finance": [
+        '"{query}" equity alpha cross-section SSRN 2024 OR 2025',
+        '"{query}" NBER working paper factor investing 2024 OR 2025',
+        '"{query}" "Journal of Finance" OR "Review of Financial Studies" 2024 2025',
+        '"{query}" equity sentiment factor out-of-sample site:papers.ssrn.com',
+    ],
+    "health": [
+        '"{query}" pubmed 2024 OR 2025 randomized controlled trial',
+        '"{query}" systematic review meta-analysis 2024 2025',
+    ],
+    "cs": [
+        '"{query}" arxiv.org 2024 2025',
+        '"{query}" NeurIPS ICML ICLR 2024 2025',
+    ],
+}
+
+_DOI_RE    = re.compile(r'\b10\.\d{4,}/\S+')
+_ARXIV_RE  = re.compile(r'\b(\d{4}\.\d{4,5})\b')
+
+
+def step_web_enrich(
+    query:        str,
+    domain:       str,
+    existing_ids: set[str],
+    after:        str | None,
+    before:       str | None,
+    max_add:      int = 20,
+) -> list[dict]:
+    """
+    Run 3-5 targeted web searches to surface high-quality papers missed by API fetches.
+    Extracts DOIs/arXiv IDs from result snippets, resolves via OpenAlex, dedupes.
+    Returns new paper rows ready to merge into the candidate pool.
+    """
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        print("  [web-enrich] ddgs not installed -- skipping")
+        return []
+
+    import requests as _req
+    from harness.skills.arxiv_fetch import _parse_date
+    from harness.skills.openalex_fetch import _work_to_row
+
+    after_dt  = _parse_date(after)  if after  and after  not in ("all", "any", "all-time") else None
+    before_dt = _parse_date(before) if before else None
+
+    searches = _WEB_ENRICH_SEARCHES.get(domain, _WEB_ENRICH_SEARCHES["cs"])
+    found_dois:  set[str] = set()
+    found_arxiv: set[str] = set()
+
+    ddgs = DDGS()
+    print(f"\n[lit-review] Step 1.5: web enrichment ({len(searches)} searches)...")
+    for tmpl in searches:
+        q = tmpl.format(query=query)
+        try:
+            results = list(ddgs.text(q, max_results=5))
+            for r in results:
+                text = " ".join([r.get("body", ""), r.get("href", ""), r.get("title", "")])
+                for doi in _DOI_RE.findall(text):
+                    found_dois.add(doi.rstrip(".,;)\"'"))
+                for aid in _ARXIV_RE.findall(text):
+                    found_arxiv.add(aid)
+        except Exception as e:
+            print(f"  [web-enrich] search error: {e}")
+
+    found_arxiv -= existing_ids
+    print(f"  [web-enrich] found {len(found_dois)} DOI(s), {len(found_arxiv)} arXiv ID(s) from snippets")
+    if not found_dois and not found_arxiv:
+        return []
+
+    def _oa_batch(filter_str: str) -> list[dict]:
+        try:
+            resp = _req.get(
+                "https://api.openalex.org/works",
+                params={
+                    "filter":   filter_str,
+                    "select":   "id,display_name,abstract_inverted_index,publication_date,"
+                                "authorships,primary_location,ids,open_access,topics,cited_by_count",
+                    "per-page": 50,
+                    "mailto":   "nickmccarty0@gmail.com",
+                },
+                timeout=20,
+            )
+            return resp.json().get("results", []) if resp.ok else []
+        except Exception as e:
+            print(f"  [web-enrich] resolve error: {e}")
+            return []
+
+    works: list[dict] = []
+    doi_list   = [d for d in list(found_dois)[:25]  if d not in existing_ids]
+    arxiv_list = list(found_arxiv)[:20]
+    if doi_list:
+        works.extend(_oa_batch("doi:" + "|".join(doi_list)))
+    if arxiv_list:
+        works.extend(_oa_batch("ids.arxiv:" + "|".join(arxiv_list)))
+
+    new_rows: list[dict] = []
+    for work in works:
+        row = _work_to_row(work)
+        pid = row["arxiv_id"]
+        if pid in existing_ids or not row["summary"].strip():
+            continue
+        if after_dt and row["published"]:
+            try:
+                dt = datetime.strptime(row["published"][:10], "%Y-%m-%d").replace(tzinfo=UTC)
+                if dt <= after_dt:
+                    continue
+            except ValueError:
+                pass
+        if before_dt and row["published"]:
+            try:
+                dt = datetime.strptime(row["published"][:10], "%Y-%m-%d").replace(tzinfo=UTC)
+                if dt >= before_dt:
+                    continue
+            except ValueError:
+                pass
+        existing_ids.add(pid)
+        new_rows.append(row)
+        if len(new_rows) >= max_add:
+            break
+
+    print(f"  [web-enrich] added {len(new_rows)} new papers")
+    return new_rows
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +407,8 @@ def step_enrich(papers: list[dict], skip: bool = False) -> tuple[list[dict], obj
 
 def step_curate(papers: list[dict], max_annotate: int, query: str = "",
                 skip: bool = False, producer_model: str = DEFAULT_PRODUCER,
-                mean_threshold: float = 3.0, _trace=None) -> list[dict]:
+                mean_threshold: float = 3.0, veto_floor: int = 2,
+                domain: str = "cs", _trace=None) -> list[dict]:
     if skip or not papers:
         return papers[:max_annotate]
     from harness.curator import score_paper
@@ -247,6 +431,8 @@ def step_curate(papers: list[dict], max_annotate: int, query: str = "",
                 model=producer_model,
                 query=query,
                 mean_threshold=mean_threshold,
+                veto_floor=veto_floor,
+                domain=domain,
                 _trace=_trace,
             )
             result["_paper"] = p
@@ -281,6 +467,7 @@ def step_annotate(
     use_wiggum:      bool,
     checkpoint_dir:  Path,
     parallel:        int  = DEFAULT_ANNOTATE_PARALLEL,
+    domain:          str  = "cs",
     _trace=None,
 ) -> list[dict]:
     """Annotate each paper in parallel. Checkpoints per paper so crashes are recoverable."""
@@ -295,8 +482,13 @@ def step_annotate(
     _lock   = threading.Lock()   # guards _trace rollup + progress counter
     _done   = [0]
 
+    annotate_model = PICO_ANNOTATE_MODEL if domain in ("health", "finance") else producer_model
+    parse_sections = (_parse_pico_sections    if domain == "health"
+                      else _parse_finance_sections if domain == "finance"
+                      else _parse_annotation_sections)
+
     print(f"\n[lit-review] Step 4: annotating {total} papers"
-          f"  (parallel={parallel}, wiggum={'on' if use_wiggum else 'off'})...")
+          f"  (parallel={parallel}, wiggum={'on' if use_wiggum else 'off'}, domain={domain})...")
 
     def _annotate_one(i: int, paper: dict) -> dict:
         aid   = paper.get("arxiv_id", f"paper-{i}")
@@ -317,7 +509,7 @@ def step_annotate(
         context = f"# {title}\n\n{paper.get('summary', '')}"
         sub_trace = RunTrace(
             task=f"/lit-review /annotate {aid}",
-            producer_model=producer_model,
+            producer_model=annotate_model,
             evaluator_model=evaluator_model,
             _is_sub=True,
         )
@@ -329,8 +521,9 @@ def step_annotate(
 
         annotation_text = run_annotate_standalone(
             paper_context=context,
-            producer_model=producer_model,
+            producer_model=annotate_model,
             max_retries=3,
+            domain=domain,
             _trace=sub_trace,
         )
 
@@ -344,8 +537,9 @@ def step_annotate(
                     task=f"Annotate paper: {title}",
                     output_path=str(tmp),
                     paper_context=context,
-                    producer_model=producer_model,
+                    producer_model=annotate_model,
                     evaluator_model=evaluator_model,
+                    domain=domain,
                 )
                 sub_trace.log_wiggum(w_result)
                 wiggum_score = w_result.get("rounds", [{}])[-1].get("score")
@@ -377,11 +571,15 @@ def step_annotate(
                     for ev in sub_trace._events
                 )
 
-        annotation      = _parse_annotation_sections(annotation_text)
+        annotation      = parse_sections(annotation_text)
         checkpoint_data = {
             "annotation":     annotation,
             "annotation_raw": annotation_text,
             "wiggum_score":   wiggum_score,
+            "title":          paper.get("title", ""),
+            "abstract":       paper.get("summary", ""),
+            "arxiv_id":       aid,
+            "domain":         domain,
         }
         cp.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
         return {**paper, **checkpoint_data}
@@ -428,6 +626,71 @@ def _parse_annotation_sections(text: str) -> dict:
     return result
 
 
+def _parse_finance_sections(text: str) -> dict:
+    """Parse finance 8-section annotation into a column dict."""
+    section_map = {
+        "**Strategy**":      "strategy",
+        "**Signal**":        "signal",
+        "**Asset Class**":   "asset_class",
+        "**Backtest**":      "backtest",
+        "**Performance**":   "performance",
+        "**Limitations**":   "limitations",
+        "**Implementation**":"implementation",
+        "**Outlook**":       "outlook",
+    }
+    parts   = re.split(r"(\*\*[^*]+\*\*)", text)
+    result  = {v: "" for v in section_map.values()}
+    result.setdefault("contribution", "")
+    current = None
+    for part in parts:
+        part = part.strip()
+        if part in section_map:
+            current = section_map[part]
+        elif current:
+            result[current] = re.sub(r'^:\s*', '', part)
+    # Bridge into contribution for cluster/synth compatibility
+    if result["strategy"] or result["signal"]:
+        result["contribution"] = " | ".join(
+            p for p in [result["strategy"], result["signal"]] if p
+        )
+    return result
+
+
+def _parse_pico_sections(text: str) -> dict:
+    """Parse PICO 6-section annotation into a column dict."""
+    section_map = {
+        "**Population**":     "population",
+        "**Intervention**":   "intervention",
+        "**Comparison**":     "comparison",
+        "**Outcome**":        "outcome",
+        "**Study Type**":     "study_type",
+        "**Evidence Grade**": "evidence_grade",
+    }
+    parts   = re.split(r"(\*\*[^*]+\*\*)", text)
+    result  = {v: "" for v in section_map.values()}
+    # Nanda fields expected downstream (contribution drives clustering/synthesis)
+    result.setdefault("contribution", "")
+    current = None
+    for part in parts:
+        part = part.strip()
+        if part in section_map:
+            current = section_map[part]
+        elif current:
+            result[current] = re.sub(r'^:\s*', '', part)
+    # Bridge PICO fields into Nanda-compatible keys so the survey template renders
+    result["topic"]                  = result.get("population", "")
+    result["motivation"]             = result.get("comparison", "")
+    result["contribution"]           = " | ".join(
+        p for p in [result.get("intervention",""), result.get("outcome","")] if p
+    )
+    result["detail_nuance"]          = result.get("study_type", "")
+    result["evidence_contribution_2"]= result.get("outcome", "")
+    result["weaker_result"]          = ""
+    result["narrow_impact"]          = result.get("evidence_grade", "")
+    result["broad_impact"]           = ""
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Step 5: Cluster
 # ---------------------------------------------------------------------------
@@ -448,26 +711,127 @@ Output ONLY valid JSON in this exact format:
 
 Do not include any text outside the JSON block."""
 
+_CLUSTER_HEALTH_SYSTEM = """\
+You are a biomedical research synthesis assistant. Given a list of paper titles and their
+Intervention | Outcome summaries, group them into 3-5 thematic clusters by target mechanism,
+compound class, or health outcome.
 
-def step_cluster(papers: list[dict], model: str = DEFAULT_CLUSTER_MODEL, _trace=None) -> list[dict]:
+Output ONLY valid JSON in this exact format:
+{
+  "clusters": [
+    {
+      "name": "Cluster name (5-7 words)",
+      "paper_ids": ["arxiv_id_1", "arxiv_id_2", ...]
+    }
+  ]
+}
+
+Do not include any text outside the JSON block."""
+
+_SYNTH_CLUSTER_HEALTH_SYSTEM = """\
+You are a biomedical research synthesis assistant. Given a cluster of annotated health/nutrition studies,
+write a coherent 2-3 sentence paragraph that describes the shared mechanism or compound class, the
+direction and magnitude of the reported effects, and the level of evidence across studies.
+Note any dose-response patterns, synergistic findings, or conflicting results.
+Be specific -- name compounds, doses, and outcomes, not just topics.
+Output ONLY the paragraph, no preamble."""
+
+_SYNTH_CLUSTER_FINANCE_SYSTEM = """\
+You are a quantitative finance research synthesis assistant. Given a cluster of annotated trading
+strategy papers, write a coherent 2-3 sentence paragraph describing the shared alpha factor or
+mechanism, the strength of empirical evidence (noting Sharpe ratios and OOS performance where
+reported), and key implementation considerations. Be specific -- name signals, instruments, and
+metrics, not just topics.
+Output ONLY the paragraph, no preamble."""
+
+_SYNTH_CROSS_FINANCE_SYSTEM = """\
+You are a quantitative finance research synthesis assistant. Given cluster summaries from a
+trading strategy literature review, write:
+
+1. A 3-4 sentence OVERVIEW synthesizing the research landscape, noting which strategies show
+   strongest empirical support and any macro regime or capacity dependencies.
+2. 3-5 OPEN QUESTIONS the literature has not resolved.
+3. A single THESIS: the most actionable trade idea supported by the research, as a JSON block.
+   IMPORTANT: Only name a specific ticker if it is explicitly mentioned in the research summaries.
+   If the research is strategy-level (e.g. "go long momentum stocks") without naming a specific
+   instrument, set ticker to null and entry/target/stop to null. Do not invent tickers.
+
+Output in this EXACT format -- do not add any other sections or text:
+
+OVERVIEW:
+<paragraph>
+
+OPEN QUESTIONS:
+- <question>
+- <question>
+
+THESIS:
+```json
+{
+  "ticker": "<Yahoo Finance ticker if named in research, otherwise null>",
+  "direction": "<long or short>",
+  "conviction": "<high, medium, or low>",
+  "entry": <number or null>,
+  "target": <number or null>,
+  "stop": <number or null>,
+  "position_pct": <number 1-10 or null>,
+  "rationale": "<2-3 sentence rationale grounded directly in the research findings>"
+}
+```"""
+
+_SYNTH_CROSS_HEALTH_SYSTEM = """\
+You are a biomedical research synthesis assistant. Given cluster summaries from a health/nutrition
+literature review, write:
+1. A 3-4 sentence overview paragraph that synthesizes across all clusters, notes evidence quality
+   hierarchy (prefer meta-analyses and RCTs over observational data), and identifies any synergistic
+   compound interactions supported by multiple study designs.
+2. 3-5 open research questions the literature has not fully answered, particularly gaps in
+   human RCT evidence, optimal dosing ranges, or understudied population subgroups.
+
+Output in this format:
+OVERVIEW:
+<paragraph>
+
+OPEN QUESTIONS:
+- <question 1>
+- <question 2>
+..."""
+
+
+def step_cluster(papers: list[dict], model: str = DEFAULT_CLUSTER_MODEL,
+                 domain: str = "cs", _trace=None) -> list[dict]:
     """
     Group papers into thematic clusters using an LLM.
     Returns list of cluster dicts: {name, paper_ids}.
     """
     print(f"\n[lit-review] Step 5: clustering {len(papers)} papers...")
 
-    paper_list = "\n".join(
-        f"- {p.get('arxiv_id','?')}: {p.get('title','?')} | "
-        f"{p.get('annotation', {}).get('contribution','')}"
-        for p in papers
-    )
+    if not papers:
+        print("[lit-review] no papers to cluster — skipping")
+        return []
+
+    cluster_system = (_CLUSTER_HEALTH_SYSTEM if domain == "health"
+                      else _CLUSTER_SYSTEM)
+
+    if domain == "health":
+        paper_list = "\n".join(
+            f"- {p.get('arxiv_id','?')}: {p.get('title','?')} | "
+            f"{p.get('annotation', {}).get('contribution', '')}"
+            for p in papers
+        )
+    else:
+        paper_list = "\n".join(
+            f"- {p.get('arxiv_id','?')}: {p.get('title','?')} | "
+            f"{p.get('annotation', {}).get('contribution','')}"
+            for p in papers
+        )
     prompt = f"Papers to cluster:\n{paper_list}"
 
     with (_trace.span("cluster", papers=len(papers)) if _trace else _nullctx()):
         resp = _llm_chat(
             model=model,
             messages=[
-                {"role": "system", "content": _CLUSTER_SYSTEM},
+                {"role": "system", "content": cluster_system},
                 {"role": "user",   "content": prompt},
             ],
             options={"temperature": 0.1, "num_predict": 1024},
@@ -522,13 +886,23 @@ OPEN QUESTIONS:
 
 
 def step_synthesize(papers: list[dict], clusters: list[dict],
-                    model: str = DEFAULT_CLUSTER_MODEL, _trace=None) -> dict:
+                    model: str = DEFAULT_CLUSTER_MODEL, domain: str = "cs", _trace=None) -> dict:
     """
     Write cluster summaries and cross-cluster synthesis.
     Returns {cluster_summaries: {cluster_name: str}, synthesis: str, open_questions: [str]}.
     """
     print("\n[lit-review] Step 6: synthesizing...")
+    if not papers or not clusters:
+        print("[lit-review] no papers/clusters to synthesize — skipping")
+        return {"cluster_summaries": {}, "synthesis": "", "open_questions": [], "thesis": None}
     id_to_paper = {p.get("arxiv_id", "").split("v")[0]: p for p in papers}
+
+    synth_cluster_system = (_SYNTH_CLUSTER_HEALTH_SYSTEM   if domain == "health"
+                            else _SYNTH_CLUSTER_FINANCE_SYSTEM if domain == "finance"
+                            else _SYNTH_CLUSTER_SYSTEM)
+    synth_cross_system   = (_SYNTH_CROSS_HEALTH_SYSTEM   if domain == "health"
+                            else _SYNTH_CROSS_FINANCE_SYSTEM if domain == "finance"
+                            else _SYNTH_CROSS_SYSTEM)
 
     cluster_summaries = {}
     for cluster in clusters:
@@ -540,17 +914,36 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
             cluster_summaries[cluster["name"]] = ""
             continue
 
-        paper_blurbs = "\n\n".join(
-            f"Title: {p.get('title','')}\n"
-            f"Contribution: {(p.get('annotation') or {}).get('contribution','')}\n"
-            f"Evidence: {(p.get('annotation') or {}).get('evidence_contribution_2','')}"
-            for p in cluster_papers
-        )
+        if domain == "health":
+            paper_blurbs = "\n\n".join(
+                f"Title: {p.get('title','')}\n"
+                f"Intervention: {(p.get('annotation') or {}).get('intervention','')}\n"
+                f"Outcome: {(p.get('annotation') or {}).get('outcome','')}\n"
+                f"Study Type: {(p.get('annotation') or {}).get('study_type','')}\n"
+                f"Evidence Grade: {(p.get('annotation') or {}).get('evidence_grade','')}"
+                for p in cluster_papers
+            )
+        elif domain == "finance":
+            paper_blurbs = "\n\n".join(
+                f"Title: {p.get('title','')}\n"
+                f"Strategy: {(p.get('annotation') or {}).get('strategy','')}\n"
+                f"Signal: {(p.get('annotation') or {}).get('signal','')}\n"
+                f"Performance: {(p.get('annotation') or {}).get('performance','')}\n"
+                f"Limitations: {(p.get('annotation') or {}).get('limitations','')}"
+                for p in cluster_papers
+            )
+        else:
+            paper_blurbs = "\n\n".join(
+                f"Title: {p.get('title','')}\n"
+                f"Contribution: {(p.get('annotation') or {}).get('contribution','')}\n"
+                f"Evidence: {(p.get('annotation') or {}).get('evidence_contribution_2','')}"
+                for p in cluster_papers
+            )
 
         resp = _llm_chat(
             model=model,
             messages=[
-                {"role": "system", "content": _SYNTH_CLUSTER_SYSTEM},
+                {"role": "system", "content": synth_cluster_system},
                 {"role": "user",   "content": paper_blurbs},
             ],
             options={"temperature": 0.2, "num_predict": 512},
@@ -575,7 +968,7 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
         resp = _llm_chat(
             model=model,
             messages=[
-                {"role": "system", "content": _SYNTH_CROSS_SYSTEM},
+                {"role": "system", "content": synth_cross_system},
                 {"role": "user",   "content": all_summaries},
             ],
             options={"temperature": 0.2, "num_predict": 1024},
@@ -589,21 +982,30 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
         _trace.log_llm_turn("synthesize", all_summaries, cross_raw,
                             thinking=_cross_thinking)
 
-    overview_m = re.search(r"OVERVIEW:\s*\n(.*?)(?=OPEN QUESTIONS:|$)", cross_raw, re.DOTALL)
-    questions_m = re.search(r"OPEN QUESTIONS:\s*\n(.*)", cross_raw, re.DOTALL)
+    overview_m   = re.search(r"OVERVIEW:\s*\n(.*?)(?=OPEN QUESTIONS:|THESIS:|$)", cross_raw, re.DOTALL)
+    questions_m  = re.search(r"OPEN QUESTIONS:\s*\n(.*?)(?=THESIS:|$)", cross_raw, re.DOTALL)
+    thesis_m     = re.search(r"THESIS:\s*\n```(?:json)?\s*(\{.*?\})\s*```", cross_raw, re.DOTALL)
 
     synthesis = overview_m.group(1).strip() if overview_m else cross_raw
     open_questions = []
     if questions_m:
         for line in questions_m.group(1).splitlines():
             line = re.sub(r"^[-*]\s*", "", line.strip())
-            if line:
+            if line and not line.startswith("THESIS"):
                 open_questions.append(line)
+
+    thesis: dict | None = None
+    if thesis_m:
+        try:
+            thesis = json.loads(thesis_m.group(1))
+        except json.JSONDecodeError:
+            print("  [warn] thesis JSON parse failed -- thesis omitted from report")
 
     return {
         "cluster_summaries": cluster_summaries,
         "synthesis":         synthesis,
         "open_questions":    open_questions,
+        "thesis":            thesis,
     }
 
 
@@ -613,12 +1015,29 @@ def step_synthesize(papers: list[dict], clusters: list[dict],
 
 def step_render(papers: list[dict], clusters: list[dict], synthesis_data: dict,
                 graph, query: str, after: str | None, before: str | None,
-                template_name: str, out_path: Path) -> None:
+                template_name: str, out_path: Path,
+                domain: str = "cs", run_id: str = "", api_base: str = "") -> None:
     try:
         from jinja2 import Environment, FileSystemLoader
     except ImportError:
         print("[lit-review] jinja2 not installed: pip install jinja2")
         sys.exit(1)
+
+    # Finance domain: run trade validator and switch to HTML template
+    validation: dict | None = None
+    if domain == "finance" and synthesis_data.get("thesis"):
+        try:
+            from harness.trade_validator import validate_thesis_dict
+            validation = validate_thesis_dict(synthesis_data["thesis"])
+        except Exception as _tv_err:
+            print(f"  [warn] trade_validator failed: {_tv_err}")
+
+    if domain == "health" and template_name == DEFAULT_TEMPLATE:
+        template_name = "survey_health"
+
+    if domain == "finance" and template_name == DEFAULT_TEMPLATE:
+        template_name = "trading"
+        out_path = out_path.with_suffix(".html")
 
     print(f"\n[lit-review] Step 7: rendering with template '{template_name}'...")
 
@@ -678,6 +1097,10 @@ def step_render(papers: list[dict], clusters: list[dict], synthesis_data: dict,
         "synthesis":      synthesis_data["synthesis"],
         "open_questions": synthesis_data["open_questions"],
         "gaps":           (graph.gap_candidates[:20] if graph else []),
+        "thesis":         synthesis_data.get("thesis"),
+        "validation":     validation,
+        "run_id":         run_id,
+        "api_base":       api_base or "http://localhost:7860",
     }
 
     env = Environment(
@@ -719,6 +1142,9 @@ def run_lit_review(
     evaluator_model: str = DEFAULT_EVALUATOR,
     checkpoint_dir: Path = CHECKPOINT_DIR,
     parallel:       int  = DEFAULT_ANNOTATE_PARALLEL,
+    sources:        list[str] | None = None,
+    domain:         str  = "cs",
+    no_web_enrich:  bool = False,
     _trace=None,
 ) -> dict:
     t0 = time.monotonic()
@@ -735,10 +1161,18 @@ def run_lit_review(
             papers = list(csv.DictReader(f))
         print(f"[lit-review] {len(papers)} papers loaded")
     else:
-        papers = step_fetch(query, max_fetch, after, before, _trace=_trace)
+        papers = step_fetch(query, max_fetch, after, before, sources=sources, domain=domain, _trace=_trace)
         if not papers:
-            print("[lit-review] no papers fetched — aborting")
+            print("[lit-review] no papers fetched -- aborting")
             return {"papers": 0, "clusters": 0, "out_path": "", "error": "no_papers"}
+
+        # 1.5. Web enrichment
+        if not no_web_enrich:
+            _stage("web_enrich")
+            seen_ids = {p.get("arxiv_id", "") for p in papers}
+            web_papers = step_web_enrich(query, domain, seen_ids, after, before)
+            if web_papers:
+                papers = _tfidf_rank(query, papers + web_papers, DEFAULT_MAX_KEEP)
 
     # 2. Enrich
     _stage("plan")
@@ -747,22 +1181,26 @@ def run_lit_review(
 
     # 3. Curate
     _stage("memory")
+    _mean_threshold = 2.5 if domain in ("health", "finance") else 3.0
+    _veto_floor     = 1   if domain == "finance"              else 2
     papers = step_curate(papers, max_annotate, query=query, skip=no_curate,
-                         producer_model=producer_model, _trace=_trace)
+                         producer_model=producer_model, domain=domain,
+                         mean_threshold=_mean_threshold, veto_floor=_veto_floor,
+                         _trace=_trace)
 
     # 4. Annotate
     _stage("synth")
     papers = step_annotate(papers, producer_model, evaluator_model,
                            use_wiggum=(not no_wiggum),
                            checkpoint_dir=checkpoint_dir,
-                           parallel=parallel, _trace=_trace)
+                           parallel=parallel, domain=domain, _trace=_trace)
 
     # 5. Cluster + 6. Synthesize
     _stage("eval")
-    clusters = step_cluster(papers, model=DEFAULT_CLUSTER_MODEL, _trace=_trace)
+    clusters = step_cluster(papers, model=DEFAULT_CLUSTER_MODEL, domain=domain, _trace=_trace)
 
     synthesis_data = step_synthesize(papers, clusters, model=DEFAULT_CLUSTER_MODEL,
-                                     _trace=_trace)
+                                     domain=domain, _trace=_trace)
 
     # 7. Render
     with (_trace.span("render") if _trace else _nullctx()):
@@ -770,6 +1208,9 @@ def run_lit_review(
             papers=papers, clusters=clusters, synthesis_data=synthesis_data,
             graph=graph, query=query, after=after, before=before,
             template_name=template, out_path=out_path,
+            domain=domain,
+            run_id=_trace.run_id if _trace else "",
+            api_base=f"http://localhost:{__import__('harness.config', fromlist=['settings']).settings.port}",
         )
 
     elapsed = round(time.monotonic() - t0, 1)
@@ -808,7 +1249,7 @@ def run_lit_review(
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="/lit-review skill — fetch, annotate, synthesize, render",
+        description="/lit-review skill -- fetch, annotate, synthesize, render",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -819,16 +1260,23 @@ def main() -> None:
     ap.add_argument("--all-time",     action="store_true", help="Disable default 2-year recency filter")
     ap.add_argument("--before",       default=None)
     ap.add_argument("--csv",          default=None, help="Existing CSV (skip fetch)")
-    ap.add_argument("--no-fetch",     action="store_true")
+    ap.add_argument("--no-fetch",      action="store_true")
     ap.add_argument("--no-curate",    action="store_true")
     ap.add_argument("--no-wiggum",    action="store_true")
     ap.add_argument("--no-s2",        action="store_true")
+    ap.add_argument("--no-web-enrich", action="store_true", help="Skip targeted web search enrichment")
     ap.add_argument("--template",     default=DEFAULT_TEMPLATE,
-                    choices=["survey", "gaps", "executive"])
+                    choices=["survey", "survey_health", "gaps", "executive", "trading"])
     ap.add_argument("--producer",     default=DEFAULT_PRODUCER)
     ap.add_argument("--evaluator",    default=DEFAULT_EVALUATOR)
     ap.add_argument("--out",          default=None)
     ap.add_argument("--checkpoint",   default=str(CHECKPOINT_DIR))
+    ap.add_argument("--source",       default=None, action="append",
+                    choices=["arxiv", "openalex"],
+                    help="Paper source(s) to fetch from. Repeat to combine: "
+                         "--source arxiv --source openalex")
+    ap.add_argument("--domain",       default="cs", choices=["cs", "health", "finance"],
+                    help="Annotation framework: cs=Nanda (default), health=PICO, finance=Strategy/Signal")
     args = ap.parse_args()
 
     csv_path = Path(args.csv) if args.csv else None
@@ -837,25 +1285,82 @@ def main() -> None:
         ap.print_help()
         sys.exit(1)
 
-    query = args.query or (csv_path.stem if csv_path else "literature review")
+    query    = args.query or (csv_path.stem if csv_path else "literature review")
     out_path = Path(args.out) if args.out else Path(f"lit_review_{query[:30].replace(' ','_')}.md")
+    if args.source:
+        sources = args.source
+    elif args.domain == "finance":
+        sources = ["openalex"]   # SSRN via OpenAlex (arXiv q-fin throttles compound queries)
+    elif args.domain == "health":
+        sources = ["openalex"]   # PubMed via OpenAlex
+    else:
+        sources = ["arxiv"]
 
-    run_lit_review(
-        query=query,
-        out_path=out_path,
-        max_fetch=args.max_fetch,
-        max_annotate=args.max_annotate,
-        after="all" if args.all_time else args.after,
-        before=args.before,
-        csv_path=csv_path,
-        no_curate=args.no_curate,
-        no_wiggum=args.no_wiggum,
-        no_s2=args.no_s2,
-        template=args.template,
+    from harness.logger import RunTrace
+    from harness.config import LIT_REVIEWS_DIR
+
+    if not out_path.is_absolute():
+        out_path = LIT_REVIEWS_DIR / out_path.name
+
+    trace = RunTrace(
+        task=f"/lit-review {query}",
         producer_model=args.producer,
         evaluator_model=args.evaluator,
-        checkpoint_dir=Path(args.checkpoint),
     )
+    trace.data["task_type"] = "lit-review"
+    trace.data["domain"]    = args.domain
+
+    try:
+        result = run_lit_review(
+            query=query,
+            out_path=out_path,
+            max_fetch=args.max_fetch,
+            max_annotate=args.max_annotate,
+            after="all" if args.all_time else args.after,
+            before=args.before,
+            csv_path=csv_path,
+            no_curate=args.no_curate,
+            no_wiggum=args.no_wiggum,
+            no_s2=args.no_s2,
+            no_web_enrich=args.no_web_enrich,
+            template=args.template,
+            producer_model=args.producer,
+            evaluator_model=args.evaluator,
+            checkpoint_dir=Path(args.checkpoint),
+            sources=sources,
+            domain=args.domain,
+            _trace=trace,
+        )
+    except Exception as err:
+        trace.data["final_content"] = f"# Lit-review failed\n\n**Error:** {type(err).__name__}: {err}\n"
+        trace.finish("ERROR")
+        raise
+
+    out_path_str = result.get("out_path", "")
+    out_p = Path(out_path_str) if out_path_str else None
+
+    trace.data["output_path"]         = out_path_str
+    trace.data["output_bytes"]        = out_p.stat().st_size if out_p and out_p.exists() else 0
+    trace.data["lit_review_papers"]   = result.get("papers", 0)
+    trace.data["lit_review_clusters"] = result.get("clusters", 0)
+    trace.data["tool_calls"] = [
+        {
+            "name":           "lit_review_fetch",
+            "query":          p.get("title", ""),
+            "result_chars":   p.get("annotation_len", 0),
+            "urls":           [{"href": p.get("arxiv_url", ""), "title": p.get("title", "")}]
+                              if p.get("arxiv_url") else [],
+            "result_preview": p.get("contribution", ""),
+            "cluster_idx":    p.get("cluster_idx"),
+            "cluster_name":   p.get("cluster_name", ""),
+        }
+        for p in result.get("papers_data", [])
+    ]
+
+    if result.get("error") or not out_path_str:
+        trace.finish("ERROR")
+    else:
+        trace.finish("PASS")
 
 
 if __name__ == "__main__":
