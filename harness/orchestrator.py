@@ -25,13 +25,18 @@ Architecture:
             agent.run(task)                  # simple passthrough
 """
 
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from harness import agent_channel as _channel
 from harness import inference as ollama
 from harness.agent import (
     count_output_items,
@@ -49,6 +54,55 @@ from harness.wiggum import loop as wiggum_loop
 ASSEMBLY_MODEL = "pi-qwen"
 SUBTASK_MAX_RETRIES = 1    # retry a failed subtask this many times before skipping
 SUBTASK_MAX_WORKERS = 4    # max parallel subtask threads
+
+
+def _check_dag_cycles(subtasks: list[PlannedSubtask]) -> bool:
+    """
+    Detect cycles in depends_on using Kahn's topological-sort (BFS).
+    Returns True if a cycle exists; as a side effect clears all depends_on
+    so the caller falls back to independent execution rather than deadlocking.
+    """
+    n = len(subtasks)
+    in_degree: list[int] = [0] * n
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for i, sub in enumerate(subtasks):
+        for dep in (sub.depends_on or []):
+            if 0 <= dep < n and dep != i:
+                adj[dep].append(i)
+                in_degree[i] += 1
+
+    queue = [i for i in range(n) if in_degree[i] == 0]
+    processed = 0
+    while queue:
+        node = queue.pop(0)
+        processed += 1
+        for neighbor in adj[node]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if processed < n:
+        for sub in subtasks:
+            sub.depends_on = []
+        return True
+    return False
+
+
+def _emit(event_type: str, data: dict) -> None:
+    print(f"[EVENT]{json.dumps({'type': event_type, 'data': data})}", flush=True)
+
+
+def _watch_channel(channel: str, stop_event: threading.Event) -> None:
+    """Background thread: poll the message channel and emit events for each new message."""
+    seen: set[str] = set()
+    while not stop_event.is_set():
+        for msg in _channel.poll_messages(channel, seen):
+            from_idx = msg.get("from_idx", "?")
+            msg_type = msg.get("type", "progress")
+            content  = msg.get("content", "")
+            print(f"  [subtask {from_idx}→parent] [{msg_type}] {content[:140]}", flush=True)
+            _emit("agent_message", msg)
+        stop_event.wait(timeout=0.4)
 
 
 # ---------------------------------------------------------------------------
@@ -188,21 +242,36 @@ def _run_one_subtask(sub: dict, parent_env: dict | None = None) -> dict:
 
 
 def _run_subtasks_sequential(subtask_defs: list[dict], parent_env: dict | None = None) -> list[dict]:
-    """Execute subtasks one at a time, preserving order."""
+    """Execute subtasks one at a time, preserving order (Pattern 3: channel included)."""
     n = len(subtask_defs)
     print(f"\n[orchestrator] running {n} subtask(s) sequentially...")
     t_wall_start = time.time()
 
-    for i, sub in enumerate(subtask_defs):
-        result = _run_one_subtask(sub, parent_env)
-        subtask_defs[i] = result
-        status = "OK" if result.get("content") else "FAILED"
-        attempts_str = f", {result.get('attempts', 1)} attempt(s)" if result.get('attempts', 1) > 1 else ""
-        print(f"\n{'='*50}")
-        print(f"[subtask {i+1}/{n}] {result['desc']} — {status} ({result.get('elapsed', '?')}s{attempts_str})")
-        print(f"{'='*50}")
-        for line in (result.get("output_log") or []):
-            print(line, end="")
+    channel = tempfile.mkdtemp(prefix="harness_ch_")
+    seen: set[str] = set()
+
+    try:
+        for i, sub in enumerate(subtask_defs):
+            child_env = {**(parent_env or {}),
+                         "HARNESS_MSG_CHANNEL": channel,
+                         "HARNESS_SUBTASK_IDX": str(i)}
+            result = _run_one_subtask(sub, child_env)
+            subtask_defs[i] = result
+
+            # Drain any messages the subtask sent before printing its log
+            for msg in _channel.poll_messages(channel, seen):
+                print(f"  [subtask {msg.get('from_idx','?')}→parent] [{msg.get('type','?')}] {msg.get('content','')[:140]}", flush=True)
+                _emit("agent_message", msg)
+
+            status = "OK" if result.get("content") else "FAILED"
+            attempts_str = f", {result.get('attempts', 1)} attempt(s)" if result.get('attempts', 1) > 1 else ""
+            print(f"\n{'='*50}")
+            print(f"[subtask {i+1}/{n}] {result['desc']} — {status} ({result.get('elapsed', '?')}s{attempts_str})")
+            print(f"{'='*50}")
+            for line in (result.get("output_log") or []):
+                print(line, end="")
+    finally:
+        shutil.rmtree(channel, ignore_errors=True)
 
     wall_time = round(time.time() - t_wall_start, 1)
     print(f"\n[orchestrator] wall time: {wall_time}s (sequential)")
@@ -214,24 +283,45 @@ def _run_subtasks_parallel(subtask_defs: list[dict], parent_env: dict | None = N
     Execute subtasks in parallel threads (each spawns its own subprocess).
     parent_env: HARNESS_* env vars to propagate for run lineage tracking.
     Returns subtask_defs enriched with content, elapsed, attempts.
+
+    Pattern 3: creates a shared message channel directory so subtasks can send
+    intermediate progress / blocker messages back to the parent while running.
     """
     n = len(subtask_defs)
     workers = min(n, SUBTASK_MAX_WORKERS)
     print(f"\n[orchestrator] running {n} subtask(s) in parallel (max {workers} workers)...")
 
+    channel = tempfile.mkdtemp(prefix="harness_ch_")
+    stop_evt = threading.Event()
+    watcher  = threading.Thread(target=_watch_channel, args=(channel, stop_evt), daemon=True)
+    watcher.start()
+
     t_wall_start = time.time()
     results: list[dict | None] = [None] * n
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        future_to_idx = {pool.submit(_run_one_subtask, sub, parent_env): i
-                         for i, sub in enumerate(subtask_defs)}
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            try:
-                results[idx] = future.result()
-            except Exception as e:
-                results[idx] = {**subtask_defs[idx], "content": "", "error": str(e),
-                                "elapsed": 0, "attempts": 1}
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_to_idx = {
+                pool.submit(
+                    _run_one_subtask,
+                    sub,
+                    {**(parent_env or {}),
+                     "HARNESS_MSG_CHANNEL":  channel,
+                     "HARNESS_SUBTASK_IDX":  str(i)},
+                ): i
+                for i, sub in enumerate(subtask_defs)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    results[idx] = {**subtask_defs[idx], "content": "", "error": str(e),
+                                    "elapsed": 0, "attempts": 1}
+    finally:
+        stop_evt.set()
+        watcher.join(timeout=2)
+        shutil.rmtree(channel, ignore_errors=True)
 
     wall_time = round(time.time() - t_wall_start, 1)
 
@@ -306,7 +396,10 @@ def orchestrate(task: str, use_wiggum: bool = True):
           f"{len(plan.subtasks)} subtask(s)")
     if plan.subtasks:
         for i, s in enumerate(plan.subtasks, 1):
-            print(f"  {i}. [{s.mode}] {s.desc}")
+            deps = f" (after {s.depends_on})" if s.depends_on else ""
+            print(f"  {i}. [{s.mode}] {s.desc}{deps}")
+        if _check_dag_cycles(plan.subtasks):
+            print("[orchestrator] WARNING: cycle in subtask DAG — executing all subtasks independently")
 
     # --- Simple task: no subtasks → delegate to agent ---
     if not plan.subtasks:

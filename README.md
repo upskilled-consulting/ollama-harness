@@ -206,6 +206,50 @@ Result: a complete, themed, clustered page regardless of how many files are in t
 
 ---
 
+## Self-improvement loop (autoresearch)
+
+`autoresearch.py` is a standalone optimizer that runs outside the main `oh` pipeline. It proposes changes to `SYNTH_INSTRUCTION` in `agent.py`, runs the eval suite, and keeps changes that improve the composite score.
+
+```bash
+# Run against all three eval tasks, one eval sample per experiment
+python harness/autoresearch.py --eval-n 1 --tasks T_B --mode auto
+
+# Override inference routing (required when .env points at servers that aren't running)
+$env:HARNESS_ENDPOINTS = ""
+$env:INFERENCE_BACKEND = "ollama"
+python harness/autoresearch.py --eval-n 1 --mode auto
+```
+
+| Flag | Effect |
+|------|--------|
+| `--eval-n N` | Samples per eval run (default: 3; use 1 for fast iteration) |
+| `--tasks T_B,T_D` | Comma-separated eval task IDs (default: T_B,T_D,T_E) |
+| `--mode auto` | `auto` (re-gathers research after plateau), `explore` (always), `exploit` (never) |
+| `--delta FLOAT` | Minimum score improvement to keep a change (default: 0.1) |
+
+Key environment variables for autoresearch:
+
+| Variable | Effect |
+|----------|--------|
+| `PROPOSER_MODEL` | Model for instruction proposals (default: `Qwen3-Coder:30b`) |
+| `KIMI_MODEL` | Cloud model consulted when loop gets stuck (default: `kimi-k2.5:cloud`) |
+| `KIMI_STUCK_THRESHOLD` | Consecutive discards before Kimi consult fires (default: `6`) |
+| `MINIBATCH_FLOOR` | Score floor for quick-screen before full eval (default: `6.5`) |
+| `EPOCH_SIZE` | Experiments per slow-update epoch (default: `10`) |
+| `VALIDATION_SEED_COUNT` | Re-run seeds required before accepting a proposal (default: `2`) |
+
+Progress is logged to `autoresearch.tsv` (one row per experiment). The best accepted instruction is written to `skills/synthesis.md` and loaded by `agent.py` at startup.
+
+---
+
+## Supply chain transparency
+
+[`AIBOM.md`](./AIBOM.md) enumerates all AI model artifacts — local GGUF models, custom Ollama Modelfiles with system-prompt overlays, and cloud endpoints — that the harness invokes at runtime. It complements [`SBOM.md`](./SBOM.md) (the software bill of materials, also generatable via `cyclonedx-py`) by capturing dependencies that don't appear in `pyproject.toml` or `uv.lock`.
+
+Update `AIBOM.md` whenever a model is pulled or a Modelfile system prompt changes.
+
+---
+
 ## Dashboard
 
 A React/TypeScript UI (Vite + Tanstack Query) provides live visibility into every run.
@@ -219,6 +263,7 @@ A React/TypeScript UI (Vite + Tanstack Query) provides live visibility into ever
 | **Sessions** | Group runs by session for multi-turn task tracking. |
 | **Artifacts** | Browse output files written by runs. |
 | **Fine-tune** | Training metrics (loss, accuracy curves) and RL dataset browser — preference pairs, reward feedback, GRPO rollouts, and DPO examples with Wiggum evaluator annotations. |
+| **Autoresearch** | Real-time supervision of the autoresearch optimizer — experiment table (status badge, score, Δ, consecutive discards, Kimi-fire indicator), score sparkline, KPI summary, and a detail panel showing the full proposed synth instructions. Polls every 5 s. |
 | **MCP** | Inspect registered MCP tool servers. |
 | **Memory** | Semantic observation store browser — search/filter 1960+ memories, 👍/👎 RLHF quality signals (clamp −3 to +3), provenance trace to originating run, tag editor, prune-candidate review queue, and UMAP ontology graph (`pip install umap-learn scikit-learn`). |
 | **Security** | Real-time audit log for all blocked/detected security events — injection attempts, path sandbox violations, Python code blocks, CDP navigation. Search, filter by severity/type/layer, click to expand full event detail. |

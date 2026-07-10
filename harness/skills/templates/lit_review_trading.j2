@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Research: {{ meta.query }}</title>
+<style>
+  :root {
+    --bg:       #141820;
+    --bg2:      #1a2030;
+    --bg3:      #1e2535;
+    --accent:   #64c8b4;
+    --accent2:  #4aa898;
+    --blue:     #60a5fa;
+    --orange:   #f59e0b;
+    --green:    #34d399;
+    --red:      #f87171;
+    --purple:   #a78bfa;
+    --text:     rgba(220,235,230,0.92);
+    --textdim:  rgba(100,200,180,0.55);
+    --border:   rgba(100,200,180,0.13);
+    --pass:     #34d399;
+    --warn:     #f59e0b;
+    --flag:     #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .page { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+  /* Header */
+  .hdr { border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 2rem; }
+  .hdr h1 { font-size: 1.4rem; color: var(--accent); font-weight: 600; }
+  .hdr .meta { color: var(--textdim); font-size: 0.8rem; margin-top: 0.3rem; }
+
+  /* Section headings */
+  h2 { font-size: 1rem; font-weight: 600; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 0.7rem; margin: 2rem 0 0.8rem; }
+  h3 { font-size: 0.9rem; font-weight: 600; color: var(--text); margin: 1.2rem 0 0.4rem; }
+
+  /* Synthesis */
+  .synthesis { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.2rem; }
+
+  /* Clusters */
+  .cluster { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+  .cluster-summary { color: var(--textdim); font-size: 0.85rem; margin-bottom: 0.8rem; }
+
+  /* Paper cards */
+  .papers { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.6rem; }
+  .paper { background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 0.75rem 1rem; }
+  .paper-title { font-weight: 600; font-size: 0.85rem; }
+  .paper-meta { color: var(--textdim); font-size: 0.75rem; margin: 0.2rem 0 0.5rem; }
+  .ann-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 1rem; margin-top: 0.4rem; }
+  .ann-row { font-size: 0.8rem; }
+  .ann-label { color: var(--textdim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Open questions */
+  .oq-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+  .oq-list li::before { content: "?"; color: var(--accent); font-weight: 700; margin-right: 0.5rem; }
+
+  /* Thesis card */
+  .thesis-card {
+    background: var(--bg2);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 1.4rem;
+    margin-top: 2rem;
+  }
+  .thesis-card h2 { border-color: var(--accent); margin-top: 0; }
+  .thesis-row { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0.8rem 0; }
+  .thesis-badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.3rem 0.7rem; font-size: 0.8rem;
+  }
+  .thesis-badge .label { color: var(--textdim); font-size: 0.7rem; text-transform: uppercase; }
+  .direction-long  { color: var(--green);  font-weight: 700; }
+  .direction-short { color: var(--red);    font-weight: 700; }
+  .conviction-high   { color: var(--green);  }
+  .conviction-medium { color: var(--orange); }
+  .conviction-low    { color: var(--textdim);}
+  .rationale { color: var(--textdim); font-size: 0.85rem; line-height: 1.5; border-left: 2px solid var(--border); padding-left: 0.8rem; margin: 0.8rem 0; }
+
+  /* Validation */
+  .validation { margin: 1rem 0; }
+  .vcheck { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+  .vcheck:last-child { border-bottom: none; }
+  .vbadge { flex-shrink: 0; font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 3px; }
+  .PASS { background: rgba(52,211,153,0.15); color: var(--pass); }
+  .WARN { background: rgba(245,158,11,0.15); color: var(--warn); }
+  .FLAG { background: rgba(248,113,113,0.15); color: var(--flag); }
+  .NA   { background: rgba(100,200,180,0.08); color: var(--textdim); }
+  .vcheck-name   { font-weight: 600; min-width: 140px; }
+  .vcheck-detail { color: var(--textdim); }
+  .overall-badge { display: inline-block; font-size: 0.9rem; font-weight: 700; padding: 0.3rem 0.8rem; border-radius: 5px; margin-bottom: 0.8rem; }
+
+  /* CTA section */
+  .cta-section { margin-top: 2.5rem; padding-top: 2rem; border-top: 2px solid var(--accent); }
+  .cta-section h2 { color: var(--text); border-color: var(--accent); }
+  .cta-row { display: flex; gap: 1rem; margin-top: 1.2rem; flex-wrap: wrap; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.7rem 1.6rem; border-radius: 6px; font-size: 0.9rem;
+    font-weight: 600; border: none; cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-execute-long  { background: var(--green);  color: #0d1117; }
+  .btn-execute-short { background: var(--red);    color: #0d1117; }
+  .btn-reject        { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+
+  /* Feedback form */
+  #feedback-form { display: none; margin-top: 1.2rem; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 1.2rem; }
+  #feedback-form h3 { color: var(--text); margin-bottom: 0.8rem; }
+  .tag-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.8rem; }
+  .tag-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--textdim); border-radius: 4px; padding: 0.25rem 0.6rem; font-size: 0.75rem; cursor: pointer; transition: all 0.15s; }
+  .tag-btn.selected { background: rgba(100,200,180,0.15); border-color: var(--accent); color: var(--accent); }
+  textarea#feedback-reason { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 0.6rem; font-size: 0.85rem; resize: vertical; min-height: 80px; font-family: inherit; }
+  textarea#feedback-reason:focus { outline: none; border-color: var(--accent); }
+  .form-actions { display: flex; gap: 0.7rem; margin-top: 0.8rem; }
+  .btn-submit { background: var(--accent); color: #0d1117; }
+  .btn-cancel-form { background: var(--bg3); color: var(--textdim); border: 1px solid var(--border); }
+
+  /* Status message */
+  #status-msg { margin-top: 0.8rem; padding: 0.6rem 1rem; border-radius: 5px; font-size: 0.85rem; display: none; }
+  .msg-ok  { background: rgba(52,211,153,0.12); border: 1px solid var(--pass); color: var(--pass); }
+  .msg-err { background: rgba(248,113,113,0.12); border: 1px solid var(--flag); color: var(--flag); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="hdr">
+    <h1>Trading Research: {{ meta.query }}</h1>
+    <div class="meta">
+      Generated {{ meta.generated_at }}
+      &nbsp;&middot;&nbsp; {{ meta.paper_count }} papers fetched
+      &nbsp;&middot;&nbsp; {{ meta.annotated }} annotated
+      {% if meta.date_range %}&nbsp;&middot;&nbsp; {{ meta.date_range }}{% endif %}
+    </div>
+  </div>
+
+  <!-- Overview synthesis -->
+  <h2>Overview</h2>
+  <div class="synthesis">{{ synthesis }}</div>
+
+  <!-- Open questions -->
+  {% if open_questions %}
+  <h2>Open Questions</h2>
+  <ul class="oq-list">
+    {% for q in open_questions %}<li>{{ q }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <!-- Clusters -->
+  {% for cluster in clusters %}
+  <h2>{{ loop.index }}. {{ cluster.name }}</h2>
+  <div class="cluster">
+    <div class="cluster-summary">{{ cluster.summary }}</div>
+    {% if cluster.hub_paper %}
+    <div style="font-size:0.8rem; margin-bottom:0.6rem;">
+      <span style="color:var(--textdim)">Hub paper:</span>
+      <a href="{{ cluster.hub_paper.arxiv_url }}">{{ cluster.hub_paper.title }}</a>
+    </div>
+    {% endif %}
+    <div class="papers">
+      {% for paper in cluster.papers %}
+      <div class="paper">
+        <div class="paper-title">
+          <a href="{{ paper.arxiv_url }}" target="_blank">{{ paper.title }}</a>
+        </div>
+        <div class="paper-meta">
+          {{ paper.arxiv_id }} &middot; {{ paper.published[:10] if paper.published else '' }}
+          {% if paper.wiggum_score %}&middot; score {{ paper.wiggum_score }}/10{% endif %}
+        </div>
+        {% set ann = paper.annotation %}
+        {% if ann %}
+        <div class="ann-grid">
+          {% if ann.strategy %}<div class="ann-row"><div class="ann-label">Strategy</div>{{ ann.strategy }}</div>{% endif %}
+          {% if ann.signal %}<div class="ann-row"><div class="ann-label">Signal</div>{{ ann.signal }}</div>{% endif %}
+          {% if ann.performance %}<div class="ann-row"><div class="ann-label">Performance</div>{{ ann.performance }}</div>{% endif %}
+          {% if ann.limitations %}<div class="ann-row"><div class="ann-label">Limitations</div>{{ ann.limitations }}</div>{% endif %}
+          {% if ann.implementation %}<div class="ann-row"><div class="ann-label">Implementation</div>{{ ann.implementation }}</div>{% endif %}
+          {% if ann.outlook %}<div class="ann-row"><div class="ann-label">Outlook</div>{{ ann.outlook }}</div>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <!-- Trade Thesis -->
+  {% if thesis %}
+  <div class="thesis-card">
+    <h2>Trade Thesis</h2>
+
+    <div class="thesis-row">
+      <div class="thesis-badge">
+        <span class="label">Ticker</span>
+        <span style="font-size:1rem; font-weight:700; color:var(--accent)">
+          {{ thesis.ticker or 'N/A' }}
+        </span>
+      </div>
+      <div class="thesis-badge">
+        <span class="label">Direction</span>
+        <span class="direction-{{ thesis.direction | lower }}">
+          {{ thesis.direction | upper }}
+        </span>
+      </div>
+      <div class="thesis-badge">
+        <span class="label">Conviction</span>
+        <span class="conviction-{{ thesis.conviction | lower }}">
+          {{ thesis.conviction | capitalize }}
+        </span>
+      </div>
+      {% if thesis.entry %}
+      <div class="thesis-badge">
+        <span class="label">Entry</span>${{ "%.2f" | format(thesis.entry) }}
+      </div>
+      {% endif %}
+      {% if thesis.target %}
+      <div class="thesis-badge">
+        <span class="label">Target</span>${{ "%.2f" | format(thesis.target) }}
+      </div>
+      {% endif %}
+      {% if thesis.stop %}
+      <div class="thesis-badge">
+        <span class="label">Stop</span>${{ "%.2f" | format(thesis.stop) }}
+      </div>
+      {% endif %}
+      {% if thesis.position_pct %}
+      <div class="thesis-badge">
+        <span class="label">Size</span>{{ thesis.position_pct }}% of portfolio
+      </div>
+      {% endif %}
+    </div>
+
+    {% if thesis.rationale %}
+    <div class="rationale">{{ thesis.rationale }}</div>
+    {% endif %}
+
+    <!-- Validation -->
+    {% if validation %}
+    <div class="validation">
+      <div class="overall-badge {{ validation.overall }}">
+        Validation: {{ validation.overall }}
+        {% if validation.flag_count %} &middot; {{ validation.flag_count }} FLAG{% endif %}
+        {% if validation.warn_count %} &middot; {{ validation.warn_count }} WARN{% endif %}
+      </div>
+      {% for check in validation.checks %}
+      <div class="vcheck">
+        <span class="vbadge {{ check.status }}">{{ check.status }}</span>
+        <span class="vcheck-name">{{ check.name }}</span>
+        <span class="vcheck-detail">{{ check.detail }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- CTA -->
+  <div class="cta-section">
+    <h2>Execute or Reject</h2>
+    <p style="color:var(--textdim); font-size:0.85rem; margin-top:0.4rem;">
+      Paper trading is {% if validation and validation.overall == 'FLAG' %}
+      <span style="color:var(--flag)">blocked — validation returned FLAG.</span>
+      Resolve flags before executing, or reject with feedback.
+      {% else %}active. Review the thesis above before submitting.{% endif %}
+    </p>
+
+    <div class="cta-row">
+      <button id="btn-execute"
+        class="btn btn-execute-{{ thesis.direction | lower }}"
+        {% if validation and validation.overall == 'FLAG' %}disabled{% endif %}>
+        {% if thesis.direction | lower == 'long' %}BUY{% else %}SELL SHORT{% endif %}
+        {{ thesis.ticker }}
+        {% if thesis.position_pct %}({{ thesis.position_pct }}% position){% endif %}
+      </button>
+      <button id="btn-reject" class="btn btn-reject">Reject + Feedback</button>
+    </div>
+
+    <div id="feedback-form">
+      <h3>Why are you rejecting this thesis?</h3>
+      <div class="tag-row" id="tag-row">
+        {% for tag in ["overfit","macro_risk","data_quality","execution_cost","capacity","model_risk","timing","other"] %}
+        <button class="tag-btn" data-tag="{{ tag }}">{{ tag }}</button>
+        {% endfor %}
+      </div>
+      <textarea id="feedback-reason" placeholder="Add any additional notes (optional)..."></textarea>
+      <div class="form-actions">
+        <button class="btn btn-submit" id="btn-submit-feedback">Submit Feedback</button>
+        <button class="btn btn-cancel-form" id="btn-cancel-feedback">Cancel</button>
+      </div>
+    </div>
+
+    <div id="status-msg"></div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Embedded trade data for JS -->
+<script id="trade-data" type="application/json">
+{{ {
+  "ticker":       thesis.ticker if thesis else none,
+  "direction":    thesis.direction if thesis else none,
+  "conviction":   thesis.conviction if thesis else none,
+  "entry":        thesis.entry if thesis else none,
+  "target":       thesis.target if thesis else none,
+  "stop":         thesis.stop if thesis else none,
+  "position_pct": thesis.position_pct if thesis else none,
+  "rationale":    thesis.rationale if thesis else "",
+  "run_id":       run_id,
+  "api_base":     api_base
+} | tojson }}
+</script>
+
+<script>
+(function () {
+  const raw = document.getElementById('trade-data');
+  if (!raw) return;
+  const td = JSON.parse(raw.textContent);
+  const API = td.api_base || 'http://localhost:7860';
+
+  const btnExecute = document.getElementById('btn-execute');
+  const btnReject  = document.getElementById('btn-reject');
+  const form       = document.getElementById('feedback-form');
+  const statusMsg  = document.getElementById('status-msg');
+
+  function showStatus(msg, ok) {
+    statusMsg.textContent = msg;
+    statusMsg.className   = ok ? 'msg-ok' : 'msg-err';
+    statusMsg.style.display = 'block';
+  }
+
+  // Execute
+  if (btnExecute) {
+    btnExecute.addEventListener('click', async () => {
+      btnExecute.disabled = true;
+      btnExecute.textContent = 'Submitting...';
+      try {
+        const resp = await fetch(`${API}/api/trade/execute`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(td),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || resp.statusText);
+        showStatus(
+          `Order submitted: ${data.side?.toUpperCase()} ${data.symbol} ` +
+          `(order_id=${data.order_id}, trade_id=${data.trade_id})`,
+          true
+        );
+        btnExecute.textContent = 'Order Submitted';
+      } catch (e) {
+        showStatus(`Execute failed: ${e.message}`, false);
+        btnExecute.disabled = false;
+        btnExecute.textContent = (td.direction === 'long' ? 'BUY ' : 'SELL SHORT ') + td.ticker;
+      }
+    });
+  }
+
+  // Reject toggle
+  if (btnReject) {
+    btnReject.addEventListener('click', () => {
+      form.style.display = form.style.display === 'block' ? 'none' : 'block';
+    });
+  }
+
+  // Tag selection
+  document.querySelectorAll('.tag-btn').forEach(btn => {
+    btn.addEventListener('click', () => btn.classList.toggle('selected'));
+  });
+
+  // Cancel feedback
+  const btnCancel = document.getElementById('btn-cancel-feedback');
+  if (btnCancel) btnCancel.addEventListener('click', () => { form.style.display = 'none'; });
+
+  // Submit feedback
+  const btnSubmit = document.getElementById('btn-submit-feedback');
+  if (btnSubmit) {
+    btnSubmit.addEventListener('click', async () => {
+      const tags   = [...document.querySelectorAll('.tag-btn.selected')].map(b => b.dataset.tag);
+      const reason = document.getElementById('feedback-reason').value.trim();
+      if (!reason && tags.length === 0) {
+        showStatus('Please select at least one tag or add a reason.', false);
+        return;
+      }
+      btnSubmit.disabled = true;
+      try {
+        const resp = await fetch(`${API}/api/trade/feedback`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            run_id:    td.run_id || '',
+            ticker:    td.ticker || '',
+            direction: td.direction || '',
+            reason:    reason || tags.join(', '),
+            rating:    -1,
+            tags:      tags,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || resp.statusText);
+        form.style.display = 'none';
+        showStatus('Feedback recorded. Thank you.', true);
+      } catch (e) {
+        const msg = e.message.includes('Method Not Allowed') || e.message.includes('Failed to fetch')
+          ? 'Cannot reach API server. Run: python -m harness.api.main'
+          : `Feedback failed: ${e.message}`;
+        showStatus(msg, false);
+        btnSubmit.disabled = false;
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>

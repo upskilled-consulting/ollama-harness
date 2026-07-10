@@ -24,9 +24,17 @@ from harness.config import RUNS_FILE
 # ---------------------------------------------------------------------------
 
 def current_date_context() -> str:
-    """Return a one-line date string for injection into LLM prompts."""
+    """Return a date/year anchor block for injection into LLM prompts."""
     now = datetime.now(UTC)
-    return f"Current date: {now.strftime('%Y-%m-%d')} (year: {now.year})"
+    this_year = now.year
+    last_year = this_year - 1
+    return (
+        f"Today's date: {now.strftime('%Y-%m-%d')}\n"
+        f"Temporal reference guide — use these exact years for relative terms:\n"
+        f'  "this year" = {this_year}\n'
+        f'  "last year" = {last_year}\n'
+        f'  "recent"    = {last_year}–{this_year}'
+    )
 
 
 # ---------------------------------------------------------------------------

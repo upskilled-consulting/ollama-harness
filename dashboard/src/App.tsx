@@ -16,6 +16,9 @@ import { Github }          from "@/views/Github";
 import { Memory }          from "@/views/Memory";
 import { Security }        from "@/views/Security";
 import { System }          from "@/views/System";
+import { Autoresearch }    from "@/views/Autoresearch";
+import { Pipeline }        from "@/views/Pipeline";
+import { ResearchHistory } from "@/views/ResearchHistory";
 import { FloatingPanels }  from "@/components/FloatingPanels";
 
 const qc = new QueryClient();
@@ -27,8 +30,11 @@ const VIEWS: Record<View, React.ReactNode> = {
   analytics: <Analytics />,
   sessions:  <Sessions />,
   artifacts: <Artifacts />,
-  finetune:  <Finetune />,
-  voice:     <Voice />,
+  finetune:      <Finetune />,
+  autoresearch:  <Autoresearch />,
+  pipeline:      <Pipeline />,
+  research:      <ResearchHistory />,
+  voice:         <Voice />,
   mcp:       <Mcp />,
   memory:    <Memory />,
   github:    <Github />,

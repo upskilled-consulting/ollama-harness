@@ -82,3 +82,45 @@ notebooks/
 
 # TTS training artifacts
 speecht5_nicho/
+
+# Demo recordings (raw .webm intermediates; commit only docs/demos/*.gif)
+docs/demos/raw/
+
+# Coverage
+.coverage
+.coverage.*
+
+# Local per-user harness config (like .env)
+.harness-user.toml
+
+# Scraped third-party docs (rebuilt by fetch_alpaca_docs.py)
+alpaca-docs/
+
+# Tool / IDE state
+.playwright-cli/
+anaconda_projects/
+
+# Local model weights
+pretrained_models/
+
+# Runtime outputs & logs
+email_drafts/
+data/eval/
+data/deepwiki/
+data/task_logs/
+data/experiments/
+data/lit_reviews/
+data/arxiv_cache/
+data/openalex_cache/
+data/tts_dataset/
+data/trending-tickers*.db
+data/security_events.jsonl
+data/page_feedback.jsonl
+data/messages.jsonl
+data/autoresearch.jsonl
+
+# Generated decks / audio / scratch experiment I/O
+*.pptx
+output.wav
+autoresearch.tsv
+perplexity-output.md

@@ -125,7 +125,7 @@ from harness.logger import RunTrace
 from harness.memory import MemoryStore, assess_novelty
 from harness.planner import Plan, make_plan
 from harness.security import check_file_path, check_output_path, check_python_code, scan_for_injection, strip_injection_candidates
-from harness.skills import auto_activate, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, skills_at_hook
+from harness.skills import auto_activate, get_context_injections, get_prompt_injections, merge_skills, parse_skills, run_annotate_standalone, run_post_synthesis, run_post_wiggum, skills_at_hook
 from harness.utils import current_date_context
 from harness.vision import detect_image_paths, extract_image_context
 from harness.wiggum import loop as wiggum_loop
@@ -196,22 +196,13 @@ def _synth_options(producer_model: str) -> dict:
 # ---------------------------------------------------------------------------
 # AUTORESEARCH:SYNTH_INSTRUCTION:BEGIN
 SYNTH_INSTRUCTION = (
-    "output ONLY the markdown starting with # "
-    "Synthesize the research findings into a comprehensive, well-structured answer to the task. "
-    "Directly address the task using specific evidence, techniques, tools, and data from the research above. "
-    "Use ## sections to organise key themes. Include concrete implementation details, benchmarks, "
-    "or examples wherever the research provides them. "
-    "Every claim must be grounded in the research findings — do not add generic filler content."
+    "output ONLY the markdown starting with #"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION:END
 
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:BEGIN
 SYNTH_INSTRUCTION_COUNT = (
-    "output ONLY the markdown starting with # "
-    "Synthesize the research findings into a structured answer to the task. "
-    "Each numbered section must be grounded in specific evidence from the research above. "
-    "Include concrete tools, techniques, benchmarks, and data points found in the research. "
-    "Do not add content that is not supported by the research findings."
+    "require exactly 5 practices"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_COUNT:END
 
@@ -219,10 +210,7 @@ SYNTH_INSTRUCTION_COUNT = (
 # Used when _is_technical_task() returns False so the model doesn't hallucinate code blocks.
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:BEGIN
 SYNTH_INSTRUCTION_PROSE = (
-    "output ONLY the markdown starting with # "
-    "Write a comprehensive, well-organised answer to the task based on the research findings above. "
-    "Directly address the task using specific facts, examples, and sources found in the research. "
-    "Do not generate generic content — ground every claim in the research findings above."
+    "write a cohesive narrative that describes how these practices interrelate in sequence, focusing on the logical flow from one to the next without explicit section headers or bullet points"
 )
 # AUTORESEARCH:SYNTH_INSTRUCTION_PROSE:END
 
@@ -256,13 +244,114 @@ def _is_technical_task(task: str) -> bool:
     return any(kw in lower for kw in _TECHNICAL_KEYWORDS)
 
 
+_TRADING_TASK_KEYWORDS = frozenset({
+    "trading thesis", "trade thesis", "trading theses", "paper trade",
+    "alpaca", "buy signal", "sell signal", "long thesis", "short thesis",
+    "entry point", "exit point", "position size", "trade idea", "trade setup",
+    "actionable trade", "trade recommendation", "portfolio allocation",
+})
+
+def _is_trading_task(task: str) -> bool:
+    lower = task.lower()
+    return any(kw in lower for kw in _TRADING_TASK_KEYWORDS)
+
+
+# Research/analysis tasks: economic, policy, data-driven analysis that should
+# cite retrieved sources rather than narrate best practices.
+_RESEARCH_TASK_VERBS = frozenset({
+    "analyze ", "analyse ", "assess ", "evaluate ", "examine ", "investigate ",
+    "compare ", "what factors", "what drove", "what caused", "why did",
+    "how has ", "how did ", "how have ", "explain why", "identify which",
+    "regional variation", "inflation dynamics", "price pressures",
+    "federal reserve", "economic conditions", "monetary policy",
+})
+_BEST_PRACTICES_SIGNALS = frozenset({
+    "best practice", "best-practice", "technique", "how to ", "list the",
+    "enumerate", "tips for", "guidelines for",
+})
+
+def _is_research_task(task: str) -> bool:
+    lower = task.lower()
+    if any(kw in lower for kw in _BEST_PRACTICES_SIGNALS):
+        return False
+    return any(kw in lower for kw in _RESEARCH_TASK_VERBS)
+
+
+# Research synthesis instruction — requires citation discipline and specificity.
+# Not an autoresearch target; intentionally separate from SYNTH_INSTRUCTION_PROSE.
+SYNTH_INSTRUCTION_RESEARCH = """\
+Output a structured research report in markdown starting with # (no preamble).
+
+Citation requirement: every empirical claim must be anchored to the retrieved context.
+Use inline citations: [FRED:SERIES:DATE] for FRED data, [BEA:DATASET:TABLE:GEO:PERIOD] for BEA data,
+"Beige Book (Month Year, District)" for Beige Book passages, or (Source: domain) for web sources.
+Do not assert facts that are not traceable to the retrieved context.
+
+District/entity attribution: never refer to "some regions" or "certain districts" —
+always name the specific district, sector, or entity. If the source names it, you must name it.
+
+Quote requirement: for each major finding, include at least one direct quote or verbatim
+figure from the retrieved source. Paraphrase is not sufficient when the source gives specific
+language, numbers, or named cost categories — reproduce them.
+Format quotes as: > "exact quote" — Beige Book (Month Year, District)
+
+Specificity requirement: name specific figures, percentages, district names, sector names,
+and time periods. Vague characterizations ("elevated", "strong", "persistent pressure")
+must be replaced with the concrete data point or direct quote that justifies them.
+
+Structure: use ## section headers. Cover the question's key dimensions in full.
+Depth over breadth: for each finding, show the specific evidence — exact values,
+named regions, named sectors, verbatim source language.
+"""
+
+SYNTH_INSTRUCTION_TRADING = """\
+Output a trading thesis report in markdown starting with # (no preamble).
+
+Structure each thesis exactly as follows — include ALL sections:
+
+## Thesis N: [Direction] [TICKER] — [One-line rationale]
+**Direction**: Long | Short
+**Ticker**: SYMBOL
+**Conviction**: High | Medium | Low
+[THESIS:{direction}:{ticker}:{rationale-slug}:{date}]
+
+**Macro context**: cite relevant [FRED:...], [BEA:...], or Beige Book signals that support the thesis
+**Signal support**: cite [SIGNAL:momentum_rank:...], [SIGNAL:hurst:...], [SIGNAL:bb_zscore:...] from market signals data
+**Fundamentals**: cite [YF:{ticker}:snapshot:{date}] — P/E, revenue growth, analyst target, upside %, short ratio
+**Risk factors**: 2-3 specific bearish counters to the thesis
+
+**Entry**: price level or range (market/limit)
+**Target**: price target with basis (e.g., analyst mean, prior high, valuation multiple)
+**Stop**: stop-loss level with basis (% below entry, support level)
+**Time horizon**: weeks | 1-3 months | 3-6 months | 6-12 months
+**Suggested position size**: % of paper portfolio
+
+---
+
+Generate 3-5 theses. Rank by conviction. Only cite signals that appear in the provided context — do not invent citations.
+At the end, add a ## Portfolio Summary section showing total suggested allocation and cash remaining.
+
+PRICE ANCHORING (mandatory): Entry, target, and stop prices MUST be derived from the
+current price shown in the [YF:{ticker}:snapshot:{date}] context block, not from memory.
+- Long: entry at or near current price (or below for a pullback limit); target = current * (1 + upside%); stop = current * (1 - risk%)
+- Short: entry at or near current price (or above for a bounce limit); target = current * (1 - downside%); stop = current * (1 + risk%)
+- If no [YF:...] block exists for a ticker, state the current price is unavailable and omit that thesis.
+"""
+
+
 def _synth_instruction(task: str) -> str:
     # HARNESS_SYNTH_INSTRUCTION env var overrides the experiment instruction — used by
     # RL data collection so diverse tasks aren't forced into the autoresearch template.
     override = os.environ.get("HARNESS_SYNTH_INSTRUCTION", "")
     if override:
         return override
-    return SYNTH_INSTRUCTION if _is_technical_task(task) else SYNTH_INSTRUCTION_PROSE
+    if _is_trading_task(task):
+        return SYNTH_INSTRUCTION_TRADING
+    if _is_technical_task(task):
+        return SYNTH_INSTRUCTION
+    if _is_research_task(task):
+        return SYNTH_INSTRUCTION_RESEARCH
+    return SYNTH_INSTRUCTION_PROSE
 
 
 SEARCHES_PER_TASK = 2        # minimum searches before novelty gating kicks in
@@ -312,6 +401,35 @@ PYTHON_TOOLS = [
         }
     },
 ]
+
+_SEND_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "send_message",
+        "description": (
+            "Send a message to the parent orchestrator. Use to report a key intermediate "
+            "finding, signal a blocker, or share progress while running as a subtask. "
+            "Types: 'progress' (routine update), 'finding' (notable result), 'blocker' (recoverable issue)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "type":    {"type": "string", "enum": ["progress", "finding", "blocker"]},
+                "content": {"type": "string", "description": "Message text (max 300 chars)"},
+            },
+            "required": ["type", "content"],
+        }
+    }
+}
+
+
+def _get_python_tools() -> list[dict]:
+    """Return PYTHON_TOOLS, extended with send_message when running as a subtask."""
+    from harness.agent_channel import channel_path
+    tools = list(PYTHON_TOOLS)
+    if channel_path():
+        tools.append(_SEND_MESSAGE_TOOL)
+    return tools
 
 
 def _browser_state_file() -> str:
@@ -717,12 +835,14 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
         response = ollama.chat(
             model=producer_model,
             messages=messages,
-            tools=PYTHON_TOOLS,
+            tools=_get_python_tools(),
             options={"temperature": 0.1},
         )
         trace.log_usage(response, stage="tool_loop")
         msg = response["message"]
         turn_thinking = getattr(getattr(response, "message", None), "thinking", None) or ""
+        if turn_thinking:
+            _emit("thinking", {"stage": "tool", "text": turn_thinking[:8000], "chars": len(turn_thinking)})
         messages.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])})
 
         tool_calls = msg.get("tool_calls") or []
@@ -737,7 +857,9 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
                 print(f"  [run_python] executing ({len(code)} chars)...")
                 result = execute_python(code)
                 execution_log.append(f"```python\n{code}\n```\nOutput:\n```\n{result}\n```")
-                trace.log_tool_call("run_python", code[:80], len(result))
+                _py_err = result if result.lstrip().startswith(("Traceback", "Error", "Exception")) else None
+                trace.log_tool_call("run_python", code[:80], len(result),
+                                    result_preview=result[:1200], error=_py_err)
                 trace.log_step("tool_loop", thinking=turn_thinking, tool="run_python",
                                query=code[:120], result_chars=len(result))
                 turn_thinking = ""
@@ -754,12 +876,56 @@ def run_tool_loop(task: str, research_context: str, trace: RunTrace, producer_mo
                 print(f"  [get_current_time] → {result}")
                 trace.log_tool_call("get_current_time", "", len(result))
                 messages.append({"role": "tool", "content": result, "name": "get_current_time"})
+            elif tool_name == "send_message":
+                from harness.agent_channel import send_message as _send_msg
+                msg_type = fn.get("arguments", {}).get("type", "progress")
+                content  = fn.get("arguments", {}).get("content", "")
+                result = _send_msg("parent", msg_type, content)
+                print(f"  [send_message] {msg_type}: {content[:120]}")
+                trace.log_tool_call("send_message", content[:80], len(result))
+                messages.append({"role": "tool", "content": result, "name": "send_message"})
 
     return "\n\n".join(execution_log)
 
 
+def _playwright_fetch_url(url: str) -> str:
+    """Headless Playwright fallback for URLs that block plain HTTP fetches (e.g. 403)."""
+    try:
+        from playwright.sync_api import sync_playwright as _swp
+    except ImportError:
+        return ""
+    try:
+        with _swp() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            )
+            page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+            text = page.inner_text("body").strip()
+            browser.close()
+        if len(text) > URL_ENRICH_MAX_CHARS:
+            text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
+        return text
+    except Exception as e:
+        print(f"    -> playwright fallback error: {type(e).__name__}: {e}")
+        return ""
+
+
 def fetch_url_content(url: str) -> str:
     """Fetch a URL and convert its HTML to markdown via MarkItDown. Returns empty string on failure."""
+    # SSRN: bypass Cloudflare via OpenAlex API + cloudscraper waterfall
+    if re.search(r"ssrn\.com|papers\.ssrn", url, re.IGNORECASE):
+        try:
+            from harness.skills.ssrn_scraper import fetch_for_agent
+            return fetch_for_agent(url)
+        except Exception as e:
+            print(f"  [ssrn] fetch failed: {e}")
+            return ""
+
     from harness.skills.youtube_transcribe import is_youtube_url, is_media_url, transcribe_youtube, transcribe_media_url
     if is_youtube_url(url):
         try:
@@ -774,16 +940,27 @@ def fetch_url_content(url: str) -> str:
             print(f"  [media] transcription error (skipping): {e}")
             return ""
     if not MARKITDOWN_AVAILABLE:
-        return ""
+        return _playwright_fetch_url(url)
     try:
-        result = _md_converter.convert(url)
-        text = (result.text_content or "").strip()
+        import threading
+        result_holder: list = []
+        def _convert():
+            result_holder.append(_md_converter.convert(url))
+        t = threading.Thread(target=_convert, daemon=True)
+        t.start()
+        t.join(timeout=15)
+        if not result_holder:
+            raise TimeoutError("markitdown fetch timed out after 15s")
+        text = (result_holder[0].text_content or "").strip()
         if len(text) > URL_ENRICH_MAX_CHARS:
             text = text[:URL_ENRICH_MAX_CHARS] + "\n[truncated]"
+        if not text:
+            raise ValueError("empty response")
         return text
     except Exception as e:
         print(f"    -> error: {type(e).__name__}: {e}")
-        return ""
+        print("    -> retrying with playwright...")
+        return _playwright_fetch_url(url)
 
 
 def enrich_with_page_content(results: list[dict], count: int, knowledge_state: str = "") -> str:
@@ -892,6 +1069,9 @@ def plan_query(task: str, knowledge_state: str, round_num: int, producer_model: 
         f"{current_date_context()}\n"
         f"Task: {task}\n\n"
         f"What is already known:\n{knowledge_state}\n\n"
+        "IMPORTANT: Your query must only be about the specific people, organizations, and subjects "
+        "explicitly named in the task above. Do NOT introduce any new person, organization, "
+        "or subject not mentioned in the task.\n\n"
         "Generate ONE search query to find important information about the task NOT yet covered above. "
         "Output ONLY the query string, nothing else."
     )
@@ -953,6 +1133,18 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
     seen_domains:    set[str] = set()
     consecutive_zero_domain_rounds = 0
 
+    # OSINT pre-flight: generate dork queries when no planned_queries provided
+    if not planned_queries and not force_deep and os.environ.get("HARNESS_OSINT_DISABLE") != "1":
+        try:
+            from harness.osint_tool import _osint_themes, generate_dork_queries
+            if _osint_themes(task):
+                _dorks = generate_dork_queries(task, model=producer_model, n=2)
+                if _dorks:
+                    planned_queries = _dorks
+                    print(f"  [osint] dork queries: {_dorks}")
+        except Exception as _osint_pre_err:
+            print(f"  [osint] dork generation skipped: {_osint_pre_err}", file=sys.stderr)
+
     # Fan-out: pre-fetch all planned queries in parallel.
     # Gap-targeted rounds stay sequential — each query depends on knowledge_state
     # accumulated from prior rounds and can't be generated upfront.
@@ -983,7 +1175,11 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
             results = web_search_raw(query)
 
         _emit("search", {"round": round_num, "query": query, "hits": len(results)})
-        trace.log_tool_call("web_search", query, len(format_results(results)))
+        _fmt = format_results(results)
+        _urls = [{"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")[:200]} for r in results]
+        trace.log_tool_call("web_search", query, len(_fmt),
+                            urls=_urls, result_preview=_fmt[:1200],
+                            error=None if results else "no results returned")
 
         # Domain tracking for oversearch detector (cheap — always run)
         round_domains   = {urlparse(r.get("href", "")).netloc for r in results if r.get("href")}
@@ -1015,6 +1211,9 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
                 print(f"  [oversearch] +0 new domains ({consecutive_zero_domain_rounds} consecutive zero-domain rounds)")
                 if consecutive_zero_domain_rounds >= 2:
                     print("  [oversearch] search saturated — no new sources in 2 consecutive rounds, terminating early")
+                    from harness.agent_channel import send_message as _ch_send
+                    _ch_send("parent", "progress",
+                             f"Search saturated after {round_num} rounds ({len(seen_domains)} domains) — moving to synthesis")
                     break
             else:
                 consecutive_zero_domain_rounds = 0
@@ -1045,7 +1244,11 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
         merged      = merge_results(all_result_sets)
         merged_text = format_results(merged)
         total_chars = len(merged_text)
-        trace.log_tool_call("web_search", fallback_query, len(format_results(results_fallback)))
+        _fmt_fb = format_results(results_fallback)
+        _urls_fb = [{"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")[:200]} for r in results_fallback]
+        trace.log_tool_call("web_search", fallback_query, len(_fmt_fb),
+                            urls=_urls_fb, result_preview=_fmt_fb[:1200],
+                            error=None if results_fallback else "no results returned")
         trace.log_search_quality(total_chars)
         print(f"  [research] after fallback: {len(merged)} results, {total_chars} chars")
 
@@ -1071,6 +1274,91 @@ def gather_research(task: str, trace: RunTrace, planned_queries: list[str] = Non
         merged_text, removed = strip_injection_candidates(merged_text)
         print(f"  [security] removed {removed} line(s)")
         trace.log_injection_stripped(len(injection_matches))
+
+    # FRED enrichment — append live economic data for finance/econ tasks
+    if os.environ.get("FRED_API_KEY") or os.environ.get("HARNESS_FRED_DISABLE") != "1":
+        try:
+            from harness.fred_tool import query_fred as _query_fred, _themes_for_query as _fred_themes
+            _themes = _fred_themes(task)
+            if _themes:
+                print(f"  [fred] economic intent detected (themes: {_themes[:3]}) — fetching live data...")
+                _fred_block = _query_fred(task, start=None, end=None, max_series=5)
+                if _fred_block:
+                    merged_text = merged_text + "\n\n" + _fred_block
+                    print(f"  [fred] appended {len(_fred_block)} chars of FRED data")
+                    trace.log_tool_call("fred", task, len(_fred_block),
+                                        result_preview=_fred_block[:600], error=None)
+        except Exception as _fred_err:
+            print(f"  [fred] skipped: {_fred_err}", file=sys.stderr)
+
+    # BEA enrichment — append live BEA economic data for macro/regional/trade tasks
+    if os.environ.get("HARNESS_BEA_DISABLE") != "1":
+        try:
+            from harness.bea_tool import query_bea as _query_bea, _themes_for_query as _bea_themes
+            _bea_intents_found = _bea_themes(task)
+            if _bea_intents_found:
+                print(f"  [bea] economic intent detected (themes: {_bea_intents_found[:3]}) — fetching live data...")
+                _bea_block = _query_bea(task)
+                if _bea_block:
+                    merged_text = merged_text + "\n\n" + _bea_block
+                    print(f"  [bea] appended {len(_bea_block)} chars of BEA data")
+                    trace.log_tool_call("bea", task, len(_bea_block),
+                                        result_preview=_bea_block[:600], error=None)
+        except Exception as _bea_err:
+            print(f"  [bea] skipped: {_bea_err}", file=sys.stderr)
+
+    # Alpaca enrichment — inject current portfolio state for trading/thesis queries
+    if os.environ.get("HARNESS_ALPACA_DISABLE") != "1":
+        try:
+            from harness.alpaca_tool import format_portfolio_context as _alpaca_ctx, _has_trading_intent as _alpaca_intent
+            if _alpaca_intent(task):
+                print("  [alpaca] trading intent detected — injecting portfolio context...")
+                _alpaca_block = _alpaca_ctx()
+                if _alpaca_block:
+                    merged_text = merged_text + "\n\n" + _alpaca_block
+                    print(f"  [alpaca] appended {len(_alpaca_block)} chars of portfolio context")
+                    trace.log_tool_call("alpaca", task, len(_alpaca_block),
+                                        result_preview=_alpaca_block[:600], error=None)
+        except Exception as _alpaca_err:
+            print(f"  [alpaca] skipped: {_alpaca_err}", file=sys.stderr)
+
+    # yfinance enrichment — equity fundamentals for ticker/trading queries.
+    # Always fires for trading thesis tasks so the model has live prices to anchor entry/target/stop.
+    if os.environ.get("HARNESS_YFINANCE_DISABLE") != "1":
+        try:
+            from harness.yfinance_tool import query_yfinance as _query_yf, _has_equity_intent as _yf_intent, _extract_tickers_from_query as _yf_tickers
+            if _yf_intent(task) or _is_trading_task(task):
+                _explicit = _yf_tickers(task)
+                # For trading thesis tasks with no explicit tickers in the task string,
+                # extract tickers from the research results so the model gets live price
+                # data for the specific stocks it discovered, not just trending-DB tickers.
+                if not _explicit and _is_trading_task(task):
+                    _from_research = _yf_tickers(merged_text)
+                    _explicit = _from_research[:10] if _from_research else None
+                _yf_block = _query_yf(task, tickers=_explicit or None, top=10)
+                if _yf_block:
+                    merged_text = merged_text + "\n\n" + _yf_block
+                    print(f"  [yfinance] appended {len(_yf_block)} chars of equity fundamentals")
+                    trace.log_tool_call("yfinance", task, len(_yf_block),
+                                        result_preview=_yf_block[:600], error=None)
+        except Exception as _yf_err:
+            print(f"  [yfinance] skipped: {_yf_err}", file=sys.stderr)
+
+    # OSINT enrichment — WHOIS, DNS, certs, threat intel for domain/IP targets
+    if os.environ.get("HARNESS_OSINT_DISABLE") != "1":
+        try:
+            from harness.osint_tool import query_osint as _query_osint, _detect_targets as _osint_targets
+            _osint_tgts = _osint_targets(task)
+            if _osint_tgts["domains"] or _osint_tgts["ips"]:
+                print("  [osint] targets detected — fetching enrichment data...")
+                _osint_block, _ = _query_osint(task)
+                if _osint_block:
+                    merged_text = merged_text + "\n\n" + _osint_block
+                    print(f"  [osint] appended {len(_osint_block)} chars of OSINT data")
+                    trace.log_tool_call("osint", task, len(_osint_block),
+                                        result_preview=_osint_block[:600], error=None)
+        except Exception as _osint_err:
+            print(f"  [osint] skipped: {_osint_err}", file=sys.stderr)
 
     # Store in research cache for future autoresearch experiments on the same task
     if _research_cache_enabled:
@@ -1124,6 +1412,8 @@ def synthesize(task: str, research_context: str, vision_context: str = "", file_
         trace.log_usage(response, stage="synth")
         trace.log_synth_cot(_thinking)
         trace.log_llm_turn("synth", prompt, response["message"].get("content", ""), _thinking)
+        if _thinking:
+            _emit("thinking", {"stage": "synth", "text": _thinking[:8000], "chars": len(_thinking)})
     return response["message"].get("content", "")
 
 
@@ -1286,6 +1576,102 @@ def extract_path(task: str) -> str | None:
     return all_paths[-1] if all_paths else None
 
 
+def _anchor_thesis_prices(content: str, path: str | None, producer_model: str, trace) -> str:
+    """
+    Deterministic price correction for trading theses.
+
+    Extracts tickers from [THESIS:direction:TICKER:...] or **Ticker**: SYMBOL lines,
+    fetches real prices via yfinance, and for any thesis where Entry is >10% off the
+    real price, scales Entry/Target/Stop proportionally without an LLM call.
+    """
+    # Extract tickers from [THESIS:...] citations OR **Ticker**: SYMBOL lines
+    tickers_from_citations = [
+        m.group(1).upper()
+        for m in re.finditer(r'\[THESIS:[^:]+:([A-Z]{1,6}):', content, re.IGNORECASE)
+    ]
+    tickers_from_headers = [
+        m.group(1).upper()
+        for m in re.finditer(r'\*\*Ticker\*\*\s*:\s*([A-Z]{1,6})\b', content)
+    ]
+    tickers = list(dict.fromkeys(tickers_from_citations + tickers_from_headers))
+    if not tickers:
+        return content
+
+    # Fetch real prices
+    real_prices: dict[str, float] = {}
+    try:
+        import yfinance as yf
+        for ticker in tickers[:8]:
+            try:
+                from harness.trade_validator import _normalize_yf_ticker
+                yf_ticker = _normalize_yf_ticker(ticker)
+                info  = yf.Ticker(yf_ticker).fast_info
+                price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+                if price and float(price) > 0:
+                    real_prices[ticker] = float(price)
+            except Exception:
+                pass
+    except ImportError:
+        return content
+
+    if not real_prices:
+        return content
+
+    # Split into thesis sections and patch prices section-by-section
+    # Sections are delimited by "## Thesis N:" or "## Portfolio" / "## Trade Validation"
+    section_re = re.compile(r'(?=^## )', re.MULTILINE)
+    parts = section_re.split(content)
+    changed = False
+
+    for i, part in enumerate(parts):
+        # Identify which ticker this section belongs to
+        ticker_m = re.search(r'\*\*Ticker\*\*\s*:\s*([A-Z]{1,6})\b', part)
+        if not ticker_m:
+            continue
+        ticker = ticker_m.group(1).upper()
+        real = real_prices.get(ticker)
+        if not real:
+            continue
+
+        # Parse Entry from "**Entry**: $XXX.XX"
+        entry_m = re.search(r'\*\*Entry\*\*\s*:\s*\$([0-9,]+\.?[0-9]*)', part)
+        if not entry_m:
+            continue
+        stated_entry = float(entry_m.group(1).replace(',', ''))
+        if stated_entry <= 0:
+            continue
+
+        pct_off = abs(real - stated_entry) / real
+        if pct_off <= 0.10:
+            continue  # price is close enough
+
+        print(f"  [price-anchor] {ticker}: entry=${stated_entry:.2f} vs real=${real:.2f} "
+              f"({pct_off*100:.0f}% off) — rescaling")
+
+        scale = real / stated_entry
+
+        def _scale_price(m: re.Match) -> str:
+            val = float(m.group(1).replace(',', ''))
+            new_val = round(val * scale, 2)
+            return m.group(0).replace(m.group(1), f"{new_val:.2f}")
+
+        # Scale all $X.XX values in this section
+        patched = re.sub(r'\$([0-9,]+\.?[0-9]*)', _scale_price, part)
+        if patched != part:
+            parts[i] = patched
+            changed = True
+
+    if not changed:
+        return content
+
+    revised = "".join(parts)
+    if path:
+        from pathlib import Path as _P
+        _P(path).write_text(revised, encoding="utf-8")
+    print(f"  [price-anchor] prices rescaled for {len(real_prices)} ticker(s)")
+    return revised
+
+
 def write_output(content: str, path: str, trace: RunTrace):
     print("\n[turn 2] writing file...\n")
 
@@ -1319,7 +1705,7 @@ def write_output(content: str, path: str, trace: RunTrace):
         print(f"[eval] FAIL — {expanded} not found")
 
 
-def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
+def _estimate_tac_hours(task: str, content: str, model: str, _trace=None) -> float | None:
     """
     Ask the LLM to estimate how long a skilled human researcher would take
     to complete the same task manually. Returns decimal hours or None on error.
@@ -1340,6 +1726,8 @@ def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1, "num_predict": 128},
         )
+        if _trace is not None:
+            _trace.log_usage(resp, stage="tac_estimate")
         import json as _json_tac
         raw = resp["message"].get("content", "").strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
@@ -1356,7 +1744,7 @@ def _estimate_tac_hours(task: str, content: str, model: str) -> float | None:
         return None
 
 
-def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: dict, content: str, wiggum_issues: list[str] | None = None):
+def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: dict, content: str, wiggum_issues: list[str] | None = None, _trace=None):
     """Compress a completed run and write it to the memory store."""
     print("\n  [memory] compressing run...")
     try:
@@ -1372,6 +1760,7 @@ def _store_memory(memory: MemoryStore, task: str, task_type: str, trace_data: di
             final=trace_data.get("final", "PASS"),
             wiggum_issues=[i for i in (wiggum_issues or []) if not any(skip in i for skip in ("parse error", "connection failed", "evaluator connection"))],
             run_id=trace_data.get("run_id"),
+            _trace=_trace,
         )
         print(f"  [memory] stored: {obs['title']!r}")
     except Exception as e:
@@ -1453,8 +1842,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 explicit_skills = list(explicit_skills) + ["playwright"]
                 print("  [auto] playwright intent detected — routing to /playwright")
 
-# Set dynamic keep_alive unless overridden by OLLAMA_KEEP_ALIVE env var
-        if _KEEP_ALIVE_OVERRIDE is None:
+# Set dynamic keep_alive for ollama backend only; vLLM/llamacpp manage their own lifetimes.
+        if _KEEP_ALIVE_OVERRIDE is None and os.environ.get("INFERENCE_BACKEND", "ollama").lower() == "ollama":
             _KEEP_ALIVE = _estimate_keep_alive(
                 task_type="",             # task_type not known yet; refined below after planning
                 explicit_skills=set(explicit_skills),
@@ -1552,7 +1941,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.finish(wiggum_result.get("final", "FAIL"))
             else:
                 trace.finish("PASS")
-            _store_memory(memory, task, "annotate", trace.data, content)
+            _store_memory(memory, task, "annotate", trace.data, content, _trace=trace)
 
         def _handle_email():
             from harness.skills.email_skill import run_email_standalone, generate_single_email
@@ -1743,6 +2132,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             max_f_m    = _re.search(r"--max-fetch\s+(\d+)",    task)
             max_a_m    = _re.search(r"--max-annotate\s+(\d+)", task)
             tmpl_m     = _re.search(r"--template\s+(\S+)",     task)
+            domain_m   = _re.search(r"--domain\s+(cs|health|finance)", task)
+            source_m   = _re.findall(r"--source\s+(arxiv|openalex)", task)
             all_time   = "--all-time" in task
             after      = "all" if all_time else (after_m.group(1) if after_m else None)
             before     = before_m.group(1) if before_m else None
@@ -1750,6 +2141,15 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             max_fetch  = int(max_f_m.group(1)) if max_f_m else 100
             max_ann    = int(max_a_m.group(1)) if max_a_m else 20
             template   = tmpl_m.group(1) if tmpl_m else "survey"
+            domain     = domain_m.group(1) if domain_m else "cs"
+            if source_m:
+                sources = source_m
+            elif domain == "finance":
+                sources = ["openalex"]
+            elif domain == "health":
+                sources = ["openalex"]
+            else:
+                sources = ["arxiv"]
             # Natural language overrides for max_fetch / max_annotate when no CLI flags given
             if not max_f_m:
                 _nl_f = _re.search(r'\bfetch\s+(?:up\s+to\s+)?(\d+)\b', task, _re.IGNORECASE)
@@ -1769,6 +2169,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 r"|--after\s+\S+|--before\s+\S+|--csv\s+\S+"
                 r"|--max-fetch\s+\d+|--max-annotate\s+\d+"
                 r"|--template\s+\S+"
+                r"|--domain\s+\S+|--source\s+\S+"
                 r"|[Ss]ave\s+(?:(?:\w+\s+){0,10})?(?:as|to|at)\s+\S+"
                 r"|\S+\.(?:md|html))",
                 "", task, flags=_re.IGNORECASE,
@@ -1781,6 +2182,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 _slug = _re.sub(r"[^\w]+", "_", query.lower() if query else "review")[:50].strip("_")
                 out = LIT_REVIEWS_DIR / f"{_slug}.md"
             trace.data["task_type"] = "lit-review"
+            trace.data["domain"]    = domain
             try:
                 result = run_lit_review(
                     query=query,
@@ -1796,6 +2198,8 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                     template=template,
                     producer_model=producer_model,
                     evaluator_model=_ann_eval_model,
+                    sources=sources,
+                    domain=domain,
                     _trace=trace,
                 )
             except Exception as _lr_err:
@@ -1812,9 +2216,18 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             trace.data["output_bytes"]        = out_p.stat().st_size if out_p and out_p.exists() else 0
             trace.data["lit_review_papers"]   = result.get("papers", 0)
             trace.data["lit_review_clusters"] = result.get("clusters", 0)
-            trace.data["tool_calls"]          = [
-                {"name": "web_search", "query": t}
-                for t in result.get("paper_titles", [])
+            trace.data["tool_calls"] = [
+                {
+                    "name":           "arxiv_fetch",
+                    "query":          p.get("title", ""),
+                    "result_chars":   p.get("annotation_len", 0),
+                    "urls":           [{"href": p.get("arxiv_url", ""), "title": p.get("title", "")}]
+                                      if p.get("arxiv_url") else [],
+                    "result_preview": p.get("contribution", ""),
+                    "cluster_idx":    p.get("cluster_idx"),
+                    "cluster_name":   p.get("cluster_name", ""),
+                }
+                for p in result.get("papers_data", [])
             ]
             if result.get("error") or not out_path_str:
                 err = result.get("error", "unknown")
@@ -1831,7 +2244,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
             else:
                 trace.finish("PASS")
             if out_p and out_p.exists():
-                _store_memory(memory, task, "lit-review", trace.data, out_p.read_text(encoding="utf-8"))
+                _store_memory(memory, task, "lit-review", trace.data, out_p.read_text(encoding="utf-8"), _trace=trace)
 
         def _handle_recall():
             import re as _re
@@ -1953,7 +2366,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 _out_path = str(_out / f"introspect-{_ts}.md")
             write_output(content, _out_path, trace)
             trace.finish("PASS")
-            _store_memory(memory, task, "introspect", trace.data, content)
+            _store_memory(memory, task, "introspect", trace.data, content, _trace=trace)
 
         def _handle_orientation():
             print("\n[skill:orientation] building situational awareness document...")
@@ -2005,7 +2418,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["final_content"] = content[:16_000]
                 trace.data["output_bytes"]  = len(content.encode())
             trace.finish("PASS")
-            _store_memory(memory, task, "orientation", trace.data, content)
+            _store_memory(memory, task, "orientation", trace.data, content, _trace=trace)
 
         def _handle_playwright():
             print("\n[skill:playwright] launching browser navigation...")
@@ -2081,7 +2494,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["final_content"] = content[:16_000]
                 trace.data["output_bytes"]  = len(content.encode())
             trace.finish("PASS")
-            _store_memory(memory, task, "playwright", trace.data, content)
+            _store_memory(memory, task, "playwright", trace.data, content, _trace=trace)
             try:
                 from harness.skill_extractor import extract_browser_skill_and_store as _extract_bskill
                 _extract_bskill(task=task, trace_data=trace.data,
@@ -2228,7 +2641,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
 
             write_output(content, out_path, trace)
             trace.finish("PASS")
-            _store_memory(memory, task, "transcribe", trace.data, content)
+            _store_memory(memory, task, "transcribe", trace.data, content, _trace=trace)
 
         def _handle_reorient():
             import re as _re
@@ -2351,7 +2764,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "re-orient", trace.data, content)
+            _store_memory(memory, task, "re-orient", trace.data, content, _trace=trace)
 
         def _handle_debug():
             print("\n[skill:debug] diagnosing recent failures...")
@@ -2554,7 +2967,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "debug", trace.data, content)
+            _store_memory(memory, task, "debug", trace.data, content, _trace=trace)
 
         def _handle_suggest():
             print("\n[skill:suggest] synthesising next task recommendation...")
@@ -2690,7 +3103,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "suggest", trace.data, content)
+            _store_memory(memory, task, "suggest", trace.data, content, _trace=trace)
 
         def _handle_troubleshoot():
             print("\n[skill:troubleshoot] diagnosing failures and planning next step...")
@@ -2936,7 +3349,7 @@ def run(task: str, use_wiggum: bool = True, producer_model: str | None = None, e
                 trace.data["output_bytes"]  = len(content.encode())
 
             trace.finish("PASS")
-            _store_memory(memory, task, "troubleshoot", trace.data, content)
+            _store_memory(memory, task, "troubleshoot", trace.data, content, _trace=trace)
 
         def _handle_sync_wiki():
             print("\n[skill:sync-wiki] extracting implementation facts from source code...")
@@ -3168,7 +3581,7 @@ Rules:
                     write_output(design_system_text, _out, trace)
                     print(f"\n  [design] design system -> {_out}")
                     trace.finish("PASS")
-                    _store_memory(memory, task, "design", trace.data, design_system_text)
+                    _store_memory(memory, task, "design", trace.data, design_system_text, _trace=trace)
                     return
 
             # ── Phase 2: generate HTML page ──────────────────────────────────
@@ -3221,7 +3634,7 @@ Rules:
                 write_output(html, _out, trace)
                 print(f"\n  [{_skill_name}] page -> {_out}")
                 trace.finish("PASS")
-                _store_memory(memory, task, _skill_name, trace.data, html[:8000])
+                _store_memory(memory, task, _skill_name, trace.data, html[:8000], _trace=trace)
 
         def _handle_deck():
             import re as _re
@@ -3303,6 +3716,7 @@ Rules:
             _store_memory(
                 memory, task, "deck", trace.data,
                 f"Deck: {_title or 'untitled'} | {len(content_pages)} source(s) | design: {_design_src or 'default'} | out: {out_path}",
+                _trace=trace,
             )
             print(f"\n  [deck] → {out_path}")
 
@@ -3337,6 +3751,29 @@ Rules:
             run_onboarding(ask_fn, producer_model, trace)
             trace.finish("PASS")
 
+        def _handle_execute_trades():
+            trace.data["task_type"] = "execute-trades"
+            from harness.alpaca_orders import execute_from_thesis_file
+
+            tokens    = task.split()
+            live_mode = "--live" in tokens
+            # First non-flag token that looks like a file path
+            thesis_path = next(
+                (t for t in tokens if not t.startswith("--") and ("/" in t or "\\" in t or t.endswith(".md"))),
+                path or "",
+            )
+            if not thesis_path:
+                print("[execute-trades] specify thesis file path in task: /execute-trades path/to/thesis.md [--live]")
+                trace.finish("ERROR")
+                return
+
+            results = execute_from_thesis_file(thesis_path, live=live_mode)
+            submitted = sum(1 for r in results if r.status == "submitted")
+            dry_run   = sum(1 for r in results if r.status == "dry_run")
+            skipped   = sum(1 for r in results if r.status == "skipped")
+            print(f"\n[execute-trades] done: {submitted} submitted, {dry_run} dry-run, {skipped} skipped")
+            trace.finish("PASS")
+
         _STANDALONE = {
             "annotate":     _handle_annotate,
             "email":        _handle_email,
@@ -3363,8 +3800,9 @@ Rules:
             "site":         _handle_site,
             "deck":         _handle_deck,
             "test-harness": _handle_test_harness,
-            "grill-me":     _handle_grill_me,
-            "onboarding":   _handle_onboarding,
+            "grill-me":       _handle_grill_me,
+            "onboarding":     _handle_onboarding,
+            "execute-trades": _handle_execute_trades,
         }
 
         for _skill in explicit_skills:
@@ -3410,6 +3848,9 @@ Rules:
             if _planner_resp is not None:
                 trace.log_usage(_planner_resp, stage="planner")
                 trace.log_planner_cot(_planner_resp)
+                _plan_thinking = getattr(getattr(_planner_resp, "message", None), "thinking", None) or ""
+                if _plan_thinking:
+                    _emit("thinking", {"stage": "plan", "text": _plan_thinking[:8000], "chars": len(_plan_thinking)})
             _emit("plan", {
                 "task_type":  plan.task_type,
                 "complexity": plan.complexity,
@@ -3417,6 +3858,10 @@ Rules:
                 "gaps":       plan.knowledge_gaps or [],
                 "notes":      plan.notes or "",
             })
+            from harness.agent_channel import send_message as _ch_send
+            _q_count = len(plan.search_queries or [])
+            _ch_send("parent", "progress",
+                     f"Plan ready: {plan.task_type}/{plan.complexity}, {_q_count} queries")
             # Plan approval gate — blocks until the dashboard user approves or edits queries
             if plan_gate is not None:
                 approved = plan_gate(plan.search_queries or [])
@@ -3429,8 +3874,8 @@ Rules:
             auto_skills   = auto_activate(task, plan)
             active_skills = merge_skills(explicit_skills, auto_skills)
 
-        # Refine keep_alive now that task_type and active_skills are known
-        if _KEEP_ALIVE_OVERRIDE is None:
+        # Refine keep_alive now that task_type and active_skills are known (ollama only)
+        if _KEEP_ALIVE_OVERRIDE is None and os.environ.get("INFERENCE_BACKEND", "ollama").lower() == "ollama":
             _KEEP_ALIVE = _estimate_keep_alive(
                 task_type=plan.task_type,
                 explicit_skills=set(active_skills),
@@ -3527,6 +3972,10 @@ Rules:
 
         # Pre-synthesis skill injections
         skill_context = get_prompt_injections(active_skills, "pre_synthesis")
+        beige_ctx = get_context_injections(active_skills, task, plan)
+        if beige_ctx:
+            print("  [skills] injecting beige book context...")
+            context = context + "\n\n" + beige_ctx
 
         # Plugin command template injection
         if _plugin_cmd_context:
@@ -3558,6 +4007,8 @@ Rules:
         trace.set_stage("synth")
         print("\n  [synth] synthesizing from merged results...")
         _emit("synth", {"stage": "start", "task_type": plan.task_type, "tokens_in": len(context) // 4})
+        from harness.agent_channel import send_message as _ch_send
+        _ch_send("parent", "progress", f"Synthesis started — {len(context) // 4} tokens in")
         if expected_count is not None:
             print(f"  [count] detected count constraint: {expected_count} — using count-aware synthesis")
             with trace.span("synthesize", model=producer_model):
@@ -3611,6 +4062,10 @@ Rules:
         else:
             trace.finish("PASS")
 
+        # Price anchor correction — fix hallucinated prices before wiggum evaluates
+        if path and _is_trading_task(task):
+            content = _anchor_thesis_prices(content, path, producer_model, trace)
+
         # Post-synthesis skill handlers (e.g. /knowledge-graph)
         if skills_at_hook(active_skills, "post_synthesis"):
             with trace.span("post_synthesis_skills"):
@@ -3648,11 +4103,11 @@ Rules:
                     except Exception as _gap_err:
                         print(f"  [sync-wiki:gaps] error (non-fatal): {_gap_err}")
 
-            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL)
+            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL, _trace=trace)
             if tac is not None:
                 trace.data["tac_hours"] = tac
+            _store_memory(memory, task, wiggum_trace.get("task_type") or "", trace.data, content, wiggum_issues=all_wiggum_issues, _trace=trace)
             trace.finish()
-            _store_memory(memory, task, wiggum_trace.get("task_type") or "", trace.data, content, wiggum_issues=all_wiggum_issues)
 
             # Post-run skill extraction — non-blocking
             try:
@@ -3669,12 +4124,26 @@ Rules:
             except Exception as _skill_err:
                 print(f"  [skill] extraction error (non-fatal): {_skill_err}")
         else:
-            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL)
+            tac = _estimate_tac_hours(task, content, COMPRESS_MODEL, _trace=trace)
             if tac is not None:
                 trace.data["tac_hours"] = tac
-            trace.finish("PASS")
             from harness.wiggum import detect_task_type
-            _store_memory(memory, task, detect_task_type(task), trace.data, content)
+            _store_memory(memory, task, detect_task_type(task), trace.data, content, _trace=trace)
+            trace.finish("PASS")
+
+        # Re-anchor prices post-wiggum: revision passes may re-hallucinate prices.
+        # Read the wiggum-revised file and reapply deterministic price scaling.
+        if path and _is_trading_task(task):
+            try:
+                post_wiggum_content = Path(path).read_text(encoding="utf-8")
+                _anchor_thesis_prices(post_wiggum_content, path, producer_model, trace)
+            except Exception as _pa_err:
+                print(f"  [price-anchor] post-wiggum pass failed (non-fatal): {_pa_err}")
+
+        # Post-wiggum skills (e.g. /validate-trades) — run regardless of wiggum on/off
+        if skills_at_hook(active_skills, "post_wiggum"):
+            with trace.span("post_wiggum_skills"):
+                run_post_wiggum(active_skills, content, task, path or "", producer_model)
 
     except Exception as e:
         print(f"[error] unhandled exception: {e}")

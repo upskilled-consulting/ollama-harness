@@ -118,7 +118,8 @@ Facts: <JSON array of 3-5 specific factual strings worth remembering>
 
 
 def compress(task: str, task_type: str, queries: list[str], output_content: str,
-             output_lines: int, output_bytes: int, wiggum_scores: list[float]) -> dict:
+             output_lines: int, output_bytes: int, wiggum_scores: list[float],
+             _trace=None) -> dict:
     """
     Ask the compression model to summarize a completed run.
     Returns dict with keys: title, narrative, facts (list).
@@ -143,6 +144,8 @@ def compress(task: str, task_type: str, queries: list[str], output_content: str,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1},
         )
+        if _trace is not None:
+            _trace.log_usage(response, stage="memory_compress")
         text = response["message"]["content"].strip()
         return _parse_compression(text)
     except Exception as e:
@@ -336,6 +339,7 @@ class MemoryStore:
         final: str,
         wiggum_issues: list[str] | None = None,
         run_id: str | None = None,
+        _trace=None,
     ) -> dict:
         """
         Compress a completed run into an observation and persist it.
@@ -351,6 +355,7 @@ class MemoryStore:
             output_lines=output_lines or 0,
             output_bytes=output_bytes or 0,
             wiggum_scores=wiggum_scores or [],
+            _trace=_trace,
         )
 
         if wiggum_issues:
@@ -839,7 +844,7 @@ class MemoryStore:
             })
         return result
 
-    def get_graph(self) -> dict:
+    def get_graph(self, max_nodes: int = 600) -> dict:
         """UMAP 2D + k-means clustering of ChromaDB embeddings."""
         CLUSTER_COLORS = [
             "#6366f1", "#0ea5e9", "#10b981", "#f59e0b",
@@ -854,19 +859,32 @@ class MemoryStore:
         if col is None:
             return {"nodes": [], "clusters": [], "error": "ChromaDB unavailable"}
 
-        data = col.get(include=["embeddings", "metadatas", "documents"])
+        total = col.count()
+        if total < 5:
+            return {"nodes": [], "clusters": [], "error": "not enough memories for graph"}
+
+        # Fetch most-recent max_nodes by sampling SQLite ids first, then pulling embeddings
+        if total > max_nodes:
+            with self._connect() as conn:
+                recent_ids = [
+                    str(r[0]) for r in conn.execute(
+                        "SELECT id FROM observations ORDER BY id DESC LIMIT ?", (max_nodes,)
+                    ).fetchall()
+                ]
+            data = col.get(ids=recent_ids, include=["embeddings", "metadatas"])
+        else:
+            data = col.get(include=["embeddings", "metadatas"])
+
         ids        = data.get("ids") or []
         embeddings = data.get("embeddings")
         if embeddings is None or len(embeddings) == 0:
             return {"nodes": [], "clusters": [], "error": "no embeddings in ChromaDB"}
-        if len(ids) < 5:
-            return {"nodes": [], "clusters": [], "error": "not enough memories for graph"}
 
         import numpy as np
         from sklearn.cluster import KMeans
 
         emb_array = np.array(embeddings)
-        reducer = umap.UMAP(n_components=2, random_state=42)
+        reducer = umap.UMAP(n_components=2, random_state=42, low_memory=True)
         coords = reducer.fit_transform(emb_array)
 
         n = len(ids)

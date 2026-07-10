@@ -29,6 +29,7 @@ Environment:
     conda activate ollama-pi
 """
 
+import datetime
 import json
 import os
 import re
@@ -37,6 +38,7 @@ import sys
 import time
 from pathlib import Path
 
+from harness.agent import _is_technical_task, extract_count_constraint
 from harness.inference import OllamaLike as _OllamaLike
 
 _KEEP_ALIVE = int(os.environ.get("OLLAMA_KEEP_ALIVE", -1))
@@ -62,9 +64,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 PROPOSER_MODEL      = os.environ.get("PROPOSER_MODEL", "Qwen3-Coder:30b")  # override: PROPOSER_MODEL=kimi-k2.5:cloud
+KIMI_MODEL          = os.environ.get("KIMI_MODEL", "kimi-k2.5:cloud")
+KIMI_STUCK_THRESHOLD = int(os.environ.get("KIMI_STUCK_THRESHOLD", "6"))  # consecutive discards before Kimi consult
 EVAL_TASKS          = ["T_B", "T_D", "T_E"]  # T_B (best_practices) + T_D (enumerated) + T_E (open)
 DELTA_THRESHOLD     = 0.1                  # minimum score improvement to keep a change
 TSV_PATH            = "autoresearch.tsv"
+JSONL_PATH          = "data/autoresearch.jsonl"
 AGENT_PATH          = "harness/agent.py"
 RUNS_JSONL          = "data/runs.jsonl"
 RESEARCH_ENABLED    = True                 # gather web context before each proposal
@@ -201,7 +206,17 @@ def init_tsv():
                 f.writelines(new_lines)
 
 
-def log_experiment(experiment: int, score: float, baseline: float, status: str, description: str, task_ids: list[str] | None = None):
+def log_experiment(
+    experiment: int,
+    score: float,
+    baseline: float,
+    status: str,
+    description: str,
+    task_ids: list[str] | None = None,
+    proposal: dict | None = None,
+    consecutive_discards: int = 0,
+    kimi_fired: bool = False,
+):
     delta = round(score - baseline, 3)
     sign = "+" if delta >= 0 else ""
     tasks_str = "+".join(task_ids) if task_ids else ""
@@ -209,6 +224,27 @@ def log_experiment(experiment: int, score: float, baseline: float, status: str, 
         f.write(f"{experiment}\t{score:.3f}\t{baseline:.3f}\t{sign}{delta:.3f}\t{status}\t{tasks_str}\t{description}\n")
     print(f"  [tsv] exp {experiment}: score={score:.3f} baseline={baseline:.3f} "
           f"delta={sign}{delta:.3f} status={status}")
+
+    # Write rich JSONL record for real-time supervision via /api/autoresearch
+    os.makedirs(os.path.dirname(JSONL_PATH), exist_ok=True)
+    record: dict = {
+        "experiment": experiment,
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+        "status": status,
+        "score": round(score, 3),
+        "baseline": round(baseline, 3),
+        "delta": delta,
+        "description": description,
+        "tasks": task_ids or [],
+        "consecutive_discards": consecutive_discards,
+        "kimi_fired": kimi_fired,
+        "synth": proposal.get("synth", "") if proposal else "",
+        "synth_count": proposal.get("synth_count", "") if proposal else "",
+        "synth_prose": proposal.get("synth_prose", "") if proposal else "",
+        "thinking": proposal.get("thinking", "") if proposal else "",
+    }
+    with open(JSONL_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
 
 
 def read_history() -> str:
@@ -399,6 +435,109 @@ def gather_proposal_context() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Kimi unblocking — consults cloud model when local proposer is stuck
+# ---------------------------------------------------------------------------
+
+_KIMI_UNBLOCK_PROMPT = """You are a research strategy advisor reviewing a stuck automated optimization loop.
+
+The loop refines a synthesis instruction for a local LLM agent. It has discarded {consecutive_discards}
+consecutive proposals without improvement. The local proposer (Qwen3-Coder:30b) is cycling through
+variations of the same failed approaches despite explicit bans.
+
+CURRENT SYNTHESIS INSTRUCTIONS
+SYNTH_INSTRUCTION_PROSE (the one we are optimizing):
+{synth_prose}
+
+SYNTH_INSTRUCTION:
+{synth}
+
+EXPERIMENT HISTORY (last 20 rows — experiment, score, baseline, delta, status, tasks, description):
+{history}
+
+HARD-BANNED approaches (repeatedly tried, always fail or cycle):
+- Named tools/frameworks/benchmarks citations (NAMED-SYSTEMS angle, exps 105-106, zero-variance)
+- Problem→practice→caveat 3-part structure (24 experiments)
+- Comparison/contrast framing (55 experiments, exps 53-107)
+- HOW-FIRST / implementation steps (14 experiments, exps 55-68)
+- Quantification / numerical thresholds (6 experiments)
+- Word count constraints, narrative prose format, ROI ordering
+- Requiring named examples or external source links
+
+LATEST EVALUATOR FEEDBACK:
+{eval_feedback}
+
+DIAGNOSTIC GOAL: improve the composite eval score beyond the current baseline.
+The local proposer keeps recycling surface-level constraint variations that don't move
+any dimension score. The banned list reveals the instruction space is nearly exhausted
+for additive constraints — the bottleneck may require a structural reframe.
+
+Your task:
+1. Diagnose in 2-3 sentences WHY the loop is stuck. What assumption about improving
+   the score might be wrong? What has the banned list revealed about the instruction space?
+2. Suggest 2-3 genuinely different intervention directions — structural, not cosmetic. Each
+   suggestion should be 1-2 sentences and describe an approach NOT already tried or banned.
+
+Be concrete. Do not suggest any banned approach even indirectly."""
+
+
+def get_kimi_unblock_suggestion(current: dict, history: str, eval_feedback: str, consecutive_discards: int) -> str:
+    """Consult Kimi cloud model to diagnose the stuck loop and suggest new directions."""
+    prompt = _KIMI_UNBLOCK_PROMPT.format(
+        consecutive_discards=consecutive_discards,
+        synth=current["synth"],
+        synth_prose=current.get("synth_prose", ""),
+        history="\n".join(history.splitlines()[-20:]),
+        eval_feedback=eval_feedback,
+    )
+    print(f"  [kimi] {consecutive_discards} consecutive discards >= threshold {KIMI_STUCK_THRESHOLD} — consulting {KIMI_MODEL}...")
+    try:
+        response = ollama.chat(
+            model=KIMI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.7},
+        )
+        suggestion = response["message"]["content"].strip()
+        suggestion = re.sub(r"<think>.*?</think>", "", suggestion, flags=re.DOTALL).strip()
+        print(f"  [kimi] guidance ({len(suggestion)} chars):\n    {suggestion[:400].replace(chr(10), chr(10) + '    ')}")
+        return suggestion
+    except Exception as e:
+        print(f"  [kimi] error: {e} — skipping unblock")
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Task routing analysis
+# ---------------------------------------------------------------------------
+
+def _describe_task_routing(task_ids: list[str]) -> str:
+    """Return a plain-text summary of which synthesis instruction each eval task exercises."""
+    try:
+        from harness.eval.eval_suite import SUITE
+        by_id = {t["id"]: t for t in SUITE}
+    except Exception:
+        return "(could not load eval task registry)"
+
+    lines = []
+    for tid in task_ids:
+        t = by_id.get(tid)
+        if not t:
+            lines.append(f"  {tid}: unknown task")
+            continue
+        task_str = t["task"]
+        is_tech = _is_technical_task(task_str)
+        count = extract_count_constraint(task_str)
+        if count is not None:
+            instr = "SYNTH_INSTRUCTION_COUNT" if is_tech else "SYNTH_INSTRUCTION_PROSE (count-constrained)"
+        else:
+            instr = "SYNTH_INSTRUCTION" if is_tech else "SYNTH_INSTRUCTION_PROSE"
+        lines.append(
+            f"  {tid}: \"{t['desc']}\"  →  uses {instr}"
+            + (f"  (count={count})" if count else "")
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Proposer
 # ---------------------------------------------------------------------------
 
@@ -416,11 +555,16 @@ The evaluator (Qwen3-Coder:30b) scores outputs on 6 dimensions (weights in paren
   PASS threshold = 9.0  (a dep=7 makes 9.0 mathematically unreachable — dep must reach 9)
 
 There are THREE synthesis instructions:
-  1. SYNTH_INSTRUCTION — for technical tasks (code, tools, APIs, software)
-  2. SYNTH_INSTRUCTION_COUNT — for technical tasks with a count constraint ("top 5", "3 ways")
+  1. SYNTH_INSTRUCTION       — for technical tasks (code, tools, APIs, software)
+  2. SYNTH_INSTRUCTION_COUNT — for technical tasks WITH a count constraint ("top 5", "3 ways")
   3. SYNTH_INSTRUCTION_PROSE — for non-technical tasks (best practices, concepts, strategies)
      This one uses What/Why/How structure and avoids code blocks.
      Scored on the same 5 dimensions, especially "grounded" (cite sources, concrete details).
+
+CRITICAL — routing for the active eval tasks in this run:
+{task_routing}
+Only change an instruction that is actually USED by the active eval tasks.
+Changing an instruction that no active task exercises has ZERO effect on scores.
 
 Each instruction is the final sentence(s) appended to its synthesis prompt. It must:
   - Tell the model to output ONLY markdown starting with #
@@ -451,6 +595,9 @@ Latest evaluator feedback from the most recent eval run:
 External research context (prompt engineering literature and best practices):
 {research_context}
 
+Kimi strategic guidance (external model diagnostic — non-empty only when local proposer is stuck; use it to pivot to a genuinely different approach and break cyclic patterns):
+{kimi_guidance}
+
 Your task: propose ONE specific change to ONE of the three synthesis instructions that might
 improve the composite eval score. If evaluator feedback mentions "grounded", "sources", or
 "depth" on a prose/best-practices task, prioritize changing SYNTH_INSTRUCTION_PROSE.
@@ -469,6 +616,17 @@ HARD-BANNED — tried 15+ times across experiments, ALWAYS score worse or equal 
   - ANY comparison framing: "compare X vs Y", "zero-shot vs chain-of-thought", "few-shot vs zero-shot",
       "approach A versus approach B", "contrast two techniques" (tried 55 times, exps 53–107, all discards)
       This includes: any "compare/contrast" instruction, any "X vs Y" structure, any dual-approach analysis
+  - Citing named tools, frameworks, or published benchmarks for each practice (NAMED-SYSTEMS angle)
+      (tried in exps 105-106; proposer cycled the identical proposal two experiments in a row;
+      exp 104 showed zero score variance across 5 samples — instruction changes had no measurable effect)
+  - ANY "narrative / cohesive narrative / continuous flow / flowing paragraph" format requirement
+      (tried in exps 15–27 against T_B, consistently scores 6.750–7.460, always a discard)
+      This includes: "cohesive narrative thread", "logical chain", "single cohesive paragraph",
+      "flows from one practice to the next", "without bullet points or lists", "narrative journey"
+  - ANY "sequential steps / process steps / implementation flow" format requirement
+      (tried in exps 36–40, consistently scores 7.530–8.030, always a discard)
+      This includes: "distinct step in a process", "sequential dependencies", "step-by-step rationale",
+      "in order of implementation sequence", "how one practice builds on the previous"
   Do NOT propose any of these even if the evaluator feedback seems to ask for them.
 
 Unexplored angles — pick one that genuinely differs from everything above:
@@ -479,22 +637,24 @@ Unexplored angles — pick one that genuinely differs from everything above:
   - Changing the FRAMING: reframe from "best practices" to "common failure modes and their fixes"
   - Adding a SCOPE constraint: limit to a specific context (e.g. "for tasks under 5 minutes", "for RAG pipelines")
   - Single-technique DEEP DIVE: pick ONE practice and require exhaustive treatment (when to use, pitfalls, tuning)
-  - NARRATIVE format: require the output as a cohesive paragraph narrative, not a list
   - FAQ format: require Q&A pairs instead of a list ("Q: When should I use X? A: ...")
   - AUDIENCE shift: reframe for a non-technical stakeholder (explain tradeoffs without jargon)
   - NEGATIVE space: require the model to focus on what NOT to do and why (anti-patterns only)
+  - CONCRETE EXAMPLE per practice: require one real-world scenario illustrating each (proven in exp 14)
+  - DECISION CRITERIA: tell the model to explain when each practice applies vs. when it does not
 
 Rules:
   - Output complete replacement strings — not patches
   - All three instructions must still say "output ONLY the markdown starting with #"
   - Make one focused change to one instruction; don't try to fix everything at once
   - CRITICAL: each instruction is a SHORT directive (1-4 sentences, under 600 chars). Do NOT output an example document, markdown content, or code — only the instruction text that tells the model how to write its output.
+  - CRITICAL: the JSON string values must contain NO literal newline characters (\\n). Each value must be a single unbroken line of text. If you break a line inside a JSON string, the output will be rejected.
 
 Output ONLY valid JSON (no preamble, no markdown fences):
 {{
-  "synth": "complete replacement for SYNTH_INSTRUCTION (the Python string value, not the assignment)",
-  "synth_count": "complete replacement for SYNTH_INSTRUCTION_COUNT",
-  "synth_prose": "complete replacement for SYNTH_INSTRUCTION_PROSE",
+  "synth": "complete replacement for SYNTH_INSTRUCTION — single line, no newlines",
+  "synth_count": "complete replacement for SYNTH_INSTRUCTION_COUNT — single line, no newlines",
+  "synth_prose": "complete replacement for SYNTH_INSTRUCTION_PROSE — single line, no newlines",
   "description": "one line: what changed and why (mention which instruction was changed)"
 }}"""
 
@@ -525,14 +685,74 @@ def _extract_discarded(history: str) -> str:
     lines = []
     for row in history.splitlines():
         parts = row.split("\t")
+        # TSV columns: experiment, score, baseline, delta, status, tasks, description
         if len(parts) >= 5 and parts[4].strip().lower() == "discard":
-            desc = parts[5].strip() if len(parts) > 5 else ""
+            score = parts[1].strip() if len(parts) > 1 else "?"
+            desc = parts[6].strip() if len(parts) > 6 else ""
             if desc:
-                lines.append(f"- {desc}")
+                lines.append(f"- [score={score}] {desc}")
     return "\n".join(lines) if lines else "(none yet)"
 
 
-def propose_instructions(current: dict, history: str, eval_feedback: str, research_context: str = "") -> dict | None:
+# Patterns that match banned instruction styles — (label, regex)
+_PROSE_BAN_PATTERNS: list[tuple[str, str]] = [
+    # Narrative / continuous flow (HARD-BANNED after exps 15-27)
+    ("narrative/continuous-flow", r"\b(cohesive\s+narrative|continuous\s+(flow|paragraph)|flowing\s+paragraph|single\s+(continuous|cohesive)\s+paragraph|narrative\s+thread|narrative\s+journey|flows?\s+from\s+one\s+practice)\b"),
+    # Sequential steps / process steps (new variant, exps 36-40)
+    ("sequential/process-steps", r"\b(distinct\s+step\s+in\s+a\s+process|sequential\s+(step|depend|reason|flow)|process\s+step|step.by.step\s+rationale|sequential\s+dependencies|implementation\s+flow|in\s+order\s+of\s+implementation\s+sequence)\b"),
+    # Logical chain / cause-and-effect chaining
+    ("logical-chain", r"\b(logical\s+chain|chain.of.thought\s+narrative|cause.and.effect|one\s+decision\s+leads\s+to\s+the\s+next|how\s+one\s+practice\s+builds\s+on\s+the\s+previous)\b"),
+]
+
+def _active_instruction_keys(task_ids: list[str]) -> set[str]:
+    """Return the set of instruction keys ('synth', 'synth_count', 'synth_prose')
+    that are actually exercised by the given eval tasks."""
+    try:
+        from harness.eval.eval_suite import SUITE
+        by_id = {t["id"]: t for t in SUITE}
+    except Exception:
+        # Can't determine routing — allow all keys to avoid false rejects
+        return {"synth", "synth_count", "synth_prose"}
+
+    active: set[str] = set()
+    for tid in task_ids:
+        t = by_id.get(tid)
+        if not t:
+            active.update({"synth", "synth_count", "synth_prose"})
+            continue
+        task_str = t["task"]
+        is_tech  = _is_technical_task(task_str)
+        count    = extract_count_constraint(task_str)
+        if count is not None:
+            active.add("synth_count" if is_tech else "synth_prose")
+        else:
+            active.add("synth" if is_tech else "synth_prose")
+    return active
+
+
+def _validate_proposal(current: dict, result: dict, task_ids: list[str]) -> str | None:
+    """Return an error string if the proposal should be rejected, else None."""
+    # 1. Routing check — did the proposer only change instructions that no active task uses?
+    active_keys = _active_instruction_keys(task_ids)
+    changed_keys = {k for k in ("synth", "synth_count", "synth_prose")
+                    if result.get(k, "") != current.get(k, "")}
+    if changed_keys and changed_keys.isdisjoint(active_keys):
+        return (
+            f"routing violation: only changed {changed_keys} but active tasks {task_ids} "
+            f"only use {active_keys}. Must change one of: {active_keys}."
+        )
+
+    # 2. Ban-list pattern check on prose instruction (only matters if it's active)
+    if "synth_prose" in active_keys:
+        prose = result.get("synth_prose", "")
+        for label, pattern in _PROSE_BAN_PATTERNS:
+            if re.search(pattern, prose, re.IGNORECASE):
+                return f"banned pattern '{label}' detected in synth_prose: \"{prose[:120]}\""
+
+    return None
+
+
+def propose_instructions(current: dict, history: str, eval_feedback: str, research_context: str = "", kimi_guidance: str = "", task_ids: list[str] | None = None) -> dict | None:
     """Ask proposer model to suggest new synthesis instructions. Returns dict or None on failure."""
     prompt = PROPOSE_PROMPT.format(
         synth=current["synth"],
@@ -543,6 +763,8 @@ def propose_instructions(current: dict, history: str, eval_feedback: str, resear
         history=history,
         eval_feedback=eval_feedback,
         research_context=research_context or "(none gathered)",
+        task_routing=_describe_task_routing(task_ids or []),
+        kimi_guidance=kimi_guidance or "(none — local proposer operating normally)",
     )
     print("  [propose] asking proposer for new instruction...")
     try:
@@ -558,7 +780,9 @@ def propose_instructions(current: dict, history: str, eval_feedback: str, resear
     raw = response["message"]["content"].strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
     raw = re.sub(r"\s*```\s*$", "", raw, flags=re.MULTILINE)
-    # Strip <think>...</think> if present
+    # Capture <think>...</think> before stripping so it can be logged
+    thinking_match = re.search(r"<think>(.*?)</think>", raw, flags=re.DOTALL)
+    thinking = thinking_match.group(1).strip() if thinking_match else ""
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
     try:
@@ -583,6 +807,13 @@ def propose_instructions(current: dict, history: str, eval_feedback: str, resear
             print(f"  [propose] rejected: {key} contains {val.count(chr(10))} newlines — proposer likely hallucinated a document")
             return None
 
+    # Routing + ban-list validation
+    rejection = _validate_proposal(current, result, task_ids or [])
+    if rejection:
+        print(f"  [propose] rejected: {rejection}")
+        return None
+
+    result["thinking"] = thinking
     return result
 
 
@@ -590,24 +821,25 @@ def propose_instructions(current: dict, history: str, eval_feedback: str, resear
 # Eval
 # ---------------------------------------------------------------------------
 
-def run_eval(task_ids: list[str]) -> float:
-    """Run eval_suite --score --tasks <tasks> and return composite float."""
+def _run_eval_once(task_ids: list[str]) -> float:
+    """Run eval_suite --score --tasks <tasks> once and return composite float."""
     tasks_arg = ",".join(task_ids)
     print(f"  [eval] running eval_suite on {tasks_arg}...")
     # Use a bounded keep_alive (120s) instead of -1 so models unload after eval
     # completes and don't occupy Ollama slots when the proposer runs next iteration.
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "WIGGUM_MAX_ROUNDS": "1", "OLLAMA_KEEP_ALIVE": "120", "WIGGUM_PANEL": "1", "RESEARCH_CACHE": "1"}
     result = subprocess.run(
-        [PYTHON, "eval_suite.py", "--score", "--tasks", tasks_arg],
+        [PYTHON, "-m", "harness.eval.eval_suite", "--score", "--tasks", tasks_arg],
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=env,
         cwd=str(Path(__file__).parent.parent),
     )
-    if result.returncode != 0 or result.stderr.strip():
+    if result.returncode != 0:
         print(f"  [eval] returncode: {result.returncode}")
-        print(f"  [eval] stderr: {result.stderr[:2000]}")
+        if result.stderr.strip():
+            print(f"  [eval] stderr: {result.stderr[:2000]}")
     stdout = result.stdout.strip()
     try:
         score = float(stdout.split("\n")[-1].strip())
@@ -616,6 +848,25 @@ def run_eval(task_ids: list[str]) -> float:
     except (ValueError, IndexError):
         print(f"  [eval] parse error, stdout: {stdout[:400]!r}")
         return 0.0
+
+
+def run_eval(task_ids: list[str], n: int = 1) -> float:
+    """Run eval_suite n times and return the mean score.
+
+    With n=1 (default) behaviour is identical to the old single-sample run.
+    With n>1 the variance is reduced: a real +0.3 improvement is distinguishable
+    from noise even when individual samples span a ±0.5 range.
+    """
+    if n == 1:
+        return _run_eval_once(task_ids)
+    scores = []
+    for i in range(n):
+        print(f"  [eval] sample {i + 1}/{n}")
+        scores.append(_run_eval_once(task_ids))
+    avg = round(sum(scores) / len(scores), 3)
+    lo, hi = min(scores), max(scores)
+    print(f"  [eval] samples: {[round(s, 3) for s in scores]}  avg={avg:.3f}  range=[{lo:.3f},{hi:.3f}]")
+    return avg
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +921,11 @@ def main():
         if idx + 1 < len(args):
             PROPOSER_MODEL = args[idx + 1]
     reset_baseline = "--reset-baseline" in args
+    eval_n = 1
+    if "--eval-n" in args:
+        idx = args.index("--eval-n")
+        if idx + 1 < len(args):
+            eval_n = max(1, int(args[idx + 1]))
     mode = "auto"
     if "--mode" in args:
         idx = args.index("--mode")
@@ -684,9 +940,11 @@ def main():
     print(f" proposer:    {PROPOSER_MODEL}")
     print(f" eval tasks:  {task_ids}")
     print(f" delta thr:   {delta_threshold}")
+    print(f" eval-n:      {eval_n}{'  (averaged)' if eval_n > 1 else ''}")
     print(f" mode:        {mode}  (explore|exploit|auto)")
     if mode == "auto":
         print(f"   auto-explore after {PLATEAU_DISCARDS} consecutive discards with |delta| < {PLATEAU_DELTA}")
+    print(f" kimi-unblock: {KIMI_MODEL}  (triggers at {KIMI_STUCK_THRESHOLD} consecutive discards)")
     print("=" * 60 + "\n")
 
     init_tsv()
@@ -697,8 +955,9 @@ def main():
     if reset_baseline or task_baseline is None:
         reason = "--reset-baseline requested" if reset_baseline else f"no history for tasks {task_ids}"
         print(f"[baseline] {reason} — running fresh baseline eval...")
-        baseline_score = run_eval(task_ids)
-        log_experiment(0, baseline_score, baseline_score, "baseline", "initial baseline", task_ids)
+        baseline_score = run_eval(task_ids, eval_n)
+        log_experiment(0, baseline_score, baseline_score, "baseline", "initial baseline", task_ids,
+                       proposal=None, consecutive_discards=0, kimi_fired=False)
         print(f"[baseline] score: {baseline_score:.3f}\n")
     else:
         baseline_score = task_baseline
@@ -717,7 +976,9 @@ def main():
     research_context = gather_proposal_context()
 
     consecutive_discards = 0
+    consecutive_propose_failures = 0
     last_deltas: list[float] = []
+    kimi_guidance = ""
 
     # LOOP FOREVER — generate → verify → revise
     while True:
@@ -735,12 +996,21 @@ def main():
         current = read_instructions()
         history = read_history()
 
+        # Kimi unblock: consult cloud model when local proposer is deeply stuck
+        if consecutive_discards >= KIMI_STUCK_THRESHOLD and not kimi_guidance:
+            kimi_guidance = get_kimi_unblock_suggestion(current, history, fresh_feedback, consecutive_discards)
+
         # 1. GENERATE — propose based on the signal from the LAST eval run
-        proposal = propose_instructions(current, history, fresh_feedback, research_context)
+        proposal = propose_instructions(current, history, fresh_feedback, research_context, kimi_guidance, task_ids=task_ids)
         if proposal is None:
-            print("  [warn] proposer failed — skipping experiment")
-            time.sleep(5)
+            consecutive_propose_failures += 1
+            print(f"  [warn] proposer rejected ({consecutive_propose_failures} consecutive) — re-requesting")
+            if consecutive_propose_failures >= 10:
+                print("  [abort] proposer rejected 10 times in a row — halting loop to avoid infinite spin")
+                break
+            time.sleep(3)
             continue
+        consecutive_propose_failures = 0
 
         description = proposal["description"]
         print(f"  [proposal] {description}")
@@ -763,7 +1033,7 @@ def main():
 
         # 3. VERIFY
         n_before_eval = get_run_count()
-        score = run_eval(task_ids)
+        score = run_eval(task_ids, eval_n)
 
         # Capture THIS eval's feedback immediately — it feeds the next proposal
         fresh_feedback = get_recent_eval_feedback(task_ids, n_before_eval)
@@ -778,6 +1048,7 @@ def main():
             status = "keep"
             baseline_score = score
             consecutive_discards = 0
+            kimi_guidance = ""  # clear on improvement — local proposer can take over again
             print(f"  [KEEP] {score:.3f} (+{delta:.3f}) — new baseline: {baseline_score:.3f}")
             # On keep: refresh research only if in explore or auto mode
             if mode != "exploit":
@@ -787,13 +1058,22 @@ def main():
             consecutive_discards += 1
             print(f"  [DISCARD] {score:.3f} (delta={delta:+.3f} <= threshold {delta_threshold})  "
                   f"[{consecutive_discards} consecutive]")
+            # Refresh Kimi guidance after another full stuck episode so it sees updated history
+            if kimi_guidance and consecutive_discards % KIMI_STUCK_THRESHOLD == 0:
+                print(f"  [kimi] guidance stale after {consecutive_discards} discards — will refresh next iteration")
+                kimi_guidance = ""
             try:
                 subprocess.run(["git", "reset", "HEAD~1", "--soft"], check=True)
                 subprocess.run(["git", "checkout", "--", AGENT_PATH], check=True)
             except subprocess.CalledProcessError as e:
                 print(f"  [warn] git discard failed: {e}")
 
-        log_experiment(experiment, score, baseline_score, status, description, task_ids)
+        log_experiment(
+            experiment, score, baseline_score, status, description, task_ids,
+            proposal=proposal,
+            consecutive_discards=consecutive_discards,
+            kimi_fired=bool(kimi_guidance),
+        )
         experiment += 1
         print(f"\n  [loop] experiment {experiment - 1} done. Starting {experiment}...")
 

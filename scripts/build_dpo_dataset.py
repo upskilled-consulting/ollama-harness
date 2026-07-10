@@ -49,8 +49,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-RUNS_FILE   = Path("runs.jsonl")
-OUT_DIR     = Path("hf_datasets")
+from harness.config import RUNS_FILE as _DEFAULT_RUNS_FILE
+
+RUNS_FILE   = _DEFAULT_RUNS_FILE
+OUT_DIR     = Path(__file__).parent / "hf_datasets"
 OUT_FILE    = OUT_DIR / "dpo.jsonl"
 
 _DEFAULT_MIN_DELTA = 0.5   # minimum score difference to qualify as a pair

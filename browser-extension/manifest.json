@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Harness Page Feedback",
+  "version": "1.0",
+  "description": "Floating feedback widget on localhost pages for the harness agent",
+  "content_scripts": [
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*", "file:///*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
+}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Square, Search, Brain, Zap, Database } from "lucide-react";
+import { Play, Square, Search, Brain, Zap, Database, ChevronDown, ChevronRight } from "lucide-react";
 import { clsx } from "clsx";
 import { useCancelTask, useQueue, useRuns, useSubmitTask } from "@/hooks/useRuns";
 import { MdView } from "@/components/MdView";
@@ -11,13 +11,15 @@ import type { RunRecord } from "@/types";
 // ---------------------------------------------------------------------------
 
 type EventLine =
-  | { kind: "log";       text: string }
-  | { kind: "memory";    hits: number; titles: string[] }
-  | { kind: "plan";      queries: string[]; complexity: string; task_type: string; notes?: string }
-  | { kind: "plan_gate"; queries: string[] }
-  | { kind: "search";    round: number; query: string; hits: number }
-  | { kind: "synth";     stage: string; tokens_in?: number }
-  | { kind: "wiggum";    round: number; score: number; passed: boolean };
+  | { kind: "log";           text: string }
+  | { kind: "memory";        hits: number; titles: string[] }
+  | { kind: "plan";          queries: string[]; complexity: string; task_type: string; notes?: string }
+  | { kind: "plan_gate";     queries: string[] }
+  | { kind: "search";        round: number; query: string; hits: number }
+  | { kind: "synth";         stage: string; tokens_in?: number }
+  | { kind: "wiggum";        round: number; score: number; passed: boolean }
+  | { kind: "agent_message"; from_idx: number; msg_type: string; content: string }
+  | { kind: "thinking";      stage: string; text: string; chars: number };
 
 function parseLine(raw: string): EventLine {
   if (raw.startsWith("[EVENT]")) {
@@ -64,6 +66,22 @@ function parseLine(raw: string): EventLine {
       }
       if (ev.type === "plan_gate") {
         return { kind: "plan_gate", queries: (ev.data.queries as string[]) ?? [] };
+      }
+      if (ev.type === "agent_message") {
+        return {
+          kind:     "agent_message",
+          from_idx: (ev.data.from_idx as number) ?? 0,
+          msg_type: (ev.data.type     as string) ?? "progress",
+          content:  (ev.data.content  as string) ?? "",
+        };
+      }
+      if (ev.type === "thinking") {
+        return {
+          kind:  "thinking",
+          stage: (ev.data.stage as string) ?? "",
+          text:  (ev.data.text  as string) ?? "",
+          chars: (ev.data.chars as number) ?? 0,
+        };
       }
     } catch { /* fall through */ }
   }
@@ -162,12 +180,86 @@ function WiggumCard({ e }: { e: Extract<EventLine, { kind: "wiggum" }> }) {
   );
 }
 
+const MSG_TYPE_COLOR: Record<string, string> = {
+  progress: "var(--accent)",
+  finding:  "#f59e0b",
+  blocker:  "#ef4444",
+  done:     "#10b981",
+};
+
+const THINKING_STAGE_LABEL: Record<string, string> = {
+  plan:  "Planner reasoning",
+  synth: "Synthesis reasoning",
+  tool:  "Tool-loop reasoning",
+  eval:  "Evaluator reasoning",
+};
+
+function ThinkingCard({ e }: { e: Extract<EventLine, { kind: "thinking" }> }) {
+  const [open, setOpen] = useState(false);
+  const label = THINKING_STAGE_LABEL[e.stage] ?? `${e.stage} reasoning`;
+  return (
+    <div style={{
+      marginBottom: 4, borderRadius: 7,
+      border: "1px solid rgba(167,139,250,0.25)",
+      background: "rgba(167,139,250,0.04)",
+      overflow: "hidden",
+    }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 7,
+          padding: "7px 11px", background: "none", border: "none",
+          cursor: "pointer", textAlign: "left",
+        }}
+      >
+        {open ? <ChevronDown size={12} color="#a78bfa" /> : <ChevronRight size={12} color="#a78bfa" />}
+        <span style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
+          {e.chars.toLocaleString()} chars
+        </span>
+      </button>
+      {open && (
+        <pre style={{
+          margin: 0, padding: "0 12px 10px 30px",
+          fontSize: 10, lineHeight: 1.65,
+          color: "rgba(167,139,250,0.75)",
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+          fontFamily: "var(--font-mono)",
+          maxHeight: 380, overflowY: "auto",
+        }}>
+          {e.text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function AgentMessageCard({ e }: { e: EventLine & { kind: "agent_message" } }) {
+  const color = MSG_TYPE_COLOR[e.msg_type] ?? "var(--dim)";
+  return (
+    <div style={{
+      padding: "7px 12px", borderRadius: 7, marginBottom: 4,
+      background: color + "10",
+      border: `1px solid ${color}33`,
+      display: "flex", alignItems: "flex-start", gap: 8,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase",
+                     letterSpacing: "0.6px", whiteSpace: "nowrap", marginTop: 1 }}>
+        sub {e.from_idx} · {e.msg_type}
+      </span>
+      <span style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.5 }}>{e.content}</span>
+    </div>
+  );
+}
+
 function EventCard({ e }: { e: EventLine }) {
-  if (e.kind === "memory") return <MemoryCard  e={e} />;
-  if (e.kind === "plan")   return <PlanCard    e={e} />;
-  if (e.kind === "search") return <SearchCard  e={e} />;
-  if (e.kind === "synth")  return <SynthCard   e={e} />;
-  if (e.kind === "wiggum") return <WiggumCard  e={e} />;
+  if (e.kind === "memory")        return <MemoryCard        e={e} />;
+  if (e.kind === "plan")          return <PlanCard          e={e} />;
+  if (e.kind === "search")        return <SearchCard        e={e} />;
+  if (e.kind === "synth")         return <SynthCard         e={e} />;
+  if (e.kind === "wiggum")        return <WiggumCard        e={e} />;
+  if (e.kind === "agent_message") return <AgentMessageCard  e={e} />;
+  if (e.kind === "thinking")      return <ThinkingCard      e={e} />;
   return null; // log lines go into the pre block below
 }
 
@@ -185,6 +277,12 @@ function LiveLog({ itemId, onDone, onPlanGate }: {
   const [done, setDone]         = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
+  // Keep callback refs current without triggering the SSE effect on every render.
+  const onDoneRef     = useRef(onDone);
+  const onPlanGateRef = useRef(onPlanGate);
+  useEffect(() => { onDoneRef.current     = onDone;     }, [onDone]);
+  useEffect(() => { onPlanGateRef.current = onPlanGate; }, [onPlanGate]);
+
   useEffect(() => {
     const es = new EventSource(`/api/tasks/${itemId}/stream`);
     es.onmessage = (msg) => {
@@ -192,12 +290,12 @@ function LiveLog({ itemId, onDone, onPlanGate }: {
       if (raw === "[DONE]") {
         setDone(true);
         es.close();
-        onDone();
+        onDoneRef.current();
         return;
       }
       const parsed = parseLine(raw);
       if (parsed.kind === "plan_gate") {
-        onPlanGate?.(parsed.queries);
+        onPlanGateRef.current?.(parsed.queries);
         return; // don't push into event list — parent handles it
       }
       if (parsed.kind === "log") {
@@ -206,9 +304,9 @@ function LiveLog({ itemId, onDone, onPlanGate }: {
         setEvents((prev) => [...prev, parsed]);
       }
     };
-    es.onerror = () => { es.close(); setDone(true); onDone(); };
+    es.onerror = () => { es.close(); setDone(true); onDoneRef.current(); };
     return () => es.close();
-  }, [itemId, onDone, onPlanGate]);
+  }, [itemId]); // itemId only — callbacks are stable via refs above
 
   // Auto-scroll log
   useEffect(() => {

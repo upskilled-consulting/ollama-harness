@@ -87,19 +87,59 @@ Every pipeline step is recorded in `trajectory` in the run record: `{seq, stage,
 | `tool_calls` | List of `{name, query, result_chars}` |
 | `leverage` | `(tac_hours × quality_norm) / (runtime_s + cost_s)` |
 
+## Autoresearch loop
+
+`harness/autoresearch.py` is a standalone self-improvement optimizer that runs separately from the main `oh` pipeline. It proposes changes to `SYNTH_INSTRUCTION` in `agent.py`, evaluates them via the eval suite, and keeps changes that improve the composite score above `DELTA_THRESHOLD`.
+
+```
+propose → [minibatch floor screen] → full eval → [validation gate: 2 seeds] → keep/discard
+```
+
+At each slow-update epoch boundary (every `EPOCH_SIZE` experiments) the proposer receives a full epoch summary and generates an epoch-level candidate subject to the same validation gate. Accepted instructions are written to `skills/synthesis.md`. If the loop gets stuck (`consecutive_discards >= KIMI_STUCK_THRESHOLD`), a cloud model (`KIMI_MODEL`) is consulted for an outside perspective injected into the next proposal.
+
 ## Environment variables
+
+### Inference routing
+
+| Variable | Effect |
+|----------|--------|
+| `INFERENCE_BACKEND` | `ollama` (default) or `vllm` |
+| `HARNESS_ENDPOINTS` | JSON dict per-model routing — overrides `INFERENCE_BACKEND` |
+| `VLLM_BASE_URL` | vLLM server URL (default: `http://localhost:8000/v1`) |
+| `HARNESS_EMBED_MODEL` | Embedding model when using vLLM path |
+
+### Models and evaluation
 
 | Variable | Effect |
 |----------|--------|
 | `HARNESS_PRODUCER_MODEL` | Default producer model |
 | `HARNESS_EVALUATOR_MODEL` | Default evaluator model |
+| `HARNESS_EVALUATOR_POOL` | Comma-separated evaluator rotation pool |
 | `OLLAMA_KEEP_ALIVE` | Pin model keep-alive in seconds (`-1` = forever) |
+
+### Autoresearch
+
+| Variable | Effect |
+|----------|--------|
+| `PROPOSER_MODEL` | Instruction proposal model (default: `Qwen3-Coder:30b`) |
+| `KIMI_MODEL` | Cloud model for stuck-loop consult (default: `kimi-k2.5:cloud`) |
+| `KIMI_STUCK_THRESHOLD` | Consecutive discards before Kimi fires (default: `6`) |
+| `MINIBATCH_FLOOR` | Quick-screen floor score (default: `6.5`) |
+| `EPOCH_SIZE` | Experiments per slow-update epoch (default: `10`) |
+| `VALIDATION_SEED_COUNT` | Seeds required to accept a proposal (default: `2`) |
+
+### Pipeline behaviour
+
+| Variable | Effect |
+|----------|--------|
 | `WIGGUM_PANEL` | Set to `1` to enable 3-persona panel after eval |
+| `WIGGUM_MAX_ROUNDS` | Override max wiggum rounds (default: `3`) |
+| `RESEARCH_CACHE` | Set to `1` to enable SQLite research-context cache |
 | `HARNESS_HEADED` | Set to `1` to show browser window |
 | `HARNESS_KEEP_BROWSER` | Set to `1` to leave browser open |
 | `HARNESS_REUSE_BROWSER` | Set to `1` to reconnect to existing session |
 | `CLAUDE_WEBHOOK_URL` | POST a compact run summary here on completion |
-| `HARNESS_HOURLY_RATE` | Hourly rate for leverage calculation (default: 75.0) |
+| `HARNESS_HOURLY_RATE` | Hourly rate for leverage calculation (default: `75.0`) |
 | `HARNESS_SESSION_ID` | Override session grouping |
 | `HARNESS_PROJECT_ID` | Override project grouping |
 | `HARNESS_EXPERIMENT_ID` | Tag run to an experiment |

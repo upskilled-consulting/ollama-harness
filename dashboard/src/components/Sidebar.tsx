@@ -1,7 +1,7 @@
-import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon, Lock, Settings, TerminalSquare, Mic, Brain } from "lucide-react";
+import { LayoutDashboard, Table2, SendHorizontal, BarChart2, CalendarDays, FolderOpen, Microscope, Cpu, Github as GithubIcon, Lock, Settings, TerminalSquare, Mic, Brain, FlaskConical, Workflow, Search } from "lucide-react";
 import { clsx } from "clsx";
 
-export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp" | "github" | "security" | "system" | "memory";
+export type View = "home" | "runs" | "submit" | "analytics" | "sessions" | "artifacts" | "finetune" | "voice" | "mcp" | "github" | "security" | "system" | "memory" | "autoresearch" | "pipeline" | "research";
 
 interface NavItem {
   id:    View;
@@ -16,8 +16,11 @@ const TOP_ITEMS: NavItem[] = [
   { id: "analytics", icon: <BarChart2 size={18} />,       label: "Analytics"  },
   { id: "sessions",  icon: <CalendarDays size={18} />,    label: "Sessions"   },
   { id: "artifacts", icon: <FolderOpen size={18} />,      label: "Artifacts"  },
-  { id: "finetune",  icon: <Microscope size={18} />,      label: "Fine-tune"  },
-  { id: "mcp",       icon: <Cpu size={18} />,             label: "MCP"        },
+  { id: "finetune",      icon: <Microscope size={18} />,    label: "Fine-tune"    },
+  { id: "autoresearch",  icon: <FlaskConical size={18} />, label: "Autoresearch" },
+  { id: "pipeline",      icon: <Workflow size={18} />,     label: "Pipeline"     },
+  { id: "mcp",           icon: <Cpu size={18} />,          label: "MCP"          },
+  { id: "research",  icon: <Search size={18} />,         label: "Research History" },
   { id: "memory",    icon: <Brain size={18} />,          label: "Memory"     },
   { id: "github",    icon: <GithubIcon size={18} />,     label: "GitHub"     },
   { id: "security",  icon: <Lock size={18} />,           label: "Security"   },

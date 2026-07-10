@@ -16,8 +16,9 @@ Developer and agent reference for the `harness-refactor` codebase.
 harness/
   agent.py              Main pipeline — planner, search, synthesis, wiggum dispatch
   wiggum.py             Evaluate+revise loop (up to 3 rounds, composite score ≥ 9.0 to halt)
+  autoresearch.py       Standalone instruction optimizer — propose → eval → keep/discard loop
   cli.py                `oh` entrypoint — REPL + single-task dispatch
-  inference.py          OllamaLike shim (also works with vLLM)
+  inference.py          OllamaLike shim (also works with vLLM / llama-server)
   logger.py             RunTrace — writes runs.jsonl, traces/, messages.jsonl
   schema.py             Pydantic + dataclass models; JSONL lifecycle helpers
   config.py             Paths, settings, ensure_dirs()
@@ -181,16 +182,47 @@ Files `index.md` and `log.md` are skipped.
 
 ## Key environment variables
 
+### Inference routing
+
 | Variable | Effect |
 |----------|--------|
-| `HARNESS_PRODUCER_MODEL` | Default LLM for synthesis |
-| `HARNESS_EVALUATOR_MODEL` | Default LLM for wiggum evaluation |
+| `INFERENCE_BACKEND` | `ollama` (default) or `vllm` — global routing when `HARNESS_ENDPOINTS` is unset |
+| `HARNESS_ENDPOINTS` | JSON dict: `{"tag": {"url": "...", "model_id": "...", "backend": "..."}}` — per-model routing, takes priority |
+| `VLLM_BASE_URL` | vLLM server URL (default: `http://localhost:8000/v1`) |
+| `VLLM_API_KEY` | vLLM API key (default: `none`) |
+| `HARNESS_EMBED_MODEL` | Embedding model for vLLM path (e.g. `nomic-ai/nomic-embed-text-v1.5`) |
+
+### Models
+
+| Variable | Effect |
+|----------|--------|
+| `HARNESS_PRODUCER_MODEL` | Default LLM for synthesis (default: `pi-qwen-32b`) |
+| `HARNESS_EVALUATOR_MODEL` | Default LLM for wiggum evaluation (default: `atla/selene-mini`) |
+| `HARNESS_EVALUATOR_POOL` | Comma-separated evaluator rotation pool (e.g. `qwen3-14b,gemma4-27b`) |
 | `OLLAMA_KEEP_ALIVE` | Model keep-alive in seconds (`-1` = always on) |
+
+### Autoresearch loop
+
+| Variable | Effect |
+|----------|--------|
+| `PROPOSER_MODEL` | Model for instruction proposals (default: `Qwen3-Coder:30b`) |
+| `KIMI_MODEL` | Cloud model consulted when loop gets stuck (default: `kimi-k2.5:cloud`) |
+| `KIMI_STUCK_THRESHOLD` | Consecutive discards before Kimi consult fires (default: `6`) |
+| `MINIBATCH_FLOOR` | Score floor for quick-screen before full eval (default: `6.5`) |
+| `EPOCH_SIZE` | Experiments per slow-update epoch (default: `10`) |
+| `VALIDATION_SEED_COUNT` | Re-run seeds required before accepting a proposal (default: `2`) |
+
+### Pipeline behaviour
+
+| Variable | Effect |
+|----------|--------|
 | `WIGGUM_PANEL` | Set `1` to enable 3-persona panel |
+| `WIGGUM_MAX_ROUNDS` | Override max wiggum rounds (default: `3`) |
+| `RESEARCH_CACHE` | Set `1` to enable SQLite research-context cache |
 | `HARNESS_HEADED` | Set `1` to show browser window |
 | `HARNESS_KEEP_BROWSER` | Set `1` to leave browser open |
 | `CLAUDE_WEBHOOK_URL` | POST run summary on completion |
-| `HARNESS_HOURLY_RATE` | Human hourly rate for leverage calculation (default: 75.0) |
+| `HARNESS_HOURLY_RATE` | Human hourly rate for leverage calculation (default: `75.0`) |
 
 ---
 

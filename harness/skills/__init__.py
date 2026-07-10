@@ -452,6 +452,54 @@ REGISTRY: dict[str, dict] = {
         "auto": None,  # explicit only — user opts in when they need deterministic values
     },
 
+    "beige-book": {
+        "description": (
+            "Pre-synthesis: inject relevant Federal Reserve Beige Book passages into the "
+            "synthesis context. Performs semantic + keyword search over the local 1996-present "
+            "corpus (SQLite FTS5 + ChromaDB), auto-filtered by year and district hints from task."
+        ),
+        "hook":       "pre_synthesis",
+        "prompt":     None,
+        "context_fn": lambda task, _plan: _beige_book_context(task),
+        "auto": lambda task, _plan: bool(re.search(
+            r"\b(federal reserve|beige book|fomc|monetary policy|"
+            r"inflation|labor market|employment|gdp|interest rate|"
+            r"consumer spending|manufacturing|housing market|"
+            r"credit condition|economic activit|recession|dot.com|dotcom|"
+            r"fed\b)",
+            task, re.IGNORECASE,
+        )),
+    },
+
+    "execute-trades": {
+        "description": (
+            "Standalone: open bracket positions from a validated trading thesis file. "
+            "Dry-run by default (prints order params). Add --live to submit to Alpaca. "
+            "Skips any thesis with validation FLAGS. Appends an ## Orders section to the file. "
+            "Invocation: /execute-trades <thesis.md> [--live]"
+        ),
+        "hook": "standalone",
+        "prompt": None,
+        "auto": None,   # explicit only -- never auto-execute trades
+    },
+
+    "validate-trades": {
+        "description": (
+            "Post-wiggum: deterministic TA validation for trading thesis outputs. "
+            "Parses [THESIS:...] citations, loads signals from DB, and applies "
+            "rule-based PASS/WARN/FLAG checks (momentum rank, Hurst, BB z-score, "
+            "SMA cross, volatility, R/R ratio, position sizing). "
+            "Appends a ## Trade Validation section to the thesis file. No LLM involved."
+        ),
+        "hook": "post_wiggum",
+        "prompt": None,
+        "auto": lambda task, _plan: any(kw in task.lower() for kw in (
+            "trading thesis", "trade thesis", "trading theses", "paper trade",
+            "alpaca", "long thesis", "short thesis", "trade idea", "trade setup",
+            "actionable trade", "trade recommendation",
+        )),
+    },
+
 }
 
 # ---------------------------------------------------------------------------
@@ -608,6 +656,32 @@ def skills_at_hook(active_skills: list[str], hook: str) -> list[str]:
     return [n for n in active_skills if REGISTRY.get(n, {}).get("hook") == hook]
 
 
+def get_context_injections(active_skills: list[str], task: str, plan=None) -> str:
+    """
+    Call context_fn for any active pre_synthesis skill that has one.
+    Returns concatenated context string, or empty string if none.
+    """
+    parts = []
+    for name in active_skills:
+        skill = REGISTRY.get(name, {})
+        if skill.get("hook") == "pre_synthesis" and skill.get("context_fn"):
+            try:
+                result = skill["context_fn"](task, plan)
+                if result:
+                    parts.append(result)
+            except Exception as exc:
+                print(f"  [skills] context_fn error for '{name}': {exc}")
+    return "\n\n".join(parts)
+
+
+def _beige_book_context(task: str) -> str:
+    try:
+        from harness.beige_book_tool import query_beige_book
+        return query_beige_book(task)
+    except Exception as exc:
+        return f"[beige_book] retrieval failed: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Post-synthesis handler
 # ---------------------------------------------------------------------------
@@ -628,6 +702,38 @@ def run_post_synthesis(
         if name == "knowledge-graph":
             results["knowledge-graph"] = _handle_kg(content, task, output_path, producer_model)
     return results
+
+
+def run_post_wiggum(
+    active_skills: list[str],
+    content:       str,
+    task:          str,
+    output_path:   str,
+    producer_model: str,
+) -> dict:
+    """
+    Run all post_wiggum skill handlers that are not handled inline by the wiggum loop.
+    Returns a dict of results keyed by skill name.
+    """
+    results = {}
+    for name in skills_at_hook(active_skills, "post_wiggum"):
+        if name == "panel":
+            continue   # handled via WIGGUM_PANEL env var inside wiggum.py
+        if name == "validate-trades":
+            results["validate-trades"] = _handle_trade_validation(output_path)
+    return results
+
+
+def _handle_trade_validation(output_path: str) -> str | None:
+    if not output_path:
+        print("  [skill:validate-trades] no output path - skipping")
+        return None
+    try:
+        from harness.trade_validator import validate_thesis_file
+        return validate_thesis_file(output_path)
+    except Exception as e:
+        print(f"  [skill:validate-trades] failed: {e}")
+        return None
 
 
 def _handle_kg(content: str, task: str, output_path: str, producer_model: str) -> str | None:
@@ -726,6 +832,105 @@ _ANNOTATE_LABELS = [
     "**Broad impact**",
 ]
 
+# ---------------------------------------------------------------------------
+# PICO annotation framework (biomedical / health domain)
+# ---------------------------------------------------------------------------
+
+_PICO_LABELS = [
+    "**Population**",
+    "**Intervention**",
+    "**Comparison**",
+    "**Outcome**",
+    "**Study Type**",
+    "**Evidence Grade**",
+]
+
+_PICO_SYSTEM = (
+    "You are a biomedical research analyst. Given an abstract or paper content, "
+    "produce a structured PICO annotation with EXACTLY these six bold section headers, in this order:\n\n"
+    "**Population**\n"
+    "**Intervention**\n"
+    "**Comparison**\n"
+    "**Outcome**\n"
+    "**Study Type**\n"
+    "**Evidence Grade**\n\n"
+    "Rules:\n"
+    "- Each header must appear on its own line, bold, exactly as shown above.\n"
+    "- After each header write 1-2 sentences of plain prose. One sentence is fine.\n"
+    "- Use only information from the provided text. Do not invent results.\n"
+    "- If a field is not stated, write 'Not reported' or your best inference marked as [inferred].\n"
+    "- Output NOTHING before **Population** and NOTHING after the **Evidence Grade** prose.\n\n"
+    "Section definitions:\n"
+    "  Population      — who the participants are: species, n, health status, age/sex if stated\n"
+    "  Intervention    — what compound, dose, duration, and route of administration\n"
+    "  Comparison      — control condition: placebo, standard care, alternative compound, or 'None reported'\n"
+    "  Outcome         — what was measured and the direction/magnitude of the reported effect\n"
+    "  Study Type      — one of: meta-analysis | systematic review | RCT | cohort | case-control | "
+    "cross-sectional | case series | in vitro | animal study | review\n"
+    "  Evidence Grade  — High (meta-analysis/systematic review of RCTs) | Moderate (single RCT or "
+    "well-designed cohort) | Low (observational/case series) | Very Low (in vitro/animal/expert opinion)\n"
+)
+
+_PICO_PROMPT = (
+    "Here is the paper content. Produce the PICO annotation.\n\n"
+    "Start your output with:\n"
+    "# PICO Annotation: <paper title>\n\n"
+    "Then output each of the six section headers followed immediately by 1-2 sentences.\n\n"
+    "PAPER CONTENT:\n"
+)
+
+
+# ---------------------------------------------------------------------------
+# Finance / quant annotation framework
+# ---------------------------------------------------------------------------
+
+_FINANCE_LABELS = [
+    "**Strategy**",
+    "**Signal**",
+    "**Asset Class**",
+    "**Backtest**",
+    "**Performance**",
+    "**Limitations**",
+    "**Implementation**",
+    "**Outlook**",
+]
+
+_FINANCE_SYSTEM = (
+    "You are a quantitative finance research analyst. Given paper content, produce a structured "
+    "annotation with EXACTLY these eight bold section headers, in this order:\n\n"
+    "**Strategy**\n"
+    "**Signal**\n"
+    "**Asset Class**\n"
+    "**Backtest**\n"
+    "**Performance**\n"
+    "**Limitations**\n"
+    "**Implementation**\n"
+    "**Outlook**\n\n"
+    "Rules:\n"
+    "- Each header must appear on its own line, bold, exactly as shown above.\n"
+    "- After each header write 1-2 sentences of plain prose. One sentence is fine.\n"
+    "- Use only information from the provided text. Do not invent results.\n"
+    "- If a field is not stated, write 'Not reported' or your best inference marked as [inferred].\n"
+    "- Output NOTHING before **Strategy** and NOTHING after the **Outlook** prose.\n\n"
+    "Section definitions:\n"
+    "  Strategy     -- the core trading or investment approach (momentum, mean-reversion, factor, ML, etc.)\n"
+    "  Signal       -- the specific predictive signal, factor, or indicator; include directionality\n"
+    "  Asset Class  -- equities, bonds, FX, commodities, crypto, derivatives, multi-asset\n"
+    "  Backtest     -- sample period, universe, data frequency, OOS methodology\n"
+    "  Performance  -- key metrics: annualized return, Sharpe ratio, max drawdown, win rate\n"
+    "  Limitations  -- data snooping, transaction cost sensitivity, capacity constraints, regime risk\n"
+    "  Implementation -- practical notes: execution venue, turnover, required data, complexity\n"
+    "  Outlook      -- alpha decay risk, regime dependency, replication likelihood\n"
+)
+
+_FINANCE_PROMPT = (
+    "Here is the paper content. Produce the finance annotation.\n\n"
+    "Start your output with:\n"
+    "# Finance Annotation: <paper title>\n\n"
+    "Then output each of the eight section headers followed immediately by 1-2 sentences.\n\n"
+    "PAPER CONTENT:\n"
+)
+
 
 def _extract_sections(text: str) -> str:
     """
@@ -780,6 +985,22 @@ def _is_valid_annotation(text: str) -> bool:
     return hits >= 6
 
 
+def _is_valid_pico(text: str) -> bool:
+    """Return True if PICO annotation has a heading and at least 5 of 6 sections."""
+    if not re.search(r"^#\s", text, re.MULTILINE):
+        return False
+    hits = sum(1 for lbl in _PICO_LABELS if lbl in text)
+    return hits >= 5
+
+
+def _is_valid_finance(text: str) -> bool:
+    """Return True if finance annotation has a heading and at least 6 of 8 sections."""
+    if not re.search(r"^#\s", text, re.MULTILINE):
+        return False
+    hits = sum(1 for lbl in _FINANCE_LABELS if lbl in text)
+    return hits >= 6
+
+
 def _clean_pdf_text(text: str) -> str:
     """
     Clean garbled PDF extraction output.
@@ -814,6 +1035,7 @@ def run_annotate_standalone(
     paper_context: str,
     producer_model: str,
     max_retries: int = 3,
+    domain: str = "cs",
     _trace=None,          # optional RunTrace — captures token usage per attempt
 ) -> str:
     """
@@ -821,9 +1043,12 @@ def run_annotate_standalone(
 
     Reads the paper content (already fetched by agent.py — local PDF or URL),
     extracts key sections (Abstract, Conclusion, Introduction, Results),
-    and returns a Nanda-annotated abstract with retry logic.
+    and returns an annotated abstract with retry logic.
 
-    Bypasses the normal research → synthesize → wiggum pipeline entirely.
+    domain="cs"     -> Nanda 8-section framework (default)
+    domain="health" -> PICO 6-section framework (biomedical/nutrition)
+
+    Bypasses the normal research -> synthesize -> wiggum pipeline entirely.
     """
     from harness.inference import chat as _llm_chat
 
@@ -834,15 +1059,34 @@ def run_annotate_standalone(
 
     cleaned_context = _clean_pdf_text(paper_context)
     context = _extract_sections(cleaned_context)
-    print(f"  [annotate] paper context: {len(paper_context)} chars raw → {len(context)} chars extracted")
+    print(f"  [annotate] paper context: {len(paper_context)} chars raw -> {len(context)} chars extracted")
 
-    # Append /no_think for Qwen3 models — more reliable than the think:false option
     model_lower = producer_model.lower()
-    system = _ANNOTATE_SYSTEM
+
+    if domain == "health":
+        system = _PICO_SYSTEM
+        ann_prompt = _PICO_PROMPT
+        is_valid = _is_valid_pico
+        last_section = "**Evidence Grade**"
+        preamble_re = r"(#\s*PICO Annotation|\*\*Population\*\*)"
+    elif domain == "finance":
+        system = _FINANCE_SYSTEM
+        ann_prompt = _FINANCE_PROMPT
+        is_valid = _is_valid_finance
+        last_section = "**Outlook**"
+        preamble_re = r"(#\s*Finance Annotation|\*\*Strategy\*\*)"
+    else:
+        system = _ANNOTATE_SYSTEM
+        ann_prompt = _ANNOTATE_PROMPT
+        is_valid = _is_valid_annotation
+        last_section = "**Broad impact**"
+        preamble_re = r"(#\s*Annotated Abstract|\*\*Topic\*\*)"
+
+    # Append /no_think for Qwen3 models
     if "qwen3" in model_lower:
         system = system + "\n/no_think"
 
-    prompt = system + "\n\n" + _ANNOTATE_PROMPT + context
+    prompt = system + "\n\n" + ann_prompt + context
 
     for attempt in range(1, max_retries + 1):
         resp = _llm_chat(
@@ -854,23 +1098,17 @@ def run_annotate_standalone(
         if _trace is not None:
             _trace.log_usage(resp, stage="annotate")
         result = resp["message"]["content"].strip()
-        # Strip Qwen3 chain-of-thought blocks if present
         result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
-        # Strip Qwen2.5 end-of-turn tokens and anything after
         result = re.split(r"<\|im_end\|>|<\|endoftext\|>", result)[0].strip()
 
-        # Strip preamble before the annotation heading or first section
-        preamble_m = re.search(r"(#\s*Annotated Abstract|\*\*Topic\*\*)", result)
+        preamble_m = re.search(preamble_re, result)
         if preamble_m:
             result = result[preamble_m.start():].strip()
 
-        # Truncate after the Broad impact paragraph.
-        # Strategy: take at most 600 chars of content after the header line,
-        # then cut at the last sentence-ending punctuation in that window.
-        # This avoids dependence on blank lines or stop markers the model may not emit.
-        broad_idx = result.find("**Broad impact**")
-        if broad_idx != -1:
-            header_end = result.find("\n", broad_idx)
+        # Truncate after the last section's paragraph
+        last_idx = result.find(last_section)
+        if last_idx != -1:
+            header_end = result.find("\n", last_idx)
             if header_end != -1:
                 content_start = header_end + 1
                 window = result[content_start : content_start + 600]
@@ -878,10 +1116,10 @@ def run_annotate_standalone(
                 if last_sent != -1:
                     result = result[: content_start + last_sent + 1].strip()
 
-        if _is_valid_annotation(result):
+        if is_valid(result):
             return result
 
-        print(f"  [annotate] attempt {attempt}/{max_retries} — invalid output, retrying...")
+        print(f"  [annotate] attempt {attempt}/{max_retries} -- invalid output, retrying...")
 
     return result  # return last attempt even if invalid; wiggum will catch it
 

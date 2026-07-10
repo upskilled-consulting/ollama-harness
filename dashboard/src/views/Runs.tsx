@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, type ReactNode, type CSSProperties } from "react";
-import { Plus, Minus, RefreshCw } from "lucide-react";
+import { Plus, Minus, RefreshCw, Brain, ChevronDown, ChevronRight } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useLiveRun, usePagedRuns } from "@/hooks/useRuns";
 import { MdView } from "@/components/MdView";
-import type { RunRecord, WiggumDim, ToolCall, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage, LiveRun } from "@/types";
+import type { RunRecord, WiggumDim, ToolCall, ToolCallUrl, WiggumEvalEntry, Plan, StageTokens, FeedbackRecord, RunMessage, LiveRun } from "@/types";
 
 // ── shared helpers ─────────────────────────────────────────────────────────────
 
@@ -34,20 +34,27 @@ const DIM_COLORS: Record<string, string> = {
   grounded:     "#f0b429",
 };
 
+
 // ── DAG constants ──────────────────────────────────────────────────────────────
 
-const NW = 162, NH = 64, HGAP = 60, VGAP = 12, PAD = 28;
+const NW = 140, NH = 58, HGAP = 44, VGAP = 10, PAD = 24;
 
-type NodeType = "task" | "memory" | "plan" | "search" | "synthesis" | "eval" | "output";
+type NodeType = "task" | "memory" | "plan" | "search" | "synthesis" | "eval" | "output"
+             | "lr_fetch" | "lr_curate" | "lr_cluster" | "lr_synth" | "lr_out";
 
 const NODE_CFG: Record<NodeType, { color: string; label: string }> = {
-  task:      { color: "#4f8ef7", label: "TASK"      },
-  memory:    { color: "#a78bfa", label: "MEMORY"    },
-  plan:      { color: "#38bdf8", label: "PLAN"      },
-  search:    { color: "#fb923c", label: "SEARCH"    },
-  synthesis: { color: "#22d3ee", label: "SYNTHESIS" },
-  eval:      { color: "#e3b341", label: "EVAL"      },
-  output:    { color: "#3fb950", label: "OUTPUT"    },
+  task:       { color: "#4f8ef7", label: "TASK"      },
+  memory:     { color: "#a78bfa", label: "MEMORY"    },
+  plan:       { color: "#38bdf8", label: "PLAN"      },
+  search:     { color: "#fb923c", label: "SEARCH"    },
+  synthesis:  { color: "#22d3ee", label: "SYNTHESIS" },
+  eval:       { color: "#e3b341", label: "EVAL"      },
+  output:     { color: "#3fb950", label: "OUTPUT"    },
+  lr_fetch:   { color: "#38bdf8", label: "FETCH"     },
+  lr_curate:  { color: "#a78bfa", label: "CURATE"    },
+  lr_cluster: { color: "#e879f9", label: "CLUSTER"   },
+  lr_synth:   { color: "#22d3ee", label: "SYNTH"     },
+  lr_out:     { color: "#3fb950", label: "OUTPUT"    },
 };
 
 interface DagNode {
@@ -324,6 +331,88 @@ function DimBars({ dims }: { dims: WiggumDim }) {
   );
 }
 
+// ── Dim notes + bars (each note aligned with its bar on the same row) ─────────
+
+// Six distinct teal shades, darkest→lightest, assigned by score rank.
+const TEAL_PALETTE = ["#0d4f56", "#0b7285", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9"];
+
+// Try to extract a leading "dimname: body" prefix from an issue string.
+function parseDimNote(s: string): [string, string] {
+  const m = s.match(/^([a-z_]+):\s*(.*)/is);
+  return m ? [m[1].toLowerCase(), m[2].trim()] : ["", s];
+}
+
+function DimNotesBars({
+  dims, issues, feedback,
+}: { dims: WiggumDim; issues: string[]; feedback?: string }) {
+  // Build dim → note body map from issues that start with a dim name
+  const noteMap: Record<string, string> = {};
+  const unmatched: string[] = [];
+  for (const iss of issues) {
+    const [dim] = parseDimNote(iss);
+    if (dim && dims[dim as keyof WiggumDim] !== undefined) {
+      noteMap[dim] = iss.charAt(0).toUpperCase() + iss.slice(1);
+    } else {
+      unmatched.push(iss);
+    }
+  }
+
+  const entries = Object.entries(dims)
+    .filter(([, v]) => typeof v === "number")
+    .sort(([, a], [, b]) => (b as number) - (a as number));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {entries.map(([key, rawVal], i) => {
+        const v     = rawVal as number;
+        const color = TEAL_PALETTE[Math.min(i, TEAL_PALETTE.length - 1)];
+        const pct   = Math.min(100, (v / 10) * 100);
+        const note  = noteMap[key];
+        return (
+          <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {/* Note — left, flex 1, left-bordered in the dim's teal */}
+            <div style={{
+              flex: 1, minWidth: 0, fontSize: 11, color: "var(--dim)", lineHeight: 1.45,
+              padding: "2px 0 2px 8px", borderLeft: `2px solid ${color}70`,
+              wordBreak: "break-word",
+            }}>
+              {note ?? <span style={{ color: "rgba(255,255,255,0.18)", fontStyle: "italic" }}>—</span>}
+            </div>
+
+            {/* Bar section: [score] [bar] [label] — fixed width, right side */}
+            <div style={{ width: 210, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                fontSize: 11, color, fontFamily: "var(--font-mono)", fontWeight: 700,
+                width: 16, textAlign: "right", flexShrink: 0,
+              }}>{v}</span>
+              <div style={{ flex: 1, height: 9, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 3, transition: "width 0.3s" }} />
+              </div>
+              <span style={{
+                fontSize: 11, color: "var(--text)", textTransform: "capitalize",
+                width: 88, flexShrink: 0, textAlign: "left",
+              }}>{key}</span>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Unmatched issues (no leading dim prefix) */}
+      {unmatched.map((iss, i) => (
+        <div key={`u${i}`} style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.45, padding: "2px 0 2px 8px", borderLeft: "2px solid var(--warn)", wordBreak: "break-word" }}>
+          {iss}
+        </div>
+      ))}
+
+      {feedback && (
+        <div style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.5, fontStyle: "italic", wordBreak: "break-word", marginTop: 4 }}>
+          {feedback}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── RLHF panel ─────────────────────────────────────────────────────────────────
 
 function RlhfPanel({ runId, nodeId }: { runId: string; nodeId: string }) {
@@ -365,8 +454,16 @@ function RlhfPanel({ runId, nodeId }: { runId: string; nodeId: string }) {
     <div style={{ marginTop: 16, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
       <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 7 }}>Rate this step</div>
       <div style={{ display: "flex", gap: 6, marginBottom: 7, alignItems: "center" }}>
-        <button style={thumb(rating === 1,  "#34d399")} onClick={() => { setRating(1);  setSaved(false); }}>👍</button>
-        <button style={thumb(rating === -1, "#f87171")} onClick={() => { setRating(-1); setSaved(false); }}>👎</button>
+        <button style={thumb(rating === 1,  "#34d399")} onClick={() => { setRating(1);  setSaved(false); }} title="Positive">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 10v12M15 5.88L14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/>
+          </svg>
+        </button>
+        <button style={thumb(rating === -1, "#f87171")} onClick={() => { setRating(-1); setSaved(false); }} title="Negative">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/>
+          </svg>
+        </button>
         {saved && <span style={{ fontSize: 10, color: "var(--pass)", marginLeft: 2 }}>✓ saved</span>}
       </div>
       <textarea value={comment} onChange={(e) => { setComment(e.target.value); setSaved(false); }}
@@ -428,10 +525,52 @@ function NodeInspectorBody({ node, run }: { node: DagNode; run: RunRecord }) {
   }
   if (node.type === "search") {
     const tc = d as unknown as ToolCall;
+    const [previewOpen, setPreviewOpen] = useState(false);
     return (<>
       <InspRow label="tool" value={tc.name} />
-      <div style={{ marginTop: 8, marginBottom: 8, padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12, lineHeight: 1.6, wordBreak: "break-word", color: "var(--text)" }}>{tc.query ?? "—"}</div>
-      <InspRow label="result" value={tc.result_chars != null ? `${tc.result_chars.toLocaleString()} chars` : "—"} />
+      {/* Query */}
+      <div style={{ marginTop: 8, marginBottom: 8, padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12, lineHeight: 1.6, wordBreak: "break-word", color: "var(--text)" }}>
+        {tc.query ?? "—"}
+      </div>
+      {/* Error banner */}
+      {tc.error && (
+        <div style={{ padding: "7px 10px", borderRadius: 5, background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "#f85149", fontSize: 11, marginBottom: 8, wordBreak: "break-word" }}>
+          {tc.error}
+        </div>
+      )}
+      <InspRow label="hits" value={tc.urls ? String(tc.urls.length) : "—"} />
+      <InspRow label="chars" value={tc.result_chars != null ? tc.result_chars.toLocaleString() : "—"} />
+      {/* URL list */}
+      {tc.urls && tc.urls.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 5 }}>Sources</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 220, overflowY: "auto" }}>
+            {(tc.urls as ToolCallUrl[]).map((u, i) => (
+              <div key={i} style={{ padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5 }}>
+                <div style={{ fontSize: 11, color: "var(--text)", fontWeight: 600, marginBottom: 2, wordBreak: "break-word" }}>{u.title || "(no title)"}</div>
+                <div style={{ fontSize: 10, color: "#4f8ef7", wordBreak: "break-all", marginBottom: u.body ? 3 : 0 }}>{u.href}</div>
+                {u.body && <div style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.45, wordBreak: "break-word" }}>{u.body}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Result preview toggle */}
+      {tc.result_preview && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            onClick={() => setPreviewOpen((o) => !o)}
+            style={{ background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--dim)", cursor: "pointer", fontSize: 10, padding: "3px 10px", textTransform: "uppercase", letterSpacing: "0.05em" }}
+          >
+            {previewOpen ? "▲ hide preview" : "▼ preview results"}
+          </button>
+          {previewOpen && (
+            <div style={{ marginTop: 6, maxHeight: 380, overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, padding: "10px 12px" }}>
+              <MdView content={tc.result_preview} />
+            </div>
+          )}
+        </div>
+      )}
       <StageToks candidates={["search", "web_search", "fetch", "browse"]} tokensByStage={tbs} />
     </>);
   }
@@ -536,7 +675,9 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
   const feedback = lastEval?.feedback;
   const issues   = run.wiggum_issues ?? lastEval?.issues ?? [];
 
-  const [cardHeight, setCardHeight] = useState(320);
+  const hasWiggum = scores.length > 0 || (lastDim != null) || issues.length > 0 || !!feedback;
+  const [cardHeight, setCardHeight] = useState(() => hasWiggum ? 320 : 120);
+  useEffect(() => { setCardHeight(hasWiggum ? 320 : 120); }, [run.run_id]);
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -586,21 +727,13 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
         ))}
       </div>
 
-      {/* dim bars */}
-      {lastDim && <DimBars dims={lastDim} />}
-
-      {/* issues */}
-      {issues.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {issues.map((iss, i) => (
-            <div key={i} style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.45, padding: "2px 0 2px 10px", borderLeft: "2px solid var(--warn)", wordBreak: "break-word" }}>{iss}</div>
-          ))}
-        </div>
-      )}
-
-      {/* evaluator feedback */}
-      {feedback && (
-        <div style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.5, fontStyle: "italic", wordBreak: "break-word" }}>{feedback}</div>
+      {/* per-dim notes aligned with bars */}
+      {(lastDim || issues.length > 0 || feedback) && (
+        <DimNotesBars
+          dims={lastDim ?? {} as WiggumDim}
+          issues={issues}
+          feedback={feedback}
+        />
       )}
     </div>
 
@@ -621,6 +754,239 @@ function RunSummaryCard({ run, onClose }: { run: RunRecord; onClose: () => void 
       <div style={{ width: 32, height: 2, borderRadius: 2, background: "var(--border)" }} />
     </div>
   </div>
+  );
+}
+
+// ── Lit-review view ────────────────────────────────────────────────────────────
+
+const LR_COLORS = {
+  fetch:      "#38bdf8",
+  curate:     "#a78bfa",
+  cluster:    "#e879f9",
+  synthesize: "#22d3ee",
+};
+
+function fmtMs(ms: number | undefined) {
+  if (!ms) return "—";
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000)  return `${(ms / 1_000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+function buildLrColumns(run: RunRecord): DagNode[][] {
+  const tbs        = run.tokens_by_stage ?? {};
+  const curateSt   = tbs.curate     as StageTokens | undefined;
+  const clusterSt  = tbs.cluster    as StageTokens | undefined;
+  const synthSt    = tbs.synthesize as StageTokens | undefined;
+  const papers     = (run.tool_calls ?? []).filter((tc) => tc.name === "arxiv_fetch");
+  const totalFetched = curateSt?.calls ?? papers.length;
+  const passRate   = totalFetched > 0 ? Math.round(papers.length / totalFetched * 100) : 0;
+  const outColor   = run.final === "PASS" ? "#3fb950" : run.final === "FAIL" ? "#f85149" : "#8b949e";
+
+  const clusterMap = new Map<number, { name: string; papers: typeof papers }>();
+  for (const p of papers) {
+    const idx  = p.cluster_idx ?? -1;
+    const name = p.cluster_name || (idx >= 0 ? `Cluster ${idx + 1}` : "Unclustered");
+    if (!clusterMap.has(idx)) clusterMap.set(idx, { name, papers: [] });
+    clusterMap.get(idx)!.papers.push(p);
+  }
+  const clusterList = [...clusterMap.entries()].sort((a, b) => a[0] - b[0]);
+  const hasClusterData = clusterList.some(([idx]) => idx >= 0);
+  const clusterCount   = hasClusterData
+    ? clusterList.length
+    : (synthSt?.calls != null && synthSt.calls > 1 ? synthSt.calls - 1 : null);
+
+  return [
+    [{
+      id: "lr_fetch", type: "lr_fetch" as NodeType, col: 0, row: 0, x: 0, y: 0,
+      title: `${totalFetched} papers`,
+      sub: trunc(run.task.replace(/^\s*\/lit-review\s*/i, ""), 28),
+      color: LR_COLORS.fetch,
+      data: { totalFetched, curateSt, task: run.task },
+    }],
+    [{
+      id: "lr_curate", type: "lr_curate" as NodeType, col: 0, row: 0, x: 0, y: 0,
+      title: `${papers.length} / ${totalFetched}`,
+      sub: `${passRate}% pass  ${fmtMs(curateSt?.total_ms)}`,
+      color: LR_COLORS.curate,
+      data: { papers, curateSt, passRate },
+    }],
+    hasClusterData
+      ? clusterList.map(([idx, cl]) => ({
+          id: `lr_cluster_${idx}`, type: "lr_cluster" as NodeType, col: 0, row: 0, x: 0, y: 0,
+          title: trunc(cl.name, 22),
+          sub: `${cl.papers.length} paper${cl.papers.length !== 1 ? "s" : ""}`,
+          color: LR_COLORS.cluster,
+          data: { ...cl, clusterSt, idx },
+        }))
+      : [{
+          id: "lr_cluster_0", type: "lr_cluster" as NodeType, col: 0, row: 0, x: 0, y: 0,
+          title: clusterCount != null ? `${clusterCount} groups` : "Cluster",
+          sub: fmtMs(clusterSt?.total_ms),
+          color: LR_COLORS.cluster,
+          data: { name: "Cluster", papers, clusterSt, idx: -1 },
+        }],
+    [{
+      id: "lr_synth", type: "lr_synth" as NodeType, col: 0, row: 0, x: 0, y: 0,
+      title: synthSt?.output != null ? `${synthSt.output} tok` : "Synthesize",
+      sub: fmtMs(synthSt?.total_ms),
+      color: LR_COLORS.synthesize,
+      data: { synthSt },
+    }],
+    [{
+      id: "lr_out", type: "lr_out" as NodeType, col: 0, row: 0, x: 0, y: 0,
+      title: run.final ?? "running",
+      sub: run.output_bytes ? `${(run.output_bytes / 1024).toFixed(1)} KB` : "—",
+      color: outColor,
+      data: { run },
+    }],
+  ];
+}
+
+function LrKV({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", gap: 10, marginBottom: 4, alignItems: "flex-start" }}>
+      {label && (
+        <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
+          color: "var(--dim)", minWidth: 88, flexShrink: 0, paddingTop: 1 }}>{label}</span>
+      )}
+      <span style={{ fontSize: 10, color: "var(--text)", lineHeight: 1.5 }}>{value}</span>
+    </div>
+  );
+}
+
+function LrNodeDetail({ node, run }: { node: DagNode; run: RunRecord }) {
+  const d = node.data;
+  if (node.type === "lr_fetch") return (
+    <>
+      <LrKV label="Query"   value={run.task.replace(/^\s*\/lit-review\s*/i, "").slice(0, 120) || run.task} />
+      <LrKV label="Fetched" value={`${d.totalFetched} papers`} />
+    </>
+  );
+  if (node.type === "lr_curate") return (
+    <>
+      <LrKV label="Passed" value={`${d.papers.length} / ${d.curateSt?.calls ?? d.papers.length} (${d.passRate}%)`} />
+      <LrKV label="Time"   value={fmtMs(d.curateSt?.total_ms)} />
+    </>
+  );
+  if (node.type === "lr_cluster") {
+    const ps = d.papers as ToolCall[];
+    return (
+      <>
+        <LrKV label="Cluster" value={d.name} />
+        <LrKV label="Papers"  value={`${ps.length}`} />
+        {ps.slice(0, 6).map((p, i) => (
+          <LrKV key={i} label={i === 0 ? "Titles" : ""} value={trunc(p.query ?? p.urls?.[0]?.title ?? "", 90)} />
+        ))}
+        {ps.length > 6 && <LrKV label="" value={`+${ps.length - 6} more`} />}
+      </>
+    );
+  }
+  if (node.type === "lr_synth") return (
+    <>
+      <LrKV label="Output tok" value={d.synthSt?.output != null ? `${d.synthSt.output}` : "—"} />
+      <LrKV label="Time"       value={fmtMs(d.synthSt?.total_ms)} />
+    </>
+  );
+  if (node.type === "lr_out") return (
+    <>
+      <LrKV label="Status" value={d.run.final ?? "—"} />
+      <LrKV label="File"   value={d.run.output_path?.replace(/.*[/\\]/, "") ?? "—"} />
+      <LrKV label="Size"   value={d.run.output_bytes ? `${(d.run.output_bytes / 1024).toFixed(1)} KB` : "—"} />
+    </>
+  );
+  return null;
+}
+
+function PaperCard({ tc }: { tc: ToolCall }) {
+  const href    = tc.urls?.[0]?.href ?? "";
+  const title   = tc.query ?? tc.urls?.[0]?.title ?? "Untitled";
+  const preview = tc.result_preview ?? "";
+  const arxivId = href.replace(/.*\/abs\//, "").replace(/v\d+$/, "");
+  return (
+    <div style={{ padding: "10px 12px", borderRadius: 7, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", lineHeight: 1.4 }}>{title}</div>
+      {href && (
+        <a href={href} target="_blank" rel="noreferrer"
+          style={{ fontSize: 9, color: LR_COLORS.fetch, fontFamily: "var(--font-mono)", textDecoration: "none", opacity: 0.85 }}>
+          arXiv:{arxivId}
+        </a>
+      )}
+      {preview && (
+        <div style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.5 }}>
+          {preview.length > 200 ? preview.slice(0, 200) + "…" : preview}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LitReviewDag({ run }: { run: RunRecord }) {
+  const [sel, setSel] = useState<DagNode | null>(null);
+  const cols  = buildLrColumns(run);
+  const { nodes, width, height } = layoutColumns(cols);
+  const edges = buildEdges(cols, nodes);
+
+  useEffect(() => { setSel(null); }, [run.run_id]);
+
+  const allPapers  = (run.tool_calls ?? []).filter((tc) => tc.name === "arxiv_fetch");
+  const showPapers = sel?.type === "lr_cluster" ? (sel.data.papers as ToolCall[]) : allPapers;
+  const gridLabel  = sel?.type === "lr_cluster"
+    ? `${sel.data.name} — ${showPapers.length} paper${showPapers.length !== 1 ? "s" : ""}`
+    : `Papers — ${allPapers.length} annotated`;
+
+  const durMin = run.run_duration_s ? Math.floor(run.run_duration_s / 60) : 0;
+  const durSec = run.run_duration_s ? Math.floor(run.run_duration_s % 60) : 0;
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}>
+      {/* DAG canvas */}
+      <div
+        style={{ flexShrink: 0, overflow: "auto", maxHeight: 320, background: "var(--surface)", borderBottom: "1px solid var(--border)", position: "relative" }}
+        onClick={(e) => { if (e.target === e.currentTarget) setSel(null); }}
+      >
+        <svg width={width} height={height} style={{ display: "block" }}>
+          {edges.map((edge, i) => <SvgEdge key={i} edge={edge} />)}
+          {nodes.map((node) => (
+            <SvgNode
+              key={node.id}
+              node={node}
+              selected={sel?.id === node.id}
+              onClick={() => setSel(sel?.id === node.id ? null : node)}
+            />
+          ))}
+        </svg>
+        {run.run_duration_s != null && (
+          <span style={{ position: "absolute", bottom: 6, right: 10, fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)", pointerEvents: "none" }}>
+            {durMin}m {durSec}s
+          </span>
+        )}
+      </div>
+
+      {/* Selected node detail */}
+      {sel && (
+        <div style={{ flexShrink: 0, padding: "10px 20px 8px", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: sel.color, marginBottom: 6 }}>
+            {sel.title}
+          </div>
+          <LrNodeDetail node={sel} run={run} />
+        </div>
+      )}
+
+      {/* Paper grid */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--dim)", marginBottom: 10 }}>
+          {gridLabel}
+        </div>
+        {showPapers.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--dim)", fontStyle: "italic" }}>No paper metadata recorded. Rerun with the updated harness to populate this view.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 8 }}>
+            {showPapers.map((tc, i) => <PaperCard key={i} tc={tc} />)}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -746,6 +1112,94 @@ function LiveDagCanvas({ liveRun }: { liveRun: LiveRun }) {
             status={statusMap[node.id] ?? "pending"} />
         ))}
       </svg>
+    </div>
+  );
+}
+
+// ── Live thinking ──────────────────────────────────────────────────────────────
+
+type ThinkingEvent = { stage: string; text: string; chars: number };
+
+function useLiveThinking(itemId: string | undefined): ThinkingEvent[] {
+  const [events, setEvents] = useState<ThinkingEvent[]>([]);
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    if (!itemId) { setEvents([]); return; }
+    setEvents([]);
+    const es = new EventSource(`/api/tasks/${itemId}/stream`);
+    esRef.current = es;
+    es.onmessage = (e: MessageEvent<string>) => {
+      const raw = e.data;
+      if (!raw.startsWith("[EVENT]")) return;
+      try {
+        const ev = JSON.parse(raw.slice(7)) as { type: string; data: Record<string, unknown> };
+        if (ev.type === "thinking") {
+          setEvents((prev) => [...prev, {
+            stage: (ev.data.stage as string) ?? "",
+            text:  (ev.data.text  as string) ?? "",
+            chars: (ev.data.chars as number) ?? 0,
+          }]);
+        }
+      } catch { /* ignore */ }
+    };
+    return () => { es.close(); esRef.current = null; };
+  }, [itemId]);
+
+  return events;
+}
+
+const THINKING_STAGE_LABEL: Record<string, string> = {
+  plan:      "Planner reasoning",
+  synth:     "Synthesis reasoning",
+  tool:      "Tool-loop reasoning",
+  eval:      "Evaluator reasoning",
+  cluster:   "Cluster reasoning",
+  synthesize:"Synthesize reasoning",
+  annotate:  "Annotation reasoning",
+};
+
+function LiveThinkingCard({ ev }: { ev: ThinkingEvent }) {
+  const [open, setOpen] = useState(false);
+  const label = THINKING_STAGE_LABEL[ev.stage] ?? `${ev.stage} reasoning`;
+  return (
+    <div style={{ marginBottom: 4, borderRadius: 7, border: "1px solid rgba(167,139,250,0.25)", background: "rgba(167,139,250,0.04)", overflow: "hidden" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 7, padding: "7px 11px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+      >
+        {open ? <ChevronDown size={12} color="#a78bfa" /> : <ChevronRight size={12} color="#a78bfa" />}
+        <span style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{ev.chars.toLocaleString()} chars</span>
+      </button>
+      {open && (
+        <pre style={{ margin: 0, padding: "0 12px 10px 30px", fontSize: 10, lineHeight: 1.65, color: "rgba(167,139,250,0.75)", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono)", maxHeight: 380, overflowY: "auto" }}>
+          {ev.text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function LiveThinkingPanel({ events }: { events: ThinkingEvent[] }) {
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [events.length]);
+  return (
+    <div style={{ width: 320, flexShrink: 0, borderLeft: "1px solid rgba(167,139,250,0.2)", background: "rgba(167,139,250,0.02)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "8px 12px 7px", borderBottom: "1px solid rgba(167,139,250,0.15)", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <Brain size={12} color="#a78bfa" />
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#a78bfa" }}>Reasoning traces</span>
+        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{events.length}</span>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
+        {events.length === 0 && (
+          <div style={{ fontSize: 11, color: "var(--dim)", textAlign: "center", paddingTop: 24, fontStyle: "italic" }}>
+            Waiting for reasoning traces…
+          </div>
+        )}
+        {events.map((ev, i) => <LiveThinkingCard key={i} ev={ev} />)}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }
@@ -942,6 +1396,57 @@ const ROLE_COLORS: Record<string, string> = {
   tool:      "#fb923c",
 };
 
+function MsgCard({ msg, defaultUserOpen = true }: { msg: RunMessage; defaultUserOpen?: boolean }) {
+  const [userOpen, setUserOpen] = useState(defaultUserOpen);
+  const color = ROLE_COLORS[msg.role] ?? "#8b949e";
+  const isUser = msg.role === "user";
+
+  return (
+    <div style={{ border: `1px solid ${color}25`, borderLeft: `3px solid ${color}`, borderRadius: 6, overflow: "hidden" }}>
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: `${color}10`, cursor: isUser ? "pointer" : "default" }}
+        onClick={isUser ? () => setUserOpen((o) => !o) : undefined}
+      >
+        <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color, fontFamily: "monospace" }}>{msg.role}</span>
+        {msg.chars != null && <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{msg.chars.toLocaleString()} chars</span>}
+        {msg.truncated && <span style={{ fontSize: 9, color: "var(--warn)" }}>truncated</span>}
+        {isUser && <span style={{ fontSize: 9, color: "var(--dim)" }}>{userOpen ? "▲" : "▼"}</span>}
+      </div>
+      {(!isUser || userOpen) && msg.content && (
+        msg.role === "assistant"
+          ? <div style={{ padding: "8px 10px", fontSize: 11, overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)" }}><MdView content={msg.content} /></div>
+          : <pre style={{ margin: 0, padding: "8px 10px", fontSize: 11, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)", fontFamily: "var(--font-mono)" }}>{msg.content}</pre>
+      )}
+      {typeof msg.cot === "string" && msg.cot.length > 0 && (
+        <details style={{ borderTop: `1px solid ${color}20` }}>
+          <summary style={{ padding: "4px 10px", fontSize: 9, color: "var(--dim)", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            chain of thought ({msg.cot.length.toLocaleString()} chars)
+          </summary>
+          <pre style={{ margin: 0, padding: "8px 10px", fontSize: 10, lineHeight: 1.6, color: "var(--dim)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 240, overflowY: "auto", background: "rgba(0,0,0,0.1)", fontFamily: "var(--font-mono)" }}>
+            {msg.cot}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// Group sequential (user, assistant) pairs into rounds.
+// A "round" boundary occurs each time role resets to "user" after an "assistant".
+function groupIntoRounds(messages: RunMessage[]): RunMessage[][] {
+  const rounds: RunMessage[][] = [];
+  let current: RunMessage[] = [];
+  for (const msg of messages) {
+    if (msg.role === "user" && current.some((m) => m.role === "assistant")) {
+      rounds.push(current);
+      current = [];
+    }
+    current.push(msg);
+  }
+  if (current.length > 0) rounds.push(current);
+  return rounds;
+}
+
 function MessageViewer({ runId, stage, label }: { runId: string; stage: string; label?: string }) {
   const [open, setOpen] = useState(false);
 
@@ -954,6 +1459,8 @@ function MessageViewer({ runId, stage, label }: { runId: string; stage: string; 
   });
 
   const btnLabel = label ?? "view input / output";
+  const rounds   = messages ? groupIntoRounds(messages) : [];
+  const multiRound = rounds.length > 1;
 
   return (
     <div style={{ marginTop: 10 }}>
@@ -962,10 +1469,11 @@ function MessageViewer({ runId, stage, label }: { runId: string; stage: string; 
         style={{ background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--dim)", cursor: "pointer", fontSize: 10, padding: "3px 10px", textTransform: "uppercase", letterSpacing: "0.05em" }}
       >
         {open ? "▲ hide" : `▼ ${btnLabel}`}
+        {messages && multiRound && !open && <span style={{ marginLeft: 6, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>{rounds.length} rounds</span>}
       </button>
 
       {open && (
-        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: multiRound ? 12 : 8 }}>
           {isLoading && <div style={{ fontSize: 11, color: "var(--dim)" }}>Loading…</div>}
           {error     && <div style={{ fontSize: 11, color: "var(--fail)" }}>Failed to load messages.</div>}
           {messages && messages.length === 0 && (
@@ -973,33 +1481,22 @@ function MessageViewer({ runId, stage, label }: { runId: string; stage: string; 
               No messages recorded for this stage yet — they'll appear after the next run.
             </div>
           )}
-          {messages && messages.map((msg) => {
-            const color = ROLE_COLORS[msg.role] ?? "#8b949e";
-            return (
-              <div key={msg.seq} style={{ border: `1px solid ${color}25`, borderLeft: `3px solid ${color}`, borderRadius: 6, overflow: "hidden" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: `${color}10` }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color, fontFamily: "monospace" }}>{msg.role}</span>
-                  {msg.chars != null && <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>{msg.chars.toLocaleString()} chars</span>}
-                  {msg.truncated && <span style={{ fontSize: 9, color: "var(--warn)" }}>truncated</span>}
+          {rounds.map((round, ri) => (
+            <div key={ri}>
+              {multiRound && (
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--dim)", marginBottom: 5, paddingLeft: 2 }}>
+                  Round {ri + 1} / {rounds.length}
                 </div>
-                {msg.content && (
-                  msg.role === "assistant"
-                    ? <div style={{ padding: "8px 10px", fontSize: 11, overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)" }}><MdView content={msg.content} /></div>
-                    : <pre style={{ margin: 0, padding: "8px 10px", fontSize: 11, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowY: "auto", maxHeight: 320, background: "rgba(0,0,0,0.15)", fontFamily: "var(--font-mono)" }}>{msg.content}</pre>
-                )}
-                {msg.cot && (
-                  <details style={{ borderTop: `1px solid ${color}20` }}>
-                    <summary style={{ padding: "4px 10px", fontSize: 9, color: "var(--dim)", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      chain of thought ({msg.cot.length.toLocaleString()} chars)
-                    </summary>
-                    <pre style={{ margin: 0, padding: "8px 10px", fontSize: 10, lineHeight: 1.6, color: "var(--dim)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 240, overflowY: "auto", background: "rgba(0,0,0,0.1)", fontFamily: "var(--font-mono)" }}>
-                      {msg.cot}
-                    </pre>
-                  </details>
-                )}
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {round.map((msg) => (
+                  // User prompts collapsed by default when there are multiple rounds — they're
+                  // repetitive boilerplate (same rubric template, different content each time).
+                  <MsgCard key={msg.seq} msg={msg} defaultUserOpen={!multiRound || msg.role !== "user"} />
+                ))}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1008,7 +1505,7 @@ function MessageViewer({ runId, stage, label }: { runId: string; stage: string; 
 
 // ── Context window treemap ─────────────────────────────────────────────────────
 
-type ViewMode = "dag" | "context";
+type ViewMode = "dag" | "context" | "subtasks";
 
 function inferContextLimit(model: string | undefined): number {
   if (!model) return 32768;
@@ -1029,6 +1526,14 @@ const STAGE_CFG: Record<string, { color: string; label: string; context?: boolea
   memory:              { color: "#a78bfa", label: "Memory" },
   compress_knowledge:  { color: "#3fb950", label: "Compress" },
   other:               { color: "#6b7280", label: "Other" },
+  // lit-review pipeline stages
+  fetch:               { color: "#38bdf8", label: "Fetch"       },
+  enrich:              { color: "#818cf8", label: "Enrich"       },
+  curate:              { color: "#a78bfa", label: "Curate"       },
+  annotate:            { color: "#c084fc", label: "Annotate"     },
+  cluster:             { color: "#e879f9", label: "Cluster"      },
+  synthesize:          { color: "#22d3ee", label: "Synthesize"   },
+  render:              { color: "#3fb950", label: "Render"       },
   // context injection stages (no LLM call — estimated chars/4 tokens)
   system_prompt:       { color: "#f472b6", label: "Sys prompt",  context: true },
   research_context:    { color: "#34d399", label: "Research ctx", context: true },
@@ -1194,6 +1699,233 @@ function ContextTreemap({ run }: { run: RunRecord }) {
   );
 }
 
+// ── Lit-review compute breakdown ──────────────────────────────────────────────
+
+const LR_STAGE_ORDER = ["fetch", "enrich", "curate", "annotate", "cluster", "synthesize", "render"];
+
+const CURATE_JUDGES = 5; // fixed number of personas in curator.py
+
+function CurationFunnel({ attempted, passed }: { attempted: number; passed: number }) {
+  const filtered   = attempted - passed;
+  const passPct    = attempted > 0 ? (passed   / attempted) * 100 : 0;
+  const filterPct  = attempted > 0 ? (filtered / attempted) * 100 : 0;
+  const rows: { label: string; count: number; pct: number; color: string }[] = [
+    { label: "Passed",   count: passed,   pct: passPct,   color: "#3fb950" },
+    { label: "Filtered", count: filtered, pct: filterPct, color: "#f85149" },
+  ];
+  return (
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+      <div style={{ fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+        Paper curation &middot; {attempted} papers &times; {CURATE_JUDGES} judges
+      </div>
+      {rows.map(({ label, count, pct, color }) => (
+        <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+          <span style={{ fontSize: 9, color, fontFamily: "var(--font-mono)", fontWeight: 700, width: 48, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.07)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 3, transition: "width 0.4s" }} />
+          </div>
+          <span style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--font-mono)", width: 52, textAlign: "right", flexShrink: 0 }}>
+            {count} <span style={{ color: "var(--dim)", fontSize: 9 }}>({pct.toFixed(0)}%)</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LitReviewCompute({ run }: { run: RunRecord }) {
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const tbs = run.tokens_by_stage;
+  if (!tbs) return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>No compute data recorded for this run.</div>;
+
+  const entries = Object.entries(tbs)
+    .filter(([stage]) => LR_STAGE_ORDER.includes(stage))
+    .sort(([a], [b]) => LR_STAGE_ORDER.indexOf(a) - LR_STAGE_ORDER.indexOf(b));
+
+  if (entries.length === 0) return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>No stage data recorded for this run.</div>;
+
+  const totalMs     = entries.reduce((s, [, st]) => s + (st.total_ms ?? 0), 0);
+  const totalInput  = entries.reduce((s, [, st]) => s + (st.input  ?? 0), 0);
+  const totalOutput = entries.reduce((s, [, st]) => s + (st.output ?? 0), 0);
+  const totalCalls  = entries.reduce((s, [, st]) => s + (st.calls  ?? 0), 0);
+
+  // Curation funnel data
+  const curateCalls    = (tbs.curate as StageTokens | undefined)?.calls ?? 0;
+  const papersAttempted = curateCalls > 0 ? Math.round(curateCalls / CURATE_JUDGES) : 0;
+  const papersPassed    = (run.tool_calls ?? []).filter((tc) => tc.name === "arxiv_fetch" || (tc.urls?.length ?? 0) > 0).length;
+
+  const selSt  = selected ? tbs[selected] as StageTokens : null;
+  const selCfg = selected ? (STAGE_CFG[selected] ?? { color: "#8b949e", label: selected }) : null;
+
+  const colGrid = "110px 44px 80px 80px 80px 68px";
+
+  return (
+    <div style={{ padding: "16px 18px", overflowY: "auto", flex: 1 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <span>Multi-stage compute</span>
+          <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>
+            {totalCalls} calls &middot; {fmtMs(totalMs)}
+          </span>
+        </div>
+        {/* Time-proportional bar */}
+        <div style={{ height: 7, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden", display: "flex" }}>
+          {entries.map(([stage, st]) => {
+            const pct = totalMs > 0 ? ((st.total_ms ?? 0) / totalMs) * 100 : 0;
+            const cfg = STAGE_CFG[stage] ?? { color: "#8b949e", label: stage };
+            return <div key={stage} style={{ width: `${pct}%`, height: "100%", background: cfg.color, flexShrink: 0, transition: "width 0.4s" }} />;
+          })}
+        </div>
+        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 3, fontFamily: "var(--font-mono)" }}>
+          proportional by wall time &middot; {totalInput.toLocaleString()} in + {totalOutput.toLocaleString()} out tok
+        </div>
+      </div>
+
+      {/* Table */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: colGrid, gap: "0 8px", padding: "3px 8px", fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <span>Stage</span><span>Calls</span><span>Input tok</span><span>Output tok</span><span>Avg in/call</span><span>Time</span>
+        </div>
+        {entries.map(([stage, st]) => {
+          const cfg    = STAGE_CFG[stage] ?? { color: "#8b949e", label: stage };
+          const calls  = st.calls ?? 1;
+          const avgIn  = calls > 0 ? Math.round((st.input ?? 0) / calls) : 0;
+          const isSel  = selected === stage;
+          return (
+            <div key={stage} onClick={() => setSelected(isSel ? null : stage)} style={{
+              display: "grid", gridTemplateColumns: colGrid, gap: "0 8px",
+              padding: "6px 8px", borderRadius: 5, cursor: "pointer",
+              background: isSel ? `${cfg.color}15` : "transparent",
+              border:     isSel ? `1px solid ${cfg.color}30` : "1px solid transparent",
+              transition: "background 0.1s",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: cfg.color, fontWeight: 600 }}>{cfg.label}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{calls}</span>
+                {stage === "curate" && papersAttempted > 0 && (
+                  <span style={{ fontSize: 8, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>{papersAttempted}&times;{CURATE_JUDGES}</span>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{(st.input ?? 0).toLocaleString()}</span>
+              <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{(st.output ?? 0).toLocaleString()}</span>
+              <span style={{ fontSize: 11, color: "var(--dim)",  fontFamily: "var(--font-mono)" }}>{avgIn.toLocaleString()}</span>
+              <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{fmtMs(st.total_ms)}</span>
+            </div>
+          );
+        })}
+        <div style={{ display: "grid", gridTemplateColumns: colGrid, gap: "0 8px", padding: "6px 8px 4px", borderTop: "1px solid var(--border)", marginTop: 2 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
+          <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{totalCalls}</span>
+          <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{totalInput.toLocaleString()}</span>
+          <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{totalOutput.toLocaleString()}</span>
+          <span style={{ fontSize: 11, color: "var(--dim)",  fontFamily: "var(--font-mono)" }}>—</span>
+          <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{fmtMs(totalMs)}</span>
+        </div>
+      </div>
+
+      {/* Selected stage detail */}
+      {selected && selSt && selCfg && (() => {
+        const calls = selSt.calls ?? 1;
+        const rows: [string, string | null][] = [
+          ["Input tokens",   (selSt.input  ?? 0).toLocaleString()],
+          ["Output tokens",  (selSt.output ?? 0).toLocaleString()],
+          ["Calls",          String(calls)],
+          ["Avg in / call",  calls > 0 ? Math.round((selSt.input ?? 0) / calls).toLocaleString() : "—"],
+          ["Total time",     fmtMs(selSt.total_ms)],
+          ["Prompt time",    selSt.prompt_ms   != null ? fmtMs(selSt.prompt_ms)   : null],
+          ["Eval time",      selSt.eval_ms     != null ? fmtMs(selSt.eval_ms)     : null],
+          ["Thinking chars", selSt.thinking_chars ? selSt.thinking_chars.toLocaleString() : null],
+        ];
+        return (
+          <div style={{ padding: "11px 14px", background: "var(--surface)", border: `1px solid ${selCfg.color}35`, borderLeft: `3px solid ${selCfg.color}`, borderRadius: 7 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: selCfg.color, marginBottom: 9 }}>
+              {selCfg.label} &middot; {calls} call{calls !== 1 ? "s" : ""}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px 20px" }}>
+              {rows.filter(([, v]) => v !== null).map(([label, value]) => (
+                <div key={label}>
+                  <div style={{ fontSize: 9, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+            {selected === "curate" && papersAttempted > 0 && (
+              <CurationFunnel attempted={papersAttempted} passed={papersPassed} />
+            )}
+            <MessageViewer runId={run.run_id} stage={selected} />
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ── Subtasks pane ─────────────────────────────────────────────────────────────
+
+function SubtasksPane({ run, onSelectRun }: { run: RunRecord; onSelectRun: (r: RunRecord) => void }) {
+  const { data: children, isLoading, error } = useQuery({
+    queryKey:  ["run_children", run.run_id],
+    queryFn:   () => fetch(`/api/runs/${run.run_id}/children`).then((r) => r.json() as Promise<RunRecord[]>),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>Loading subtask runs…</div>;
+  if (error)     return <div style={{ padding: 24, color: "var(--fail)", fontSize: 12 }}>Failed to load subtask runs.</div>;
+
+  if (!children || children.length === 0) {
+    const hint = run.subtask_count != null ? ` Expected ${run.subtask_count} subtask(s) — records may not yet be indexed.` : "";
+    return <div style={{ padding: 24, color: "var(--dim)", fontSize: 12 }}>No child runs found.{hint}</div>;
+  }
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--dim)", marginBottom: 4 }}>
+        {children.length} subtask run{children.length !== 1 ? "s" : ""}
+      </div>
+      {children.map((child) => {
+        const score = child.wiggum_scores?.at(-1);
+        return (
+          <div
+            key={child.run_id}
+            onClick={() => onSelectRun(child)}
+            style={{
+              padding: "10px 14px", borderRadius: 7, cursor: "pointer",
+              border: "1px solid var(--border)", background: "var(--surface)",
+              display: "flex", flexDirection: "column", gap: 6,
+              transition: "border-color 0.12s, background 0.12s",
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLDivElement).style.background = "rgba(129,140,248,0.06)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLDivElement).style.background = "var(--surface)"; }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              {child.final && <span className={clsx("badge", child.final.toLowerCase())} style={{ fontSize: "0.6rem" }}>{child.final}</span>}
+              {score != null && (
+                <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)", color: scoreColor(score) }}>{score.toFixed(1)}</span>
+              )}
+              <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
+                {child.run_duration_s != null ? `${child.run_duration_s.toFixed(0)}s` : ""}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.45, wordBreak: "break-word" }}>
+              {trunc(child.task, 120)}
+            </div>
+            <div style={{ display: "flex", gap: 10, fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+              <span>{fmtTs(child.timestamp)}</span>
+              {child.input_tokens  != null && <span>{child.input_tokens.toLocaleString()} in</span>}
+              {child.output_tokens != null && <span>{child.output_tokens.toLocaleString()} out</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 export function Runs() {
@@ -1208,6 +1940,7 @@ export function Runs() {
   const pages = paged?.pages ?? 1;
 
   const { data: liveRun = null }              = useLiveRun();
+  const liveThinking                          = useLiveThinking(liveRun?.item_id);
   const [selectedRun,  setSelectedRun]  = useState<RunRecord | null>(null);
   const [selectedNode, setSelectedNode] = useState<DagNode | null>(null);
 
@@ -1233,7 +1966,10 @@ export function Runs() {
   const defaultRun = runs.find((r) => (r.tool_calls?.length ?? 0) > 0 || (r.wiggum_scores?.length ?? 0) > 0) ?? runs[0] ?? null;
   const activeRun  = liveSelected ? null : (selectedRun ?? defaultRun);
 
-  const handleSelectRun = (r: RunRecord) => { setSelectedRun(r); setSelectedNode(null); setLiveSelected(false); };
+  const handleSelectRun = (r: RunRecord) => {
+    setSelectedRun(r); setSelectedNode(null); setLiveSelected(false);
+    if (!r.orchestrated && viewMode === "subtasks") setViewMode("dag");
+  };
   const handleDeselectRun = () => { setSelectedRun(null); setSelectedNode(null); };
   const handleViewMode = (m: ViewMode) => { setViewMode(m); if (m !== "dag") setSelectedNode(null); };
   const handleSelectLive = () => { setLiveSelected(true); setSelectedRun(null); setSelectedNode(null); };
@@ -1260,9 +1996,10 @@ export function Runs() {
               <span style={{ fontSize: 12, color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{liveRun.task}</span>
             </div>
 
-            {/* Live DAG — no tabs, no context window during run */}
+            {/* Live DAG + reasoning traces */}
             <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
               <LiveDagCanvas liveRun={liveRun} />
+              {liveRun.item_id && <LiveThinkingPanel events={liveThinking} />}
             </div>
           </>
         ) : activeRun ? (
@@ -1271,7 +2008,7 @@ export function Runs() {
 
             {/* view mode tabs */}
             <div style={{ display: "flex", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
-              {(["dag", "context"] as ViewMode[]).map((m) => (
+              {(["dag", "context", ...(activeRun.orchestrated ? ["subtasks"] : [])] as ViewMode[]).map((m) => (
                 <button key={m} onClick={() => handleViewMode(m)} style={{
                   padding: "6px 16px", fontSize: 10, fontWeight: 700, cursor: "pointer",
                   textTransform: "uppercase", letterSpacing: "0.07em",
@@ -1280,21 +2017,33 @@ export function Runs() {
                   color: viewMode === m ? "var(--accent)" : "var(--dim)",
                   marginBottom: -1, transition: "color 0.15s",
                 }}>
-                  {m === "dag" ? "Pipeline DAG" : "Context window"}
+                  {m === "dag"
+                    ? (activeRun.task_type === "lit-review" ? "Overview" : "Pipeline DAG")
+                    : m === "context"
+                      ? (activeRun.task_type === "lit-review" ? "Compute" : "Context window")
+                      : `Subtasks${activeRun.subtask_count != null ? ` (${activeRun.subtask_count})` : ""}`}
                 </button>
               ))}
             </div>
 
             <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
               {viewMode === "dag" ? (
-                <>
-                  <DagCanvas run={activeRun} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
-                  {selectedNode && (
-                    <NodeInspector node={selectedNode} run={activeRun} onClose={() => setSelectedNode(null)} />
-                  )}
-                </>
+                activeRun.task_type === "lit-review" ? (
+                  <LitReviewDag run={activeRun} />
+                ) : (
+                  <>
+                    <DagCanvas run={activeRun} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
+                    {selectedNode && (
+                      <NodeInspector node={selectedNode} run={activeRun} onClose={() => setSelectedNode(null)} />
+                    )}
+                  </>
+                )
+              ) : viewMode === "subtasks" ? (
+                <SubtasksPane run={activeRun} onSelectRun={handleSelectRun} />
               ) : (
-                <ContextTreemap run={activeRun} />
+                activeRun.task_type === "lit-review"
+                  ? <LitReviewCompute run={activeRun} />
+                  : <ContextTreemap   run={activeRun} />
               )}
             </div>
           </>

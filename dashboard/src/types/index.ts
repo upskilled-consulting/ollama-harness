@@ -8,10 +8,21 @@ export interface WiggumDim {
   [key: string]: number | undefined;
 }
 
+export interface ToolCallUrl {
+  title: string;
+  href:  string;
+  body?: string;
+}
+
 export interface ToolCall {
-  name:          string;
-  query?:        string;
-  result_chars?: number;
+  name:            string;
+  query?:          string;
+  result_chars?:   number;
+  urls?:           ToolCallUrl[];
+  result_preview?: string;
+  error?:          string;
+  cluster_idx?:    number;
+  cluster_name?:   string;
 }
 
 export interface WiggumEvalEntry {
@@ -80,6 +91,7 @@ export interface RunRecord {
   tac_hours?:             number;
   orchestrated?:          boolean;
   subtask_count?:         number;
+  parent_run_id?:         string;
 }
 
 export interface Kpi {
@@ -179,6 +191,7 @@ export interface LiveRun {
   current_stage: string;
   stages_seen:   string[];
   elapsed_s:     number;
+  item_id?:      string;
 }
 
 export interface FeedbackRecord {
@@ -427,4 +440,67 @@ export interface MemoryGraph {
   nodes:    MemoryGraphNode[];
   clusters: MemoryGraphCluster[];
   error?:   string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Autoresearch panel
+// ---------------------------------------------------------------------------
+
+export interface AutoresearchRecord {
+  experiment:           number;
+  timestamp:            string;
+  status:               "baseline" | "keep" | "discard";
+  score:                number;
+  baseline:             number;
+  delta:                number;
+  description:          string;
+  tasks:                string[];
+  consecutive_discards: number;
+  kimi_fired:           boolean;
+  synth:                string;
+  synth_count:          string;
+  synth_prose:          string;
+  thinking:             string;
+}
+
+export interface AutoresearchSummary {
+  total_experiments:        number;
+  keeps:                    number;
+  discards:                 number;
+  keep_rate:                number;
+  baseline_score:           number | null;
+  best_score:               number | null;
+  latest_score:             number | null;
+  latest_status:            string | null;
+  avg_delta:                number;
+  kimi_fires:               number;
+  max_consecutive_discards: number;
+}
+
+export interface AutoresearchData {
+  records: AutoresearchRecord[];
+  summary: AutoresearchSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Research History
+// ---------------------------------------------------------------------------
+
+export interface ResearchHistoryItem {
+  source:     "search" | "research" | "browser";
+  id:         string;
+  title:      string;
+  snippet:    string;
+  timestamp:  string;
+  similarity: number;
+  url:        string | null;
+  in_memory:  boolean;
+  memory_id:  number | null;
+}
+
+export interface IngestResult {
+  url:       string;
+  status:    "ok" | "duplicate" | "fetch_error" | "compress_error";
+  memory_id?: number | null;
+  error?:    string;
 }

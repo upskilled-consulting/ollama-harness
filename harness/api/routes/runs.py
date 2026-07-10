@@ -9,13 +9,20 @@ from collections import Counter, defaultdict
 
 from fastapi import APIRouter, HTTPException
 
-from harness.config import LEGACY_RUNS_FILE, LIVE_RUN_FILE, RUNS_FILE
+from harness.config import LEGACY_RUNS_FILE, LIVE_RUN_FILE, LIVE_TASK_FILE, RUNS_FILE
 
 router = APIRouter(tags=["runs"])
 
 _MAX_RECENT = 100
 
 _STRIP_FROM_LIST = {"final_content"}
+
+_VALID_FINALS = {None, "PASS", "FAIL", "ERROR"}
+
+
+def _is_stub(r: dict) -> bool:
+    """True for internal-phase records (research phases, etc.) that have no synthesis output."""
+    return r.get("final") not in _VALID_FINALS
 
 # ── Full-list cache (used by paginated endpoint) ───────────────────────────────
 
@@ -50,6 +57,8 @@ def _load_all_runs_uncapped() -> list[dict]:
                 r["run_id"] = rid
             if rid and rid not in seen:
                 seen.add(rid)
+                if _is_stub(r):
+                    continue
                 r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
                 records.append(r)
 
@@ -85,6 +94,8 @@ def _load_runs(n: int = _MAX_RECENT) -> list[dict]:
                 r["run_id"] = rid
             if rid and rid not in seen:
                 seen.add(rid)
+                if _is_stub(r):
+                    continue
                 r = {k: v for k, v in r.items() if k not in _STRIP_FROM_LIST}
                 records.append(r)
 
@@ -97,9 +108,16 @@ async def get_live_run():
     if not LIVE_RUN_FILE.exists():
         return None
     try:
-        return json.loads(LIVE_RUN_FILE.read_text(encoding="utf-8"))
+        snapshot = json.loads(LIVE_RUN_FILE.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if LIVE_TASK_FILE.exists():
+        try:
+            task_info = json.loads(LIVE_TASK_FILE.read_text(encoding="utf-8"))
+            snapshot["item_id"] = task_info.get("item_id")
+        except Exception:
+            pass
+    return snapshot
 
 
 @router.get("/runs")
@@ -155,6 +173,35 @@ def _find_run_by_id(run_id: str) -> dict | None:
             if r.get("run_id") == run_id:
                 return r
     return None
+
+
+@router.get("/runs/{run_id}/children")
+async def get_run_children(run_id: str):
+    """Return all runs whose parent_run_id matches run_id (subtask child runs)."""
+    def _find_children() -> list[dict]:
+        seen: set[str] = set()
+        results: list[dict] = []
+        for path in (RUNS_FILE, LEGACY_RUNS_FILE):
+            if not path.exists():
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("parent_run_id") == run_id:
+                    rid = r.get("run_id", "")
+                    if rid and rid not in seen:
+                        seen.add(rid)
+                        results.append({k: v for k, v in r.items() if k not in _STRIP_FROM_LIST})
+        results.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+        return results
+
+    return await asyncio.to_thread(_find_children)
 
 
 @router.get("/runs/{run_id}/content")

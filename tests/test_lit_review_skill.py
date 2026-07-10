@@ -192,7 +192,7 @@ class TestAnnotateModelThreading:
     def test_annotate_uses_producer_model_not_hardcoded(self, tmp_path, monkeypatch):
         calls = []
 
-        def _fake_run_annotate(paper_context, producer_model, max_retries=3, _trace=None):
+        def _fake_run_annotate(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             calls.append(producer_model)
             return "**Topic**: test\n**Motivation**: m\n**Contribution**: c\n**Key Detail / Nuance**: d\n**Evidence / Second Contribution**: e\n**Weaker Result / Limitation**: w\n**Narrow Impact**: ni\n**Broad Impact**: bi"
 
@@ -235,7 +235,7 @@ class TestStepAnnotateParallelism:
         import harness.skills as _skills_pkg
         monkeypatch.setattr(
             _skills_pkg, "run_annotate_standalone",
-            lambda paper_context, producer_model, max_retries=3, _trace=None: _VALID_ANNOTATION,
+            lambda paper_context, producer_model, max_retries=3, domain="cs", _trace=None: _VALID_ANNOTATION,
         )
         from harness.skills.lit_review_skill import step_annotate
         results = step_annotate(
@@ -260,7 +260,7 @@ class TestStepAnnotateParallelism:
         import harness.skills as _skills_pkg
         monkeypatch.setattr(
             _skills_pkg, "run_annotate_standalone",
-            lambda paper_context, producer_model, max_retries=3, _trace=None: _VALID_ANNOTATION,
+            lambda paper_context, producer_model, max_retries=3, domain="cs", _trace=None: _VALID_ANNOTATION,
         )
         from harness.skills.lit_review_skill import step_annotate
         step_annotate(_papers(2), "m", "e", use_wiggum=False, checkpoint_dir=tmp_path, parallel=7)
@@ -273,7 +273,7 @@ class TestStepAnnotateParallelism:
     def test_output_order_matches_input_order(self, tmp_path, monkeypatch):
         import re
 
-        def staggered(paper_context, producer_model, max_retries=3, _trace=None):
+        def staggered(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             idx = int(re.search(r"Paper (\d+)", paper_context).group(1))
             time.sleep((3 - idx) * 0.03)   # Paper 0 finishes last
             return _VALID_ANNOTATION
@@ -295,7 +295,7 @@ class TestStepAnnotateParallelism:
         intervals: list[tuple[float, float]] = []
         lock = threading.Lock()
 
-        def slow_annotate(paper_context, producer_model, max_retries=3, _trace=None):
+        def slow_annotate(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             t0 = time.monotonic()
             time.sleep(SLEEP)
             t1 = time.monotonic()
@@ -324,7 +324,7 @@ class TestStepAnnotateParallelism:
     # ------------------------------------------------------------------
 
     def test_one_failure_does_not_abort_batch(self, tmp_path, monkeypatch):
-        def flaky(paper_context, producer_model, max_retries=3, _trace=None):
+        def flaky(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             if "Paper 1" in paper_context:
                 raise RuntimeError("simulated LLM failure")
             return _VALID_ANNOTATION
@@ -347,7 +347,7 @@ class TestStepAnnotateParallelism:
     def test_checkpoint_skips_llm_call(self, tmp_path, monkeypatch):
         calls: list[str] = []
 
-        def counting(paper_context, producer_model, max_retries=3, _trace=None):
+        def counting(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             calls.append(paper_context)
             return _VALID_ANNOTATION
 
@@ -377,7 +377,7 @@ class TestStepAnnotateParallelism:
     # ------------------------------------------------------------------
 
     def test_token_rollup_sums_sub_traces(self, tmp_path, monkeypatch):
-        def token_emitting(paper_context, producer_model, max_retries=3, _trace=None):
+        def token_emitting(paper_context, producer_model, max_retries=3, domain="cs", _trace=None):
             if _trace is not None:
                 _trace.data["input_tokens"]  += 100
                 _trace.data["output_tokens"] += 50

@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from harness.config import TASK_LOGS_DIR
+from harness.config import LIVE_TASK_FILE, TASK_LOGS_DIR
 from harness.schema import QueueItem, TaskRequest
 
 router = APIRouter(tags=["tasks"])
@@ -158,6 +158,10 @@ async def _run_task(item: QueueItem, request: TaskRequest) -> None:
         log_path = _open_task_log(item.item_id)
         _running_threads[item.item_id] = threading.current_thread().ident  # type: ignore[assignment]
         try:
+            LIVE_TASK_FILE.write_text(_json.dumps({"item_id": item.item_id}), encoding="utf-8")
+        except OSError:
+            pass
+        try:
             from harness.agent import run as _agent_run
             gate = _make_plan_gate(item.item_id) if request.use_plan else None
             try:
@@ -173,6 +177,7 @@ async def _run_task(item: QueueItem, request: TaskRequest) -> None:
         finally:
             _running_threads.pop(item.item_id, None)
             _close_task_log(log_path)
+            LIVE_TASK_FILE.unlink(missing_ok=True)
 
     try:
         await asyncio.to_thread(_execute)

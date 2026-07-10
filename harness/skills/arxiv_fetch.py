@@ -128,8 +128,14 @@ def fetch(
     Fetch papers from arXiv and return list of row dicts.
     Applies date filters and deduplication against existing_ids.
     """
-    encoded = urllib.parse.quote(query)
-    search_field = field if field in ("all", "ti", "abs", "cat", "au") else "all"
+    # "raw" field: caller provides the full search_query expression (e.g. category+keyword).
+    # All other field values prepend "{field}:{query}" as before.
+    if field == "raw":
+        encoded_query = urllib.parse.quote(query)
+        search_field  = None
+    else:
+        encoded_query = urllib.parse.quote(query)
+        search_field  = field if field in ("all", "ti", "abs", "cat", "au") else "all"
 
     sort_clause = "&sortBy=submittedDate&sortOrder=descending" if sort_by else ""
 
@@ -140,9 +146,10 @@ def fetch(
 
     for start in range(0, max_results, batch_size):
         this_batch = min(batch_size, max_results - start)
+        sq = encoded_query if search_field is None else f"{search_field}:{encoded_query}"
         url = (
             f"{BASE_URL}"
-            f"search_query={search_field}:{encoded}"
+            f"search_query={sq}"
             f"&start={start}"
             f"&max_results={this_batch}"
             f"{sort_clause}"
@@ -154,7 +161,7 @@ def fetch(
         _status = getattr(feed, "status", 200)
         if _status == 429:
             _gave_up = True
-            for _wait in (30, 60, 120):
+            for _wait in (120, 300, 600):
                 print(f"429 rate-limited — waiting {_wait}s", flush=True)
                 time.sleep(_wait)
                 feed = feedparser.parse(url)
