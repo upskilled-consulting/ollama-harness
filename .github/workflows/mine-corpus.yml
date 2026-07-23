@@ -1,0 +1,52 @@
+name: mine-corpus
+
+# Continuous corpus feeder (GPU-free). Runs on GitHub-hosted runners.
+#   - hourly: general commit mining (data/commits.db) -- cheap shallow clones
+#   - daily:  vulnerability mining (data/vulns.db) -- clones the advisory DB
+# DBs are committed back with [skip ci] so the rollout runner can pull them.
+
+on:
+  schedule:
+    - cron: '0 * * * *'     # hourly: general
+    - cron: '30 2 * * *'    # daily 02:30 UTC: vulnerabilities
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mine-corpus
+  cancel-in-progress: false
+
+jobs:
+  mine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: General commit mining (hourly)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/mine_to_sqlite.py \
+            --db data/commits.db --repos data/mine_repos.txt --since "14 days ago"
+
+      - name: Vulnerability mining (daily / manual)
+        if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone --quiet --depth 1 https://github.com/github/advisory-database /tmp/advdb
+          python scripts/mine_vulns_to_sqlite.py \
+            --adv-dir /tmp/advdb/advisories/github-reviewed --db data/vulns.db --limit 300
+
+      - name: Commit corpus
+        run: |
+          git config user.name  "corpus-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/commits.db data/vulns.db 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "corpus: $(date -u +%FT%TZ) [skip ci]"
+          git push

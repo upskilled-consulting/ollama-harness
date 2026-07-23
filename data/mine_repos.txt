@@ -1,0 +1,17 @@
+# Target repos for the hourly commit-mining feeder (one owner/repo per line).
+# Agentic-harness-engineering + TS-heavy repos -- the champion's home distribution.
+continuedev/continue
+cline/cline
+microsoft/playwright
+puppeteer/puppeteer
+vllm-project/vllm
+ggml-org/llama.cpp
+browserbase/stagehand
+RooCodeInc/Roo-Code
+
+# Cybersecurity (defensive; Python/JS only -- Go/C tools yield no code_ext matches).
+# Adds security-domain localization examples, NOT CWE->vuln-file data (separate pipeline).
+semgrep/semgrep            # SAST engine (Python; core is OCaml, so fewer .py hits)
+PyCQA/bandit               # Python security linter
+pypa/pip-audit             # Python dependency vulnerability scanner
+pyupio/safety              # Python dependency vulnerability scanner
