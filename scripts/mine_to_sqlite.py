@@ -72,8 +72,10 @@ def main() -> None:
     ap.add_argument("--workdir", default=os.path.join(tempfile.gettempdir(), "mine_sqlite"))
     args = ap.parse_args()
 
-    repos = [ln.strip() for ln in open(args.repos, encoding="utf-8")
-             if ln.strip() and not ln.startswith("#")]
+    # strip INLINE comments too (`owner/repo  # note`), not just full-line comments --
+    # otherwise the note becomes part of the repo name and every clone fails.
+    repos = [r for ln in open(args.repos, encoding="utf-8")
+             if (r := ln.split("#", 1)[0].strip())]
     if not repos:
         raise SystemExit(f"no repos in {args.repos}")
 
