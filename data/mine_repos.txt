@@ -1,16 +1,55 @@
-# Target repos for the hourly commit-mining feeder (one owner/repo per line).
-# Agentic-harness-engineering + TS-heavy repos -- the champion's home distribution.
-continuedev/continue
-cline/cline
-microsoft/playwright
-puppeteer/puppeteer
+# Target repos for the commit-mining feeder (one owner/repo per line).
+# The explorer is TypeScript-distilled and the held-out EVAL is TS, so the training
+# corpus is TS-heavy. The 4 eval repos (continuedev/continue, cline/cline,
+# microsoft/playwright, puppeteer/puppeteer) are DELIBERATELY EXCLUDED here --
+# mining them leaks the held-out test set into training (they were contaminating
+# 107/388 of commits.db). Eval questions are mined separately, not by this feeder.
+
+# --- Agentic-harness / browser-automation TS (in-distribution, NOT held out) ---
+RooCodeInc/Roo-Code
+browserbase/stagehand
+
+# --- High-hygiene TS libraries (ranked by find_rl_repos: minable x TS-frac x permissive) ---
+colinhacks/zod
+unjs/h3
+TanStack/router
+vueuse/vueuse
+vitest-dev/vitest
+sindresorhus/ky
+honojs/hono
+chakra-ui/chakra-ui
+TanStack/query
+mswjs/msw
+remix-run/react-router
+pmndrs/zustand
+drizzle-team/drizzle-orm
+
+# --- Cross-domain: our own infra stack (ML/inference; Python/C++) for robustness ---
 vllm-project/vllm
 ggml-org/llama.cpp
-browserbase/stagehand
-RooCodeInc/Roo-Code
 
-# Cybersecurity (defensive; Python/JS only -- Go/C tools yield no code_ext matches).
-# Adds security-domain localization examples, NOT CWE->vuln-file data (separate pipeline).
+# --- Diverse Python (terminator Python coverage) -- commits.db was 99% TS gold + the only
+# Python was vllm/llama.cpp (2 repos), so the terminator went degenerate-CONTINUE on Python.
+# These are permissive (MIT/BSD/Apache), high-commit, span web/data/ML/CLI/tooling for
+# diversity. Held-out EVAL Python repos are EXCLUDED (encode/httpx, pallets/flask,
+# pytest-dev/pytest, tox-dev/tox, encode/uvicorn) -- mining them would leak the test set.
+fastapi/fastapi            # async web framework (MIT)
+pydantic/pydantic          # data validation core (MIT)
+pallets/click              # CLI framework (BSD; flask is eval, click is a separate repo)
+sqlalchemy/sqlalchemy      # ORM (MIT)
+Textualize/rich            # terminal rendering (MIT)
+Textualize/textual         # TUI framework (MIT)
+python-poetry/poetry       # packaging / CLI (MIT)
+scrapy/scrapy              # web scraping (BSD)
+aio-libs/aiohttp           # async HTTP (Apache-2.0)
+django/django              # web framework (BSD)
+pandas-dev/pandas          # dataframes (BSD)
+langchain-ai/langchain     # LLM framework, Python (MIT; distinct from the TS langchainjs)
+psf/black                  # code formatter (MIT)
+huggingface/datasets       # ML datasets (Apache-2.0)
+celery/celery              # distributed task queue (BSD)
+
+# --- Cybersecurity localization (defensive; Python/JS) -- security-domain examples ---
 semgrep/semgrep            # SAST engine (Python; core is OCaml, so fewer .py hits)
 PyCQA/bandit               # Python security linter
 pypa/pip-audit             # Python dependency vulnerability scanner
