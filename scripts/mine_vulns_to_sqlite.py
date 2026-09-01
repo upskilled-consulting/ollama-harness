@@ -72,8 +72,14 @@ CWE_DESC = {
     "CWE-668": "Exposure of Resource to Wrong Sphere: the software exposes a resource to a control sphere not intended to have access to it.",
 }
 
+# Test-file conventions differ by language and this was written for JS/Python only:
+# Go's `bits_test.go` and Java's `FooTest.java` / `src/test/java/` sailed through and
+# landed in gold. Caught by an end-to-end run on a real Go advisory, not by inspection.
 _TEST_RE = re.compile(r"(^|/)(tests?|__tests__|spec|specs|e2e|fixtures?|examples?|docs?|"
-                      r"benchmarks?)(/|$)|\.(test|spec)\.|(^|/)conftest\.py$", re.I)
+                      r"benchmarks?|testdata)(/|$)|\.(test|spec)\.|(^|/)conftest\.py$|"
+                      r"_test\.(go|py|rs)$|(^|/)test_[^/]+\.py$|"
+                      r"(Test|Tests|IT|TestCase)\.(java|kt|scala)$|"
+                      r"(^|/)src/test/", re.I)
 _COMMIT_URL = re.compile(r"github\.com/([^/]+/[^/]+)/commit/([0-9a-f]{7,40})", re.I)
 
 SCHEMA = """
@@ -117,8 +123,21 @@ def gh_get(url: str) -> dict | None:
     return None
 
 
+def _holdout() -> tuple[set, set]:
+    """VLoc Bench advisories/repos we must never mine -- otherwise we train on the test set.
+    Repo-level too: a different advisory in the same repo still leaks structure and style."""
+    p = Path(__file__).resolve().parent.parent / "data" / "vloc_holdout.json"
+    if not p.exists():
+        print("[vulns] WARNING: no data/vloc_holdout.json -- mining WITHOUT test-set exclusion")
+        return set(), set()
+    d = json.loads(p.read_text(encoding="utf-8"))
+    return set(d.get("ghsa") or []), {r.lower() for r in (d.get("repos") or [])}
+
+
 def advisories(adv_dir: str):
     """Yield (ghsa_id, cwe_id, repo, sha) for GHSA records with a CWE and a fix commit."""
+    hold_g, hold_r = _holdout()
+    skipped = 0
     for path in Path(adv_dir).rglob("GHSA-*.json"):
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
@@ -130,8 +149,13 @@ def advisories(adv_dir: str):
         for ref in d.get("references") or []:
             m = _COMMIT_URL.search(ref.get("url", ""))
             if m:
+                if d.get("id") in hold_g or m.group(1).lower() in hold_r:
+                    skipped += 1
+                    break                                    # VLoc holdout -- never mine
                 yield d.get("id"), cwes[0], m.group(1), m.group(2)
                 break                                        # one fix commit per advisory
+    if skipped:
+        print(f"[vulns] skipped {skipped} advisories in the VLoc holdout", flush=True)
 
 
 def gold_from_commit(commit: dict) -> tuple[dict, str, str]:
