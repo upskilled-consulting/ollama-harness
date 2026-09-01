@@ -42,11 +42,40 @@ jobs:
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
           inputs: .
-          # PYSEC-2026-311: chromadb server-endpoint RCE (trust_remote_code).
-          # Harness uses embedded PersistentClient/EphemeralClient only — never
-          # runs the chromadb HTTP server — so the vulnerable path is unreachable.
-          # No fixed release exists yet; revisit when one ships.
-          ignore-vulns: PYSEC-2026-311
+          # chromadb: four findings, all against the SERVER, none reachable here.
+          #
+          #   PYSEC-2026-311                          server-endpoint RCE (trust_remote_code)
+          #   CVE-2026-45833  GHSA-36p7-vc44-83pf     code injection via trust_remote_code on
+          #                                           /api/v2/tenants/../collections/{id},
+          #                                           needs UPDATE_COLLECTION permission
+          #   CVE-2026-45830  GHSA-2wm9-hf6c-p5cr     missing authorization validation: any
+          #                                           AUTHENTICATED user reaches any tenant's
+          #                                           collection
+          #   CVE-2026-45831  GHSA-xph7-9rjv-w5fr     SimpleRBACAuthorizationProvider checks
+          #                                           the permission but not which tenant,
+          #                                           database or collection it applies to
+          #
+          # Every one of them presupposes a running chromadb HTTP server with authentication
+          # and more than one tenant. This harness runs chromadb IN PROCESS: seven call sites,
+          # all PersistentClient(path=...) or EphemeralClient() -- memory.py, chunker.py,
+          # search_cache.py, beige_book_tool.py, onboarding_skill.py. There is no HttpClient,
+          # no chroma_server configuration, and no auth provider anywhere in the tree, so
+          # there is no endpoint to authenticate against and no tenant to cross.
+          #
+          # NOT dropped as a dependency: memory retrieval and the chunker's relevance path
+          # both use it, and sentence-transformers arrives transitively through it. Removing
+          # it to silence an unreachable finding would trade a real capability for a clean
+          # report.
+          #
+          # Confirmed against OSV on 2026-09-01: no fixed release exists for any of the
+          # three. REVISIT WHEN ONE SHIPS -- this is a reachability argument, not a claim the
+          # bugs are not real, and it stops holding the moment anything here serves chromadb
+          # over HTTP.
+          ignore-vulns: |
+            PYSEC-2026-311
+            CVE-2026-45830
+            CVE-2026-45831
+            CVE-2026-45833
 
       - name: Test with coverage
         run: |
