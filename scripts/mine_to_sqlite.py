@@ -45,15 +45,31 @@ def sh(*args: str) -> subprocess.CompletedProcess:
                           errors="replace")
 
 
-def clone_or_update(url: str, dest: str, since: str) -> bool:
-    """Shallow + blobless clone of just the recent window -- cheap enough to run hourly."""
+# git says this, on stderr and with a non-zero exit, when --shallow-since selects NO commits.
+# It is not a failure: it is a repository with nothing in the window. Matched as a substring
+# because the trailing number is a transport code that varies.
+_NO_COMMITS_IN_WINDOW = "error processing shallow info"
+
+
+def clone_or_update(url: str, dest: str, since: str) -> tuple[bool, str]:
+    """Shallow + blobless clone of just the recent window -- cheap enough to run hourly.
+
+    RETURNS GIT'S STDERR, because the caller cannot otherwise tell two very different things
+    apart. A repo with no commits in the window and a repo that has been renamed, deleted or
+    gone auth-gated both exited non-zero here, and both printed one generic `clone/fetch
+    failed`. The first is noise -- Textualize/rich has not been touched since June and there is
+    nothing to mine. The second is a hole in the corpus that nobody is being told about.
+
+    Five repos printed that line every run for at least two nights and the distinction was not
+    recoverable from the log, because this function dropped `r.stderr` on the floor.
+    """
     if os.path.isdir(os.path.join(dest, ".git")):
         r = sh("git", "-C", dest, "fetch", "--quiet", f"--shallow-since={since}", "origin")
     else:
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
         r = sh("git", "clone", "--quiet", "--filter=blob:none",
                f"--shallow-since={since}", url, dest)
-    return r.returncode == 0
+    return r.returncode == 0, (r.stderr or "").strip()
 
 
 def repo_url(name: str) -> str:
@@ -88,8 +104,16 @@ def main() -> None:
     for name in repos:
         owner_name = name.replace("/", "_").replace(".git", "")
         dest = os.path.join(args.workdir, owner_name)
-        if not clone_or_update(repo_url(name), dest, args.since):
-            print(f"[skip] {name}: clone/fetch failed", flush=True)
+        ok, err = clone_or_update(repo_url(name), dest, args.since)
+        if not ok:
+            # QUIET IS NOT BROKEN. Distinguish them in the log so a real corpus hole -- a
+            # renamed or deleted repo -- is not buried under repos that simply have not
+            # committed lately, and so the daily run stops reading as five recurring errors.
+            if _NO_COMMITS_IN_WINDOW in err:
+                print(f"[quiet] {name}: no commits since {args.since}", flush=True)
+            else:
+                print(f"[skip] {name}: clone/fetch failed: "
+                      f"{err.splitlines()[-1] if err else 'no stderr from git'}", flush=True)
             continue
 
         M.GIT_CWD = dest                                     # target this clone
