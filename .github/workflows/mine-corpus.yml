@@ -1,13 +1,15 @@
 name: mine-corpus
 
 # Continuous corpus feeder (GPU-free). Runs on GitHub-hosted runners.
-#   - hourly: general commit mining (data/commits.db) -- cheap shallow clones
-#   - daily:  vulnerability mining (data/vulns.db) -- clones the advisory DB
+#   - daily: general commit mining (data/commits.db) -- cheap shallow clones
+#   - daily: vulnerability mining (data/vulns.db) -- clones the advisory DB
+# Daily, not hourly: the miner uses a 14-day --since window, so hourly just re-mines
+# the same fortnight (sha-dedup'd -> ~no new rows) while burning CI minutes + git noise.
 # DBs are committed back with [skip ci] so the rollout runner can pull them.
 
 on:
   schedule:
-    - cron: '0 * * * *'     # hourly: general
+    - cron: '0 3 * * *'     # daily 03:00 UTC: general commit mining
     - cron: '30 2 * * *'    # daily 02:30 UTC: vulnerabilities
   workflow_dispatch:
 
@@ -27,7 +29,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: General commit mining (hourly)
+      - name: General commit mining
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -41,12 +43,37 @@ jobs:
         run: |
           git clone --quiet --depth 1 https://github.com/github/advisory-database /tmp/advdb
           python scripts/mine_vulns_to_sqlite.py \
-            --adv-dir /tmp/advdb/advisories/github-reviewed --db data/vulns.db --limit 300
+            --adv-dir /tmp/advdb/advisories/github-reviewed --db data/vulns.db \
+            --limit 800 --require-holdout
 
       - name: Commit corpus
         run: |
           git config user.name  "corpus-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f data/commits.db data/vulns.db 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "corpus: $(date -u +%FT%TZ) [skip ci]"
-          git push
+          if git diff --cached --quiet; then
+            echo "corpus unchanged; nothing to commit"
+            exit 0
+          fi
+          git commit -m "corpus: $(date -u +%FT%TZ) [skip ci]"
+          # A bare push fails outright when anything landed on main first -- observed
+          # 2026-09-10, two runs 16 minutes apart, the second rejected with "fetch first"
+          # and the job red with the mined rows still only in the runner's working tree.
+          # The DBs are binary, so a rebase cannot textually conflict: the commit is just
+          # replayed onto the new tip, and ours wins because it was mined from a superset
+          # of what the earlier run saw.
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "pushed on attempt $i"
+              exit 0
+            fi
+            echo "push rejected (attempt $i) -- rebasing onto origin/main"
+            if ! git pull --rebase -X ours origin main; then
+              git rebase --abort || true
+              echo "rebase failed; leaving main untouched"
+              exit 1
+            fi
+            sleep $(( i * 5 ))
+          done
+          echo "could not push after 5 attempts"
+          exit 1

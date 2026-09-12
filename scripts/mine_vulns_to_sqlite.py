@@ -98,6 +98,22 @@ CREATE TABLE IF NOT EXISTS vulns (
 );
 CREATE INDEX IF NOT EXISTS idx_v_rolled ON vulns(rolled_out);
 CREATE INDEX IF NOT EXISTS idx_v_cwe    ON vulns(cwe);
+
+-- Advisories we resolved and then REJECTED. Without this the miner has no memory of a failed
+-- attempt: `seen` holds only rows that made it into vulns, so an advisory whose fix commit is
+-- too wide (or has no parent, or 404s) is re-fetched on every single run, forever, and it does
+-- it at the HEAD of a stable rglob order. That is how a daily job burned its entire --limit
+-- budget re-confirming the same rejections and reported `resolved 300, +0 new` for five days
+-- while 680 advisories sat pending behind it. A rejection is a result and has to be durable.
+CREATE TABLE IF NOT EXISTS mine_attempts (
+    fix_sha   TEXT PRIMARY KEY,
+    ghsa      TEXT,
+    repo      TEXT,
+    reason    TEXT NOT NULL,
+    n_files   INTEGER,
+    tried_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_a_reason ON mine_attempts(reason);
 """
 
 
@@ -123,20 +139,30 @@ def gh_get(url: str) -> dict | None:
     return None
 
 
-def _holdout() -> tuple[set, set]:
+def _holdout(require: bool = False) -> tuple[set, set]:
     """VLoc Bench advisories/repos we must never mine -- otherwise we train on the test set.
-    Repo-level too: a different advisory in the same repo still leaks structure and style."""
+    Repo-level too: a different advisory in the same repo still leaks structure and style.
+
+    `require` turns the warning into an abort. The file was untracked for months, so every CI
+    run checked out a tree without it, printed one line into a log nobody reads, and mined
+    unfiltered -- the exact contamination the guard exists to prevent, announced as a warning
+    and therefore invisible. CI passes --require-holdout: a corpus job with no guard should go
+    red, not quietly produce rows that have to be purged later.
+    """
     p = Path(__file__).resolve().parent.parent / "data" / "vloc_holdout.json"
     if not p.exists():
+        if require:
+            raise SystemExit(f"[vulns] FATAL: no {p} and --require-holdout was given. "
+                             "Mining now would import VLoc test-set rows.")
         print("[vulns] WARNING: no data/vloc_holdout.json -- mining WITHOUT test-set exclusion")
         return set(), set()
     d = json.loads(p.read_text(encoding="utf-8"))
     return set(d.get("ghsa") or []), {r.lower() for r in (d.get("repos") or [])}
 
 
-def advisories(adv_dir: str):
+def advisories(adv_dir: str, require_holdout: bool = False):
     """Yield (ghsa_id, cwe_id, repo, sha) for GHSA records with a CWE and a fix commit."""
-    hold_g, hold_r = _holdout()
+    hold_g, hold_r = _holdout(require_holdout)
     skipped = 0
     for path in Path(adv_dir).rglob("GHSA-*.json"):
         try:
@@ -183,6 +209,11 @@ def main() -> None:
     ap.add_argument("--db", default="data/vulns.db")
     ap.add_argument("--limit", type=int, default=200, help="max NEW advisories to resolve/run")
     ap.add_argument("--max-files", type=int, default=5)
+    ap.add_argument("--require-holdout", action="store_true",
+                    help="abort if data/vloc_holdout.json is missing (CI uses this)")
+    ap.add_argument("--retry-rejected", action="store_true",
+                    help="also re-resolve advisories rejected on an earlier run (use after "
+                         "changing --max-files or the gold filter, which changes the verdict)")
     args = ap.parse_args()
 
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
@@ -190,21 +221,42 @@ def main() -> None:
     db.executescript(SCHEMA)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     seen = {r[0] for r in db.execute("SELECT fix_sha FROM vulns").fetchall()}
+    tried = set() if args.retry_rejected else {
+        r[0] for r in db.execute("SELECT fix_sha FROM mine_attempts").fetchall()}
+
+    def reject(sha_: str, ghsa_: str, repo_: str, why: str, n: int | None = None) -> None:
+        """Record a rejection so the next run spends its budget somewhere new."""
+        db.execute("INSERT OR REPLACE INTO mine_attempts "
+                   "(fix_sha, ghsa, repo, reason, n_files, tried_at) VALUES (?,?,?,?,?,?)",
+                   (sha_, ghsa_, repo_, why, n, now))
+        db.commit()
+        rejected[why] = rejected.get(why, 0) + 1
 
     added = resolved = 0
-    for ghsa, cwe, repo, sha in advisories(args.adv_dir):
+    rejected: dict[str, int] = {}
+    for ghsa, cwe, repo, sha in advisories(args.adv_dir, args.require_holdout):
         if resolved >= args.limit:
             break
         if any(s.startswith(sha) or sha.startswith(s) for s in seen):
             continue                                         # already have this fix
+        if any(s.startswith(sha) or sha.startswith(s) for s in tried):
+            continue                                         # already resolved and rejected
         commit = gh_get(f"https://api.github.com/repos/{repo}/commits/{sha}")
         resolved += 1
         if not commit:
+            reject(sha, ghsa, repo, "unreachable")
             continue
         files, parent, date = gold_from_commit(commit)
-        if not parent or not (1 <= len(files) <= args.max_files):
-            continue
         full_sha = commit.get("sha", sha)
+        if not parent:
+            reject(full_sha, ghsa, repo, "no_parent")
+            continue
+        if not files:
+            reject(full_sha, ghsa, repo, "no_code_files", 0)
+            continue
+        if len(files) > args.max_files:
+            reject(full_sha, ghsa, repo, "too_many_files", len(files))
+            continue
         cur = db.execute(
             "INSERT OR IGNORE INTO vulns (fix_sha, repo, parent, ghsa, cwe, cwe_desc, "
             "gold_files, gold_ranges, commit_date, mined_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -219,7 +271,20 @@ def main() -> None:
 
     n = db.execute("SELECT COUNT(*) FROM vulns").fetchone()[0]
     pend = db.execute("SELECT COUNT(*) FROM vulns WHERE rolled_out=0").fetchone()[0]
-    print(f"\n[vulns] resolved {resolved} advisories, +{added} new | {n} total | {pend} pending", flush=True)
+    skipped_known = db.execute("SELECT COUNT(*) FROM mine_attempts").fetchone()[0]
+    print(f"\n[vulns] resolved {resolved} advisories, +{added} new | {n} total | {pend} pending",
+          flush=True)
+    # A zero that is not broken down is unreadable: `+0 new` looked for five days like the
+    # advisory feed had gone quiet, when in fact every candidate was being rejected for a
+    # knowable reason. Print the reasons, always, so the next zero explains itself.
+    if rejected:
+        detail = "  ".join(f"{k}={v}" for k, v in sorted(rejected.items()))
+        print(f"[vulns] rejected this run: {detail}", flush=True)
+    print(f"[vulns] {skipped_known} advisories permanently rejected and no longer re-fetched "
+          f"(--retry-rejected to reconsider)", flush=True)
+    if resolved >= args.limit:
+        print(f"[vulns] hit --limit {args.limit}; more candidates remain -- re-run to continue",
+              flush=True)
     db.close()
 
 
