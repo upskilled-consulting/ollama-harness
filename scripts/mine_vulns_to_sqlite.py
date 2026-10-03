@@ -28,7 +28,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from mine_explore_eval import CODE_EXT, HUNK  # noqa: E402  (reuse diff parser)
+from mine_explore_eval import HUNK, is_gold_code_file  # noqa: E402  (reuse diff parser)
 
 # Generic CWE category descriptions (Antares-style: no advisory text, just the class).
 # Covers the most common web/library CWEs; unknown ids fall back to the bare id + name.
@@ -114,7 +114,23 @@ CREATE TABLE IF NOT EXISTS mine_attempts (
     tried_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_a_reason ON mine_attempts(reason);
+
+-- GOLD_FILTER_VERSION backfill bookkeeping (see backfill()). A row/advisory is listed here once it
+-- has been re-checked under the current filter, so the hourly backfill is resumable and idles
+-- when done. outcome: regold: unchanged|added|unreachable ; retry: mined|rejected:<why>|...
+CREATE TABLE IF NOT EXISTS gold_backfill (
+    kind      TEXT NOT NULL,          -- 'regold' (existing vulns row) | 'retry' (no_code_files rejection)
+    fix_sha   TEXT NOT NULL,
+    version   INTEGER NOT NULL,
+    outcome   TEXT,
+    done_at   TEXT,
+    PRIMARY KEY (kind, fix_sha, version)
+);
 """
+
+# Bump when the set of files gold_from_commit keeps changes. Rows mined (and advisories rejected)
+# under an older filter are then re-checked by backfill(). v2 = 2026-10-03 CODE_EXT widening.
+GOLD_FILTER_VERSION = 2
 
 
 def gh_get(url: str) -> dict | None:
@@ -189,7 +205,7 @@ def gold_from_commit(commit: dict) -> tuple[dict, str, str]:
     files: dict[str, list] = {}
     for f in commit.get("files") or []:
         fn = f.get("filename", "")
-        if Path(fn).suffix not in CODE_EXT or _TEST_RE.search(fn):
+        if not is_gold_code_file(fn) or _TEST_RE.search(fn):
             continue
         ranges = []
         for line in (f.get("patch") or "").splitlines():
@@ -203,6 +219,114 @@ def gold_from_commit(commit: dict) -> tuple[dict, str, str]:
     return files, parent, date
 
 
+def api_calls_left() -> int:
+    """Remaining core-API quota for this token (the /rate_limit call itself is free)."""
+    d = gh_get("https://api.github.com/rate_limit") or {}
+    return int(((d.get("resources") or {}).get("core") or {}).get("remaining") or 0)
+
+
+def insert_vuln(db, full_sha, repo, parent, ghsa, cwe, files, date, now) -> int:
+    cur = db.execute(
+        "INSERT OR IGNORE INTO vulns (fix_sha, repo, parent, ghsa, cwe, cwe_desc, "
+        "gold_files, gold_ranges, commit_date, mined_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (full_sha, repo, parent, ghsa, cwe,
+         CWE_DESC.get(cwe, f"{cwe}: (generic category description unavailable)"),
+         json.dumps(sorted(files)), json.dumps(files), date, now))
+    return cur.rowcount
+
+
+def backfill(db, adv_dir: str, regold_budget: int, retry_budget: int, max_files: int,
+             require_holdout: bool, now: str) -> None:
+    """Re-check what was mined under an older gold filter (GOLD_FILTER_VERSION).
+
+    WHY. Until v2 the filter kept py/js/ts only. Rows already stored kept only their incidental
+    files as gold (TYPO3 fd0be9fe: one ajax-request.js for an all-PHP fix), and 9,298 advisories
+    were rejected as no_code_files because every fix file was Go/Java/PHP/C/... The normal loop
+    never revisits either: a stored row is `seen`, a rejection is `tried`.
+
+    regold: refetch each stored row's fix through the same API + gold_from_commit, ADD the files
+            the old filter dropped. Existing entries are never rewritten -- they came from the same
+            API and filter, so they are already right.
+    retry:  re-resolve no_code_files rejections; mine the ones that now have gold (respecting
+            --max-files), otherwise record the new verdict.
+
+    Budgeted against the live API quota and resumable through gold_backfill, so it can run every
+    hour until both backlogs are empty and then costs nothing.
+    """
+    V = GOLD_FILTER_VERSION
+    left = api_calls_left()
+    regold_budget = max(0, min(regold_budget, left - 100))
+    stats: dict[str, int] = {}
+
+    def mark(kind, sha, outcome):
+        db.execute("INSERT OR REPLACE INTO gold_backfill VALUES (?,?,?,?,?)", (kind, sha, V, outcome, now))
+        stats[f"{kind}:{outcome.split(':')[0]}"] = stats.get(f"{kind}:{outcome.split(':')[0]}", 0) + 1
+
+    rows = db.execute(
+        "SELECT fix_sha, repo, gold_files, gold_ranges FROM vulns WHERE fix_sha NOT IN "
+        "(SELECT fix_sha FROM gold_backfill WHERE kind='regold' AND version=?) LIMIT ?",
+        (V, regold_budget)).fetchall()
+    for fix, repo, gf, gr in rows:
+        commit = gh_get(f"https://api.github.com/repos/{repo}/commits/{fix}")
+        if not commit:
+            if api_calls_left() < 50:
+                break                                      # out of quota: resume next run, unmarked
+            mark("regold", fix, "unreachable"); continue
+        new, _, _ = gold_from_commit(commit)
+        old_r, old_f = json.loads(gr or "{}"), json.loads(gf or "[]")
+        add = {p: r for p, r in new.items() if p not in old_r and p not in old_f}
+        if add:
+            db.execute("UPDATE vulns SET gold_files=?, gold_ranges=? WHERE fix_sha=?",
+                       (json.dumps(sorted(set(old_f) | set(add))), json.dumps({**old_r, **add}), fix))
+            mark("regold", fix, f"added:{len(add)}")
+        else:
+            mark("regold", fix, "unchanged")
+        db.commit()
+
+    retry_budget = max(0, min(retry_budget, api_calls_left() - 100))
+    if retry_budget:
+        by7: dict[str, list] = {}
+        for (s,) in db.execute(
+                "SELECT fix_sha FROM mine_attempts WHERE reason='no_code_files' AND fix_sha NOT IN "
+                "(SELECT fix_sha FROM gold_backfill WHERE kind='retry' AND version=?)", (V,)):
+            by7.setdefault(s[:7].lower(), []).append(s)
+        done = 0
+        for ghsa, cwe, repo, sha in advisories(adv_dir, require_holdout):
+            if done >= retry_budget:
+                break
+            cands = by7.get(sha[:7].lower(), [])
+            hit = next((s for s in cands if s.startswith(sha) or sha.startswith(s)), None)
+            if hit is None:
+                continue
+            cands.remove(hit)
+            commit = gh_get(f"https://api.github.com/repos/{repo}/commits/{hit}")
+            done += 1
+            if not commit:
+                if api_calls_left() < 50:
+                    break
+                mark("retry", hit, "unreachable"); continue
+            files, parent, date = gold_from_commit(commit)
+            why = ("no_parent" if not parent else "no_code_files" if not files
+                   else "too_many_files" if len(files) > max_files else None)
+            if why:
+                db.execute("UPDATE mine_attempts SET reason=?, n_files=?, tried_at=? WHERE fix_sha=?",
+                           (why, len(files), now, hit))
+                mark("retry", hit, f"rejected:{why}")
+            else:
+                insert_vuln(db, commit.get("sha", hit), repo, parent, ghsa, cwe, files, date, now)
+                db.execute("DELETE FROM mine_attempts WHERE fix_sha=?", (hit,))
+                mark("retry", hit, "mined")
+                print(f"  +{cwe:9s} {repo}@{hit[:10]}  {len(files)} file(s)  [recovered]", flush=True)
+            db.commit()
+
+    remaining = {k: db.execute(q, (V,)).fetchone()[0] for k, q in (
+        ("regold", "SELECT COUNT(*) FROM vulns WHERE fix_sha NOT IN "
+                   "(SELECT fix_sha FROM gold_backfill WHERE kind='regold' AND version=?)"),
+        ("retry", "SELECT COUNT(*) FROM mine_attempts WHERE reason='no_code_files' AND fix_sha NOT IN "
+                  "(SELECT fix_sha FROM gold_backfill WHERE kind='retry' AND version=?)"))}
+    print(f"[backfill v{V}] this run: {stats or 'nothing'} | still to check: {remaining}", flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--adv-dir", required=True, help="dir of github/advisory-database records")
@@ -214,6 +338,10 @@ def main() -> None:
     ap.add_argument("--retry-rejected", action="store_true",
                     help="also re-resolve advisories rejected on an earlier run (use after "
                          "changing --max-files or the gold filter, which changes the verdict)")
+    ap.add_argument("--regold-budget", type=int, default=0,
+                    help="re-check up to N stored rows under GOLD_FILTER_VERSION (see backfill)")
+    ap.add_argument("--retry-budget", type=int, default=0,
+                    help="re-resolve up to N no_code_files rejections under GOLD_FILTER_VERSION")
     args = ap.parse_args()
 
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +359,11 @@ def main() -> None:
                    (sha_, ghsa_, repo_, why, n, now))
         db.commit()
         rejected[why] = rejected.get(why, 0) + 1
+
+    if args.regold_budget or args.retry_budget:
+        backfill(db, args.adv_dir, args.regold_budget, args.retry_budget, args.max_files,
+                 args.require_holdout, now)
+        seen = {r[0] for r in db.execute("SELECT fix_sha FROM vulns").fetchall()}
 
     added = resolved = 0
     rejected: dict[str, int] = {}
