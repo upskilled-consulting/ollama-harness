@@ -28,7 +28,27 @@ import tempfile
 from pathlib import Path
 
 CONV     = re.compile(r"^(fix|feat|refactor|perf|test|build|style)(\([^)]*\))?:\s*(.+)", re.I)
-CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx"}
+# WHAT COUNTS AS A GOLD FILE. A fix file whose extension is missing here is silently dropped from
+# gold: the advisory either goes unmined (no matching files) or is kept with only its incidental
+# files as gold, so the task is scored against leftovers. With py/js/ts only, that was every Go,
+# Java and Rust advisory (VLoc Bench is 38% Go, 20% Java, 8% Rust) and, in the downstream ctarp
+# corpus, 81 of 1,185 tasks missing PHP/HTML/C#/Vue/C/Swift fix files (TYPO3 fd0be9fe's gold was a
+# single ajax-request.js while the fix was all PHP TCA). Templates are first-class: for XSS the
+# fix is very often the template line.
+CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+            ".go", ".java", ".kt", ".rs", ".scala", ".groovy",
+            ".php", ".phtml", ".rb", ".cs", ".swift", ".m", ".mm", ".dart", ".lua",
+            ".pl", ".pm", ".ex", ".exs", ".clj", ".sh",
+            ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh",
+            ".vue", ".svelte", ".html", ".htm", ".twig", ".jinja", ".jinja2", ".j2",
+            ".erb", ".ejs", ".hbs", ".handlebars", ".mustache", ".jsp", ".cshtml", ".razor"}
+
+
+def is_gold_code_file(path: str) -> bool:
+    """CODE_EXT, minus minified twins: a .min.js is one enormous line, every match in it is line 1,
+    and the real fix is already gold under its unminified name."""
+    p = Path(path)
+    return p.suffix in CODE_EXT and ".min." not in p.name
 HUNK     = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
 
 
@@ -121,7 +141,7 @@ def mine(limit: int, max_files: int, code_only: bool,
         if not parent or not gate(subject):
             continue
         cfiles = {f: r for f, r in files.items()
-                  if (not code_only) or Path(f).suffix in CODE_EXT}
+                  if (not code_only) or is_gold_code_file(f)}
         # Keep only files that EXIST at the parent state the explorer runs against.
         # A commit that adds a new file gives it gold ranges the explorer can never
         # cite (the file isn't there yet) -> an unfair, methodology-driven 0/0.

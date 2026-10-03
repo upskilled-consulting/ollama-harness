@@ -28,7 +28,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from mine_explore_eval import CODE_EXT, HUNK  # noqa: E402  (reuse diff parser)
+from mine_explore_eval import HUNK, is_gold_code_file  # noqa: E402  (reuse diff parser)
 
 # Generic CWE category descriptions (Antares-style: no advisory text, just the class).
 # Covers the most common web/library CWEs; unknown ids fall back to the bare id + name.
@@ -189,7 +189,7 @@ def gold_from_commit(commit: dict) -> tuple[dict, str, str]:
     files: dict[str, list] = {}
     for f in commit.get("files") or []:
         fn = f.get("filename", "")
-        if Path(fn).suffix not in CODE_EXT or _TEST_RE.search(fn):
+        if not is_gold_code_file(fn) or _TEST_RE.search(fn):
             continue
         ranges = []
         for line in (f.get("patch") or "").splitlines():
